@@ -1,0 +1,21 @@
+{
+  "WORKSTATION": {
+    "description": "Xeon Silver 4214 x2 | 64GB DDR | RTX 2080Ti 11GB",
+    "gpu": "2080Ti",
+    "vram_gb": 11,
+    "asr_model": "medium",
+    "asr_device": "cuda",
+    "asr_compute": "float16",
+    "ocr_engine": "paddleocr",
+    "ocr_device": "gpu",
+    "ocr_fps": 1.0,
+    "video_intelligence_api": true,
+    "tmdb_enabled": true,
+    "parallel_execution": true,
+    "first_segment_minutes": 4,
+    "first_segment_range": [1, 8],
+    "last_segment_minutes": 8,
+    "last_segment_range": [1, 20],
+    "ocr_languages": ["tr", "en"]
+  }
+}
