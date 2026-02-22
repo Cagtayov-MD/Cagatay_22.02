@@ -2,7 +2,11 @@
 __pycache__/
 *.py[codz]
 *$py.class
-
+# venv / env
+venv/
+.venv/
+venv_audio/
+venv_gpu/
 # C extensions
 *.so
 
