@@ -376,11 +376,27 @@ class PipelineRunner:
 
         # TurkishNameDB'nin kendi repair metodunu kullan (ISSUE-10 düzeltmesi)
         if hasattr(self._name_db, 'repair_layout_pairs'):
-            repaired_pairs = self._name_db.repair_layout_pairs(layout_pairs)
-            diff = sum(
-                1 for a, b in zip(layout_pairs, repaired_pairs)
-                if getattr(a, 'actor_name', '') != getattr(b, 'actor_name', '')
-            )
+            repaired_result = self._name_db.repair_layout_pairs(layout_pairs)
+
+            # TurkishNameDB.repair_layout_pairs() bazı sürümlerde
+            # (repaired_pairs, repaired_count) tuple döndürür.
+            # Bu durumda tuple doğrudan parse'e giderse "int has no attribute ..."
+            # tipinde hatalara yol açar.
+            if isinstance(repaired_result, tuple):
+                repaired_pairs = repaired_result[0]
+                repaired_count = repaired_result[1] if len(repaired_result) > 1 else 0
+            else:
+                repaired_pairs = repaired_result
+                repaired_count = None
+
+            if repaired_count is None:
+                diff = sum(
+                    1 for a, b in zip(layout_pairs, repaired_pairs)
+                    if getattr(a, 'actor_name', '') != getattr(b, 'actor_name', '')
+                )
+            else:
+                diff = int(repaired_count or 0)
+
             if diff:
                 self._log(f"  [NameDB] {diff} layout pair ismi onarıldı")
             return repaired_pairs
