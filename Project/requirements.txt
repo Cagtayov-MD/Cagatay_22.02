@@ -1,0 +1,21 @@
+# ── Ana venv (video pipeline) ──────────────────────────────────────
+# GPU: paddlepaddle-gpu kurulu olmalı (CUDA sürümüne göre seçin)
+# CPU: paddlepaddle
+
+paddleocr>=2.7
+# paddlepaddle-gpu  # GPU için (CUDA 11.x için)
+# paddlepaddle      # CPU için
+
+PySide6>=6.4
+requests>=2.28
+RapidFuzz>=3.0
+Pillow>=9.0
+opencv-contrib-python-headless>=4.6
+numpy>=1.24,<2.0
+python-dotenv>=1.0
+tqdm>=4.64
+huggingface_hub>=0.20
+
+# ── Opsiyonel ───────────────────────────────────────────────────────
+# google-cloud-vision    # Google Vision OCR fallback
+# google-cloud-videointelligence  # Google Video Intelligence

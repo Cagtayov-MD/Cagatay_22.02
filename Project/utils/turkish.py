@@ -27,6 +27,12 @@ def normalize_tr(text: str) -> str:
     return text.translate(_TR_MAP).lower().replace(" ", "")
 
 
+def ascii_key(text: str) -> str:
+    """Dedup key: ASCII, lowercase, sadece alfanumerik. credits_parser dedup icin."""
+    import re
+    return re.sub(r"[^a-z0-9]", "", normalize_tr(text or "").lower())
+
+
 def normalize_tr_keep_spaces(text: str) -> str:
     """Turkce -> ASCII, lowercase, bosluklari koru."""
     return text.translate(_TR_MAP).lower()

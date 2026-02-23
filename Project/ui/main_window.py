@@ -189,7 +189,9 @@ class MainWindow(QMainWindow):
         # İçerik
         lay.addWidget(QLabel("Icerik:"), 0, 2)
         self.content_combo = QComboBox()
-        self.content_combo.addItems(["Film / Dizi"])
+        self.content_combo.addItems([
+            "Film / Dizi", "Spor Maçı", "Haber", "Belgesel", "Magazin"
+        ])
         lay.addWidget(self.content_combo, 0, 3)
 
         # Mod — TextFilter.from_config() ile pipeline'a iletilir

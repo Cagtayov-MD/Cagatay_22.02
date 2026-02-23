@@ -28,9 +28,13 @@ class AudioBridge:
       - VRAM izolasyonu: subprocess bitince tüm GPU bellek otomatik serbest kalır
     """
 
-    # ── Varsayılan yollar (config ile override edilebilir) ──
-    DEFAULT_VENV_PYTHON = r"F:\Root\venv_audio\Scripts\python.exe"
-    DEFAULT_WORKER_SCRIPT = r"F:\Project\audio\audio_worker.py"
+    # ── Varsayılan yollar — env var öncelikli ──
+    DEFAULT_VENV_PYTHON = os.environ.get(
+        "VENV_AUDIO_PYTHON", r"F:\Root\venv_audio\Scripts\python.exe"
+    )
+    DEFAULT_WORKER_SCRIPT = os.environ.get(
+        "AUDIO_WORKER_SCRIPT", r"F:\Project\audio\audio_worker.py"
+    )
 
     # Timeout: 1 saat (90 dakikalık film WhisperX ~20-30dk sürer)
     DEFAULT_TIMEOUT = 3600
