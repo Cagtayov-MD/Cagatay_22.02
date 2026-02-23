@@ -37,6 +37,9 @@ def main():
     app.setApplicationName("Arsiv Decode")
     app.setOrganizationName("ArsivDecode")
 
+    from PySide6.QtGui import QFont
+    app.setFont(QFont("Segoe UI", 10))
+
     from ui.main_window import MainWindow
     window = MainWindow()
 
