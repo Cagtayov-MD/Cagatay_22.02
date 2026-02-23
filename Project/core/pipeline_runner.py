@@ -374,26 +374,31 @@ class PipelineRunner:
         if not layout_pairs:
             return layout_pairs
 
+        # dict (id->pair) gelebilir; parser ile uyumlu şekilde önce normalize et.
+        pairs = list(layout_pairs.values()) if isinstance(layout_pairs, dict) else list(layout_pairs)
+
         # TurkishNameDB'nin kendi repair metodunu kullan (ISSUE-10 düzeltmesi)
         if hasattr(self._name_db, 'repair_layout_pairs'):
-            repaired_result = self._name_db.repair_layout_pairs(layout_pairs)
+            before_actor_names = [getattr(p, 'actor_name', None) for p in pairs]
+            repaired_result = self._name_db.repair_layout_pairs(pairs)
 
             # TurkishNameDB.repair_layout_pairs() bazı sürümlerde
-            # (repaired_pairs, repaired_count) tuple döndürür.
+            # (repaired_pairs, repaired_count) tuple döndürebilir.
             # Bu durumda tuple doğrudan parse'e giderse "int has no attribute ..."
             # tipinde hatalara yol açar.
             if isinstance(repaired_result, tuple):
-                repaired_pairs = repaired_result[0]
+                repaired_pairs = repaired_result[0] if len(repaired_result) > 0 else pairs
                 repaired_count = repaired_result[1] if len(repaired_result) > 1 else 0
             else:
                 repaired_pairs = repaired_result
                 repaired_count = None
 
+            if not isinstance(repaired_pairs, list):
+                repaired_pairs = list(repaired_pairs) if repaired_pairs else pairs
+
             if repaired_count is None:
-                diff = sum(
-                    1 for a, b in zip(layout_pairs, repaired_pairs)
-                    if getattr(a, 'actor_name', '') != getattr(b, 'actor_name', '')
-                )
+                after_actor_names = [getattr(p, 'actor_name', None) for p in repaired_pairs]
+                diff = sum(1 for a, b in zip(before_actor_names, after_actor_names) if a != b)
             else:
                 diff = int(repaired_count or 0)
 
@@ -403,8 +408,11 @@ class PipelineRunner:
 
         # Fallback: kelime kelime düzelt
         repaired = 0
-        for pair in layout_pairs:
-            original = getattr(pair, 'actor_name', '')
+        for pair in pairs:
+            if isinstance(pair, dict):
+                original = str(pair.get('actor_name', '') or '')
+            else:
+                original = getattr(pair, 'actor_name', '')
             if not original:
                 continue
             words = original.strip().split()
@@ -418,8 +426,12 @@ class PipelineRunner:
                 else:
                     fixed_words.append(w)
             if changed:
-                pair.actor_name = ' '.join(fixed_words)
+                fixed = ' '.join(fixed_words)
+                if isinstance(pair, dict):
+                    pair['actor_name'] = fixed
+                else:
+                    pair.actor_name = fixed
                 repaired += 1
         if repaired:
             self._log(f"  [NameDB] {repaired} layout pair ismi onarıldı")
-        return layout_pairs
+        return pairs

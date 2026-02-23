@@ -27,6 +27,12 @@ def normalize_tr(text: str) -> str:
     return text.translate(_TR_MAP).lower().replace(" ", "")
 
 
+
+
+def ascii_key(text: str) -> str:
+    """Dedup/karşılaştırma için Türkçe-safe ASCII anahtar üret."""
+    return normalize_tr(text or "")
+
 def normalize_tr_keep_spaces(text: str) -> str:
     """Turkce -> ASCII, lowercase, bosluklari koru."""
     return text.translate(_TR_MAP).lower()

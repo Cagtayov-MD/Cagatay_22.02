@@ -11,7 +11,7 @@ VRAM: ~3-4 GB → stage sonrası boşaltılır.
 
 import time
 
-from audio.utils.vram_manager import VRAMManager
+from core.vram_manager import VRAMManager
 
 
 class TranscribeStage:

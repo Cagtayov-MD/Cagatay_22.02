@@ -94,7 +94,7 @@ def main():
 
     try:
         # audio paketi import — bu noktada venv_audio aktif olmalı
-        from audio.audio_pipeline import AudioPipeline
+        from core.audio_pipeline import AudioPipeline
 
         pipeline = AudioPipeline(config=config, log_cb=log_cb)
         result = pipeline.run()

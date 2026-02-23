@@ -14,11 +14,11 @@ import os
 import time
 from pathlib import Path
 
-from audio.stages.extract import ExtractStage
-from audio.stages.denoise import DenoiseStage
-from audio.stages.diarize import DiarizeStage
-from audio.stages.transcribe import TranscribeStage
-from audio.stages.post_process import PostProcessStage
+from core.extract import ExtractStage
+from core.denoise import DenoiseStage
+from core.diarize import DiarizeStage
+from core.transcribe import TranscribeStage
+from core.post_process import PostProcessStage
 
 
 class AudioPipeline:
