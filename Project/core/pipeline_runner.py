@@ -25,7 +25,7 @@ from core.turkish_name_db import TurkishNameDB
 from core.qwen_verifier import QwenVerifier
 from utils.stats_logger import StatsLogger
 
-DEFAULT_NAME_DB_PATH = r"C:\Users\cagataykonuralp\Desktop\KAYNAK\isimler.sql"
+DEFAULT_NAME_DB_PATH = os.environ.get("NAME_DB_PATH", "")
 
 
 class PipelineRunner:
@@ -310,6 +310,17 @@ class PipelineRunner:
             self.config.get("tmdb_api_key") or
             os.environ.get("TMDB_API_KEY") or ""
         ).strip()
+
+        # api_keys.json'dan yükle (env ve config boşsa)
+        if not api_key:
+            try:
+                import json as _json
+                _keys_path = Path(__file__).parent.parent / "config" / "api_keys.json"
+                with open(_keys_path, "r", encoding="utf-8") as _f:
+                    _api_keys = _json.load(_f)
+                api_key = _api_keys.get("tmdb_api_key", "").strip()
+            except Exception:
+                pass
         token = (
             self.config.get("tmdb_bearer_token") or
             os.environ.get("TMDB_BEARER_TOKEN") or ""
@@ -376,11 +387,7 @@ class PipelineRunner:
 
         # TurkishNameDB'nin kendi repair metodunu kullan (ISSUE-10 düzeltmesi)
         if hasattr(self._name_db, 'repair_layout_pairs'):
-            repaired_pairs = self._name_db.repair_layout_pairs(layout_pairs)
-            diff = sum(
-                1 for a, b in zip(layout_pairs, repaired_pairs)
-                if getattr(a, 'actor_name', '') != getattr(b, 'actor_name', '')
-            )
+            repaired_pairs, diff = self._name_db.repair_layout_pairs(layout_pairs)
             if diff:
                 self._log(f"  [NameDB] {diff} layout pair ismi onarıldı")
             return repaired_pairs

@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass, field
 from utils.turkish import (
     normalize_tr,
+    normalize_tr_keep_spaces,
     ascii_key,
     split_concatenated_name,
 )
@@ -88,8 +89,9 @@ class CreditsParser:
         """
         Role satırını normalize eder.
         Hem exact match, hem de 'directed by ...' gibi prefix match destekler.
+        normalize_tr_keep_spaces kullanılır — normalize_tr boşlukları siler.
         """
-        t = normalize_tr(text).strip().lower()
+        t = normalize_tr_keep_spaces(text).strip().lower()
         t = re.sub(r"\s+", " ", t)
 
         for k in self._role_keys_desc:
@@ -191,6 +193,9 @@ class CreditsParser:
                 cr.cast.append(CastItem(actor=actor, character=char_name, raw=f"{actor} — {char_name}"))
                 seen_name_index[actor_key] = len(cr.cast) - 1
 
+        # Layout pairs'ten gelen isimler OCR dedup setine de ekle
+        seen_names.update(seen_name_index.keys())
+
         # ── OCR satırlarını işle ──
         for line in ocr_lines:
             text = ""
@@ -218,7 +223,8 @@ class CreditsParser:
             if self._is_fragment(text):
                 continue
 
-            norm_l = re.sub(r"\s+", " ", normalize_tr(text)).strip().lower()
+            # normalize_tr_keep_spaces: boşlukları korur (normalize_tr kaldırır)
+            norm_l = re.sub(r"\s+", " ", normalize_tr_keep_spaces(text)).strip().lower()
 
             # Role line mı? (exact veya prefix)
             is_role = any(norm_l == k or norm_l.startswith(k + " ") for k in self._role_keys_desc)
@@ -284,3 +290,52 @@ class CreditsParser:
                 )
 
         return cr
+
+    # ----------------------------
+    # to_report_dict
+    # ----------------------------
+
+    def to_report_dict(self, parsed: "ParsedCredits") -> dict:
+        """ParsedCredits → pipeline_runner'ın beklediği dict formatı."""
+        cast_list = [
+            {
+                "actor_name": item.actor,
+                "character_name": item.character,
+                "role": item.role,
+                "role_category": item.role_category,
+                "raw": item.raw,
+                "confidence": item.confidence,
+                "frame": item.frame,
+            }
+            for item in parsed.cast
+        ]
+        crew_list = [
+            {
+                "name": item.name,
+                "job": item.job,
+                "role": item.role,
+                "role_category": item.role_category,
+                "raw": item.raw,
+                "confidence": item.confidence,
+                "frame": item.frame,
+            }
+            for item in parsed.crew
+        ]
+        directors = [
+            item.name for item in parsed.crew
+            if item.role.lower() in ("director", "yonetmen")
+        ]
+        return {
+            "film_title": parsed.title,
+            "year": parsed.year,
+            "cast": cast_list,
+            "crew": crew_list,
+            "technical_crew": crew_list,  # alias
+            "directors": directors,
+            "production_companies": parsed.companies,
+            "production_info": parsed.meta,
+            "total_actors": len(parsed.cast),
+            "total_crew": len(parsed.crew),
+            "total_companies": len(parsed.companies),
+            "verification_status": "unverified",
+        }

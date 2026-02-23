@@ -9,10 +9,10 @@ import os
 import shutil
 from pathlib import Path
 
-# ── SABİT YOLLAR ──────────────────────────────────────────────────
-FFMPEG_BIN_DIR   = r"F:\Source\ffmpeg\bin"
-GOOGLE_JSON_PATH = r"F:\docs\keys\google_vid.json"
-LOGOLAR_DIR      = r"F:\Source\Logo"
+# ── YOLLAR — env var öncelikli, yoksa platform varsayılanı ──────────
+FFMPEG_BIN_DIR   = os.environ.get("FFMPEG_BIN_DIR",   r"F:\Source\ffmpeg\bin")
+GOOGLE_JSON_PATH = os.environ.get("GOOGLE_JSON_PATH", r"F:\docs\keys\google_vid.json")
+LOGOLAR_DIR      = os.environ.get("LOGOLAR_DIR",      r"F:\Source\Logo")
 
 
 class PathResolver:

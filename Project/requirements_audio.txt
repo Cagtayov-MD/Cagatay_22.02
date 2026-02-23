@@ -1,0 +1,11 @@
+# ── venv_audio (ses pipeline) ─────────────────────────────────────
+# PyTorch: CUDA sürümünüze uygun versiyonu kurun:
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+torch>=2.1
+torchaudio>=2.1
+whisperx
+pyannote.audio>=3.1
+deepfilternet>=0.5
+huggingface_hub>=0.20
+numpy>=1.24,<2.0

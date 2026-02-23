@@ -6,6 +6,8 @@ PaddleOCR dusuk cozunurluklu videolarda bosluklari kaybeder:
   "HALUKBENER"   → "HALUK BENER"
 """
 
+import re
+
 _TR_MAP = str.maketrans({
     "c": "c", "C": "C", "g": "g", "G": "G",
     "i": "i", "I": "I", "o": "o", "O": "O",
@@ -24,17 +26,18 @@ _TR_MAP = str.maketrans({
 
 def normalize_tr(text: str) -> str:
     """Turkce ozel karakterleri ASCII'ye cevir + lowercase + bosluk kaldir."""
-    return text.translate(_TR_MAP).lower().replace(" ", "")
+    return (text or "").translate(_TR_MAP).lower().replace(" ", "")
 
 
 def ascii_key(text: str) -> str:
-    """Dedup / sozluk anahtari icin ASCII-normalize edilmis dize doner."""
-    return (text or "").translate(_TR_MAP).lower().replace(" ", "")
+    """Dedup key: Turkce->ASCII, lowercase, sadece alfanumerik."""
+    s = (text or "").translate(_TR_MAP).lower()
+    return re.sub(r"[^a-z0-9]", "", s)
 
 
 def normalize_tr_keep_spaces(text: str) -> str:
     """Turkce -> ASCII, lowercase, bosluklari koru."""
-    return text.translate(_TR_MAP).lower()
+    return (text or "").translate(_TR_MAP).lower()
 
 
 # ═══════════════════════════════════════════════════════════════════
