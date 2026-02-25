@@ -292,10 +292,20 @@ class PipelineRunner:
         self._log(f"\n[AUDIO] Ses analizi başlatılıyor...")
 
         audio_cfg = {
-            "program_type":  "film_dizi",
-            "hf_token":      self.config.get("hf_token", ""),
-            "denoise":       self.config.get("denoise_enabled", True),
-            "ffmpeg":        self._ffmpeg,                        # BUG-K2 FIX
+            "program_type": "film_dizi",
+            "hf_token":     self.config.get("hf_token", ""),
+            "ffmpeg":       self._ffmpeg,
+            "ollama_url":   self.config.get("ollama_url", "http://localhost:11434"),
+            "tmdb_cast":    [],
+            "stages": ["extract", "denoise", "diarize", "transcribe", "post_process"],
+            "options": {
+                "denoise_enabled":  self.config.get("denoise_enabled", True),
+                "whisper_model":    self.config.get("whisper_model", "large-v3"),
+                "whisper_language": self.config.get("whisper_language", "tr"),
+                "compute_type":     self.config.get("compute_type", "float16"),
+                "max_speakers":     self.config.get("max_speakers", 10),
+                "ollama_model":     self.config.get("ollama_model", "llama3.1:8b"),
+            },
         }
 
         bridge = AudioBridge(log_cb=self._log, config=self.config)

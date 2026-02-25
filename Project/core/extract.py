@@ -44,14 +44,25 @@ class ExtractStage:
         wav_16k = str(Path(work_dir) / "audio_raw_16k.wav")
         wav_48k = str(Path(work_dir) / "audio_raw_48k.wav")
 
-        # ── 48kHz mono WAV (DF3 için) — ana çıkarma ──
-        self._log("  [Extract] 48kHz WAV çıkarılıyor...")
-        self._ffmpeg_extract(video_path, wav_48k, sample_rate=48000)
+        try:
+            # ── 48kHz mono WAV (DF3 için) — ana çıkarma ──
+            self._log("  [Extract] 48kHz WAV çıkarılıyor...")
+            self._ffmpeg_extract(video_path, wav_48k, sample_rate=48000)
 
-        # ── 16kHz mono WAV (PyAnnote + WhisperX) — 48kHz'den resample ──
-        # PERF-4 FIX: Video tekrar decode etmek yerine WAV→WAV resample (~1s)
-        self._log("  [Extract] 48kHz → 16kHz resample...")
-        self._ffmpeg_extract(wav_48k, wav_16k, sample_rate=16000)
+            # ── 16kHz mono WAV (PyAnnote + WhisperX) — 48kHz'den resample ──
+            # PERF-4 FIX: Video tekrar decode etmek yerine WAV→WAV resample (~1s)
+            self._log("  [Extract] 48kHz → 16kHz resample...")
+            self._ffmpeg_extract(wav_48k, wav_16k, sample_rate=16000)
+        except Exception as e:
+            self._log(f"  [Extract] HATA: {e}")
+            return {
+                "status": "error",
+                "wav_16k": "",
+                "wav_48k": "",
+                "duration_sec": 0.0,
+                "stage_time_sec": round(time.time() - t0, 2),
+                "error": str(e),
+            }
 
         # Süre hesabı
         duration = self._get_duration(wav_16k)
