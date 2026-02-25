@@ -3,6 +3,8 @@ import json, os, re
 from datetime import datetime
 from pathlib import Path
 
+from config.runtime_paths import resolve_name_db_path
+
 # ═══════════════════════════════════════════════════════════════════
 # İSİM VERİTABANI — TurkishNameDB (350K+) > ALL_NAMES (9K) fallback
 # ═══════════════════════════════════════════════════════════════════
@@ -383,7 +385,7 @@ class ExportEngine:
             self._name_db = name_db
         elif _HAS_NAME_DB:
             try:
-                db_path = os.environ.get("NAME_DB_PATH", "")
+                db_path = os.environ.get("NAME_DB_PATH", "") or resolve_name_db_path()
                 self._name_db = TurkishNameDB(
                     sql_path=db_path if os.path.isfile(db_path) else "")
             except Exception:

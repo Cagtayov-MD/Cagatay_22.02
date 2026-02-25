@@ -27,6 +27,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QObject, QTimer
 from PySide6.QtGui import QFont
 
+from config.runtime_paths import API_KEYS_JSON, FFMPEG_BIN_DIR, GOOGLE_KEYS_JSON, LOGOLAR_DIR
+
 
 # ═══════════════════════════════════════════════════════════════════
 # DARK THEME STYLESHEET
@@ -294,10 +296,11 @@ class MainWindow(QMainWindow):
 
         self._path_info_labels = {}
         for key, default in [
-            ("FFmpeg",      r"F:\Source\ffmpeg\bin\ffmpeg.exe"),
-            ("FFprobe",     r"F:\Source\ffmpeg\bin\ffprobe.exe"),
-            ("LOGOLAR",     r"F:\Source\Logo"),
-            ("Google JSON", r"F:\docs\keys\google_vid.json"),
+            ("FFmpeg",      str(Path(FFMPEG_BIN_DIR) / "ffmpeg.exe")),
+            ("FFprobe",     str(Path(FFMPEG_BIN_DIR) / "ffprobe.exe")),
+            ("LOGOLAR",     str(LOGOLAR_DIR)),
+            ("Google JSON", str(GOOGLE_KEYS_JSON)),
+            ("TMDB Keys",  str(API_KEYS_JSON)),
         ]:
             ri = QHBoxLayout()
             k = QLabel(f"{key}:")
@@ -316,7 +319,8 @@ class MainWindow(QMainWindow):
         tr = QHBoxLayout()
         tr.addWidget(QLabel("TMDB Key:"))
         self.tmdb_edit = QLineEdit()
-        self.tmdb_edit.setPlaceholderText("TMDB API anahtari...")
+        self.tmdb_edit.setReadOnly(True)
+        self.tmdb_edit.setPlaceholderText("Otomatik: api_keys.json")
         tr.addWidget(self.tmdb_edit)
         lay.addLayout(tr)
 
@@ -403,7 +407,6 @@ class MainWindow(QMainWindow):
             "mode":       self.mode_combo.currentText().lower(),   # light/medium/heavy
             "entry_min":  float(self.entry_slider.value()),
             "exit_min":   float(self.exit_slider.value()),
-            "tmdb_key":   self.tmdb_edit.text().strip(),
             "config":     self.config.get("WORKSTATION", {}),
         }
 
@@ -437,7 +440,7 @@ class MainWindow(QMainWindow):
 
             if not resolver.ffmpeg:
                 self.signals.pipeline_error.emit(
-                    f"FFmpeg bulunamadi!\nBeklenen: F:\\Source\\ffmpeg\\bin\\ffmpeg.exe\n"
+                    f"FFmpeg bulunamadi!\nBeklenen: {FFMPEG_BIN_DIR}\n"
                     f"{chr(10).join(resolver.errors)}"
                 )
                 return
@@ -445,9 +448,6 @@ class MainWindow(QMainWindow):
             # mode → pipeline'a geçir (TextFilter.from_config() için)
             cfg = dict(params["config"])
             cfg["difficulty"] = params["mode"]      # light/medium/heavy
-            if params["tmdb_key"]:
-                cfg["tmdb_api_key"] = params["tmdb_key"]
-
             runner = PipelineRunner(
                 ffmpeg=resolver.ffmpeg,
                 ffprobe=resolver.ffprobe,
@@ -581,6 +581,12 @@ class MainWindow(QMainWindow):
             _show("FFprobe",     r.ffprobe,     bool(r.ffprobe))
             _show("LOGOLAR",     r.logolar,     bool(r.logolar))
             _show("Google JSON", r.google_json, bool(r.google_json))
+            _show("TMDB Keys",  str(API_KEYS_JSON), API_KEYS_JSON.is_file())
+
+            if API_KEYS_JSON.is_file():
+                self.tmdb_edit.setText("api_keys.json (otomatik)")
+            else:
+                self.tmdb_edit.setText("api_keys.json bulunamadi")
 
             if r.errors:
                 self._log("⚠️  Eksik araçlar:")

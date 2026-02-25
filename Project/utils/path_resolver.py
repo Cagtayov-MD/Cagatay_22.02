@@ -2,18 +2,13 @@
 
 Kullanıcı seçimi kaldırıldı. Tüm araç yolları sabitlendi:
   FFmpeg/FFprobe : F:\\Source\\ffmpeg\\bin
-  Google API JSON: F:\\docs\\keys\\google_vid.json
+  Google API JSON: F:\\Project\\config\\video-analiz-sistemi-a59996f04788.json
   LOGOLAR        : F:\\Source\\Logo
 """
-import os
 import shutil
 from pathlib import Path
 
-# ── YOLLAR — env var öncelikli, yoksa platform varsayılanı ──────────
-FFMPEG_BIN_DIR   = os.environ.get("FFMPEG_BIN_DIR",   r"F:\Source\ffmpeg\bin")
-GOOGLE_JSON_PATH = os.environ.get("GOOGLE_JSON_PATH", r"F:\docs\keys\google_vid.json")
-LOGOLAR_DIR      = os.environ.get("LOGOLAR_DIR",      r"F:\Source\Logo")
-
+from config.runtime_paths import FFMPEG_BIN_DIR, GOOGLE_KEYS_JSON, LOGOLAR_DIR
 
 class PathResolver:
     """
@@ -103,11 +98,11 @@ class PathResolver:
             self.warnings.append(f"LOGOLAR dizini yok: {LOGOLAR_DIR}")
 
     def _resolve_google_json(self):
-        p = Path(GOOGLE_JSON_PATH)
+        p = Path(GOOGLE_KEYS_JSON)
         if p.is_file():
             self.google_json = str(p)
         else:
-            self.warnings.append(f"Google API JSON yok: {GOOGLE_JSON_PATH}")
+            self.warnings.append(f"Google API JSON yok: {GOOGLE_KEYS_JSON}")
 
     # ------------------------------------------------------------------
     def summary(self) -> str:
