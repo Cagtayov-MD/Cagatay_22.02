@@ -160,7 +160,7 @@ class AudioPipeline:
                 diarization=diarize_result,
                 whisper_model=options.get("whisper_model", "large-v3"),
                 whisper_language=options.get("whisper_language", "tr"),
-                compute_type=options.get("compute_type", "float16"),
+                compute_type=options.get("compute_type"),
                 batch_size=options.get("batch_size", 16),
             )
             result["stages"]["transcribe"] = {

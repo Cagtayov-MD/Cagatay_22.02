@@ -54,8 +54,7 @@ class TranscribeStage:
         batch_size = int(opts.get("batch_size", 16))
         hf_token = opts.get("hf_token", "")
         device = VRAMManager.get_device()
-        compute_type = opts.get(
-            "compute_type",
+        compute_type = opts.get("compute_type") or (
             "float16" if device == "cuda" else "int8"
         )
 
