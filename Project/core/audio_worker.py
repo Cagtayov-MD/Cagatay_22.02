@@ -38,7 +38,17 @@ import traceback
 from pathlib import Path
 
 
+def _bootstrap_project_path():
+    """Project root'u sys.path'e ekle; audio paket importunu garanti et."""
+    project_root = Path(__file__).resolve().parent.parent
+    root_s = str(project_root)
+    if root_s not in sys.path:
+        sys.path.insert(0, root_s)
+
+
 def main():
+    _bootstrap_project_path()
+
     # ── Argüman kontrolü ──
     if len(sys.argv) < 2:
         print("Kullanım: python audio_worker.py <config.json>", file=sys.stderr)
@@ -109,7 +119,7 @@ def main():
 
     except ImportError as e:
         log_cb(f"\n[AudioWorker] Import hatası: {e}")
-        log_cb("Olası neden: venv_audio aktif değil veya paket eksik")
+        log_cb("Olası neden: venv_audio paketleri eksik veya PYTHONPATH/proje kökü yanlış")
         log_cb(traceback.format_exc())
 
         # Hata sonucunu da JSON'a yaz — bridge okuyabilsin

@@ -15,6 +15,8 @@ import os
 from pathlib import Path
 from datetime import datetime
 
+from config.runtime_paths import get_tmdb_api_key, resolve_name_db_path
+
 from core.frame_extractor import FrameExtractor
 from core.text_filter import TextFilter
 from core.ocr_engine import OCREngine
@@ -24,8 +26,6 @@ from core.tmdb_verify import TMDBVerify
 from core.turkish_name_db import TurkishNameDB
 from core.qwen_verifier import QwenVerifier
 from utils.stats_logger import StatsLogger
-
-DEFAULT_NAME_DB_PATH = os.environ.get("NAME_DB_PATH", "")
 
 
 class PipelineRunner:
@@ -53,7 +53,7 @@ class PipelineRunner:
         name_db_path = (
             self.config.get("name_db_path") or
             os.environ.get("NAME_DB_PATH") or
-            DEFAULT_NAME_DB_PATH
+            resolve_name_db_path()
         )
         self._name_db = TurkishNameDB(
             sql_path=name_db_path if os.path.isfile(name_db_path) else "",
@@ -308,19 +308,8 @@ class PipelineRunner:
 
         api_key = (
             self.config.get("tmdb_api_key") or
-            os.environ.get("TMDB_API_KEY") or ""
+            get_tmdb_api_key()
         ).strip()
-
-        # api_keys.json'dan yükle (env ve config boşsa)
-        if not api_key:
-            try:
-                import json as _json
-                _keys_path = Path(__file__).parent.parent / "config" / "api_keys.json"
-                with open(_keys_path, "r", encoding="utf-8") as _f:
-                    _api_keys = _json.load(_f)
-                api_key = _api_keys.get("tmdb_api_key", "").strip()
-            except Exception:
-                pass
         token = (
             self.config.get("tmdb_bearer_token") or
             os.environ.get("TMDB_BEARER_TOKEN") or ""

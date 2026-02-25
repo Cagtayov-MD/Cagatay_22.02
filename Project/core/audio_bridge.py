@@ -17,6 +17,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from config.runtime_paths import AUDIO_WORKER_SCRIPT, PROJECT_ROOT, VENV_AUDIO_PYTHON
+
 
 class AudioBridge:
     """
@@ -29,12 +31,8 @@ class AudioBridge:
     """
 
     # ── Varsayılan yollar — env var öncelikli ──
-    DEFAULT_VENV_PYTHON = os.environ.get(
-        "VENV_AUDIO_PYTHON", r"F:\Root\venv_audio\Scripts\python.exe"
-    )
-    DEFAULT_WORKER_SCRIPT = os.environ.get(
-        "AUDIO_WORKER_SCRIPT", r"F:\Project\audio\audio_worker.py"
-    )
+    DEFAULT_VENV_PYTHON = str(VENV_AUDIO_PYTHON)
+    DEFAULT_WORKER_SCRIPT = str(AUDIO_WORKER_SCRIPT)
 
     # Timeout: 1 saat (90 dakikalık film WhisperX ~20-30dk sürer)
     DEFAULT_TIMEOUT = 3600
@@ -83,11 +81,14 @@ class AudioBridge:
             return self._error_result(f"Config yazma hatası: {e}")
 
         # ── 3. Subprocess çalıştır ──
-        cmd = [self._venv_python, self._worker_script, config_path]
+        cmd = [self._venv_python, "-m", "core.audio_worker", config_path]
         self._log(f"  [AudioBridge] Başlatılıyor: {Path(self._venv_python).name}")
         self._log(f"  [AudioBridge] Komut: {' '.join(cmd)}")
 
         try:
+            env = dict(os.environ)
+            env["PYTHONPATH"] = str(PROJECT_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -95,7 +96,8 @@ class AudioBridge:
                 encoding="utf-8",
                 errors="replace",
                 timeout=self._timeout,
-                cwd=str(Path(self._worker_script).parent.parent),
+                cwd=str(PROJECT_ROOT),
+                env=env,
             )
 
             # stdout'u logla (pipeline progress mesajları)
