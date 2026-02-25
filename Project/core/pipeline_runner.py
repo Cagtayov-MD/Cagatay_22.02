@@ -190,7 +190,7 @@ class PipelineRunner:
             self._log(f"\n[5/6] CREDITS_PARSE")
             t = time.time()
             self.stats.start_stage("CREDITS_PARSE")
-            parser = CreditsParser()
+            parser = CreditsParser(turkish_name_db=self._name_db)
             parsed = parser.parse(ocr_lines, layout_pairs=layout_pairs)
             cdata  = parser.to_report_dict(parsed)
             self._stage("CREDITS_PARSE", time.time() - t,
@@ -219,6 +219,7 @@ class PipelineRunner:
             if tmdb_result.updated:
                 self._log(f"  OK: '{tmdb_result.matched_title}' — "
                           f"hits:{tmdb_result.hits} misses:{tmdb_result.misses}")
+                cdata = self._apply_tmdb_credits(cdata, tmdb_result)
             else:
                 self._log(f"  --: {tmdb_result.reason}")
 
@@ -299,6 +300,56 @@ class PipelineRunner:
             self._log(f"  [Audio] HATA: {err}")
 
         return result
+
+
+    def _apply_tmdb_credits(self, cdata: dict, tmdb_result):
+        """TMDB doğrulama başarılıysa rapor içeriğini TMDB kanonik verisiyle sınırla."""
+        cast = []
+        for item in (tmdb_result.cast or []):
+            name = (item.get("name") or "").strip()
+            if not name:
+                continue
+            cast.append({
+                "actor_name": name,
+                "character_name": (item.get("character") or "").strip(),
+                "role": "Cast",
+                "role_category": "cast",
+                "raw": "tmdb",
+                "confidence": 1.0,
+                "frame": "tmdb",
+            })
+
+        crew = []
+        for item in (tmdb_result.crew or []):
+            name = (item.get("name") or "").strip()
+            if not name:
+                continue
+            job = (item.get("job") or "").strip()
+            crew.append({
+                "name": name,
+                "job": job,
+                "role": job or "Crew",
+                "role_category": "crew",
+                "raw": "tmdb",
+                "confidence": 1.0,
+                "frame": "tmdb",
+            })
+
+        directors = [
+            {"name": c.get("name", "")}
+            for c in crew
+            if (c.get("job") or "").strip().lower() in ("director", "yonetmen", "yönetmen")
+        ]
+
+        cdata["cast"] = cast
+        cdata["crew"] = crew
+        cdata["technical_crew"] = crew
+        cdata["directors"] = directors
+        cdata["total_actors"] = len(cast)
+        cdata["total_crew"] = len(crew)
+        cdata["verification_status"] = "tmdb_verified"
+        cdata["keywords_source"] = "tmdb_only"
+        return cdata
 
     # ──────────────────────────────────────────────────────────────
     # TMDB
