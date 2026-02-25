@@ -418,8 +418,7 @@ class ExportEngine:
         if not keywords:
             keywords = [c["actor_name"] for c in credits_data.get("cast", [])[:20]
                         if c.get("actor_name")]
-            keywords += [d["name"] for d in credits_data.get("directors", [])
-                         if d.get("name")]
+            keywords += [d for d in self._director_names(credits_data) if d]
         report = {
             "$schema": "arsiv_decode_report_v1",
             "generated_at": datetime.now().isoformat(),
@@ -511,8 +510,8 @@ class ExportEngine:
                 L.append(f"    {p}")
         if cr.get("directors"):
             L.append("\n  YONETMEN:")
-            for d in cr["directors"]:
-                L.append(f"    {d['name']}")
+            for d in self._director_names(cr):
+                L.append(f"    {d}")
         if cr.get("cast"):
             L.append(f"\n  OYUNCULAR ({cr['total_actors']}):")
             for c in cr["cast"]:
@@ -546,3 +545,18 @@ class ExportEngine:
 
         with open(path, "w", encoding="utf-8-sig") as f:
             f.write("\n".join(L))
+
+    @staticmethod
+    def _director_names(credits: dict) -> list[str]:
+        """directors alanını (str/dict karışık) güvenli şekilde normalize et."""
+        names = []
+        for director in credits.get("directors", []):
+            if isinstance(director, str):
+                name = director.strip()
+                if name:
+                    names.append(name)
+            elif isinstance(director, dict):
+                name = str(director.get("name", "")).strip()
+                if name:
+                    names.append(name)
+        return names
