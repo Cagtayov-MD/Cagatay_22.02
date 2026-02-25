@@ -22,7 +22,6 @@ from core.text_filter import TextFilter
 from core.ocr_engine import OCREngine
 from core.credits_parser import CreditsParser
 from core.export_engine import ExportEngine
-from core.tmdb_verify import TMDBVerify
 from core.turkish_name_db import TurkishNameDB
 from core.qwen_verifier import QwenVerifier
 from utils.stats_logger import StatsLogger
@@ -105,7 +104,6 @@ class PipelineRunner:
 
         try:
             # ── TextFilter mode bağlantısı ──────────────────────
-            # mode_combo → config["difficulty"] → TextFilter.from_config()
             self._text_filter = TextFilter.from_config(self.config)
 
             self._extractor = FrameExtractor(
@@ -131,102 +129,115 @@ class PipelineRunner:
             self._log(f"  OK: {info['duration_human']} | "
                       f"{info['resolution']} | {info['fps']} FPS")
 
-            # ══ [2/6] FRAME_EXTRACT ════════════════════════════
-            self._log(f"\n[2/6] FRAME_EXTRACT")
-            t = time.time()
-            self.stats.start_stage("FRAME_EXTRACT")
-            fps = self.config.get("ocr_fps", 1.0)
-            fd  = self._extractor.extract_credits_frames(
-                video_path, work_dir, info, first_min, last_min, fps)
-            self._stage("FRAME_EXTRACT", time.time() - t,
-                        total=fd["total"],
-                        entry=len(fd["entry"]),
-                        exit_=len(fd["exit"]))
-            self._log(f"  OK: {fd['total']} frame "
-                      f"(giriş:{len(fd['entry'])} çıkış:{len(fd['exit'])})")
-
-            # ══ [3/6] TEXT_FILTER ══════════════════════════════
-            self._log(f"\n[3/6] TEXT_FILTER "
-                      f"[mod={self.config.get('difficulty','medium')}]")
-            t = time.time()
-            self.stats.start_stage("TEXT_FILTER")
-            all_frames = fd["entry"] + fd["exit"]
-            candidates = self._text_filter.filter_frames(all_frames)
-            if not candidates:
-                self._log(f"  !! Yazı adayı yok — fallback")
-                candidates = self._text_filter.fallback_filter(
-                    fd["entry"], fd["exit"], 100)
-            rej = 1 - len(candidates) / max(len(all_frames), 1)
-            self._stage("TEXT_FILTER", time.time() - t,
-                        input=len(all_frames), candidates=len(candidates))
-            self._log(f"  OK: {len(all_frames)} -> {len(candidates)} "
-                      f"aday (eleme: {rej:.0%})")
-
-            # ══ [4/6] OCR_CREDITS ══════════════════════════════
-            self._log(f"\n[4/6] OCR_CREDITS (PaddleOCR GPU)")
-            t = time.time()
-            self.stats.start_stage("OCR_CREDITS")
-            ocr_lines, layout_pairs = self._ocr_engine.process_frames(
-                candidates, log_callback=self._log)
-            ocr_time = time.time() - t
-
-            ocr_lines    = self._repair_turkish(ocr_lines)
-            layout_pairs = self._repair_layout_pairs(layout_pairs)
-
-            qwen_t   = time.time()
-            ocr_lines = self._qwen.verify(ocr_lines, log_cb=self._log)
-            qwen_elapsed = time.time() - qwen_t
-            if qwen_elapsed > 0.5:
-                self._log(f"  [Qwen] Doğrulama süresi: {qwen_elapsed:.1f}s")
-
-            ocr_total = ocr_time + qwen_elapsed
-            self._stage("OCR_CREDITS", ocr_total,
-                        processed=len(candidates),
-                        lines=len(ocr_lines),
-                        layout_pairs=len(layout_pairs))
-            self._log(f"  OK: {len(ocr_lines)} benzersiz satır ({ocr_total:.1f}s)")
-
-            # ══ [5/6] CREDITS_PARSE ════════════════════════════
-            self._log(f"\n[5/6] CREDITS_PARSE")
-            t = time.time()
-            self.stats.start_stage("CREDITS_PARSE")
-            parser = CreditsParser(turkish_name_db=self._name_db)
-            parsed = parser.parse(ocr_lines, layout_pairs=layout_pairs)
-            cdata  = parser.to_report_dict(parsed)
-            self._stage("CREDITS_PARSE", time.time() - t,
-                        actors=cdata["total_actors"],
-                        crew=cdata["total_crew"],
-                        companies=cdata["total_companies"])
-            self._log(f"  OK: Oyuncu:{cdata['total_actors']} "
-                      f"Ekip:{cdata['total_crew']} "
-                      f"Şirket:{cdata['total_companies']}")
-
-            # ══ [6/6] TMDB_VERIFY ══════════════════════════════
-            self._log(f"\n[6/6] TMDB_VERIFY")
-            t = time.time()
-            self.stats.start_stage("TMDB_VERIFY")
-            if not cdata.get("film_title"):
-                cdata["film_title"] = vname
-                self._log(f"  [TMDB] film_title yok, video adı kullanılıyor: {vname}")
-
-            tmdb_result = self._run_tmdb(cdata, work_dir)
-            self._stage("TMDB_VERIFY", time.time() - t,
-                        status=tmdb_result.reason,
-                        hits=tmdb_result.hits,
-                        misses=tmdb_result.misses,
-                        updated=tmdb_result.updated,
-                        matched_title=tmdb_result.matched_title)
-            if tmdb_result.updated:
-                self._log(f"  OK: '{tmdb_result.matched_title}' — "
-                          f"hits:{tmdb_result.hits} misses:{tmdb_result.misses}")
-                cdata = self._apply_tmdb_credits(cdata, tmdb_result)
-            else:
-                self._log(f"  --: {tmdb_result.reason}")
-
-            # ══ AUDIO (scope'a göre) ════════════════════════════
+            # Audio'yu erkenden başlat (paralel değil; sadece sıra)
             audio_result = None
             if scope in ("audio_only", "video+audio"):
                 audio_result = self._run_audio(video_path, work_dir)
+
+            # Varsayılanlar (audio_only için)
+            ocr_lines = []
+            cdata = self._empty_credits_data(vname)
+            tmdb_result = None
+
+            if scope != "audio_only":
+                # ══ [2/6] FRAME_EXTRACT ════════════════════════════
+                self._log(f"\n[2/6] FRAME_EXTRACT")
+                t = time.time()
+                self.stats.start_stage("FRAME_EXTRACT")
+                fps = self.config.get("ocr_fps", 1.0)
+                fd = self._extractor.extract_credits_frames(
+                    video_path, work_dir, info, first_min, last_min, fps)
+                self._stage("FRAME_EXTRACT", time.time() - t,
+                            total=fd["total"],
+                            entry=len(fd["entry"]),
+                            exit_=len(fd["exit"]))
+                self._log(f"  OK: {fd['total']} frame "
+                          f"(giriş:{len(fd['entry'])} çıkış:{len(fd['exit'])})")
+
+                # ══ [3/6] TEXT_FILTER ══════════════════════════════
+                self._log(f"\n[3/6] TEXT_FILTER "
+                          f"[mod={self.config.get('difficulty','medium')}]")
+                t = time.time()
+                self.stats.start_stage("TEXT_FILTER")
+                all_frames = fd["entry"] + fd["exit"]
+                candidates = self._text_filter.filter_frames(all_frames)
+                if not candidates:
+                    self._log(f"  !! Yazı adayı yok — fallback")
+                    candidates = self._text_filter.fallback_filter(
+                        fd["entry"], fd["exit"], 100)
+                rej = 1 - len(candidates) / max(len(all_frames), 1)
+                self._stage("TEXT_FILTER", time.time() - t,
+                            input=len(all_frames), candidates=len(candidates))
+                self._log(f"  OK: {len(all_frames)} -> {len(candidates)} "
+                          f"aday (eleme: {rej:.0%})")
+
+                # ══ [4/6] OCR_CREDITS ══════════════════════════════
+                self._log(f"\n[4/6] OCR_CREDITS (PaddleOCR GPU)")
+                t = time.time()
+                self.stats.start_stage("OCR_CREDITS")
+                ocr_lines, layout_pairs = self._ocr_engine.process_frames(
+                    candidates, log_callback=self._log)
+                ocr_time = time.time() - t
+
+                ocr_lines = self._repair_turkish(ocr_lines)
+                layout_pairs = self._repair_layout_pairs(layout_pairs)
+
+                qwen_t = time.time()
+                ocr_lines = self._qwen.verify(ocr_lines, log_cb=self._log)
+                qwen_elapsed = time.time() - qwen_t
+                if qwen_elapsed > 0.5:
+                    self._log(f"  [Qwen] Doğrulama süresi: {qwen_elapsed:.1f}s")
+
+                ocr_total = ocr_time + qwen_elapsed
+                self._stage("OCR_CREDITS", ocr_total,
+                            processed=len(candidates),
+                            lines=len(ocr_lines),
+                            layout_pairs=len(layout_pairs))
+                self._log(f"  OK: {len(ocr_lines)} benzersiz satır ({ocr_total:.1f}s)")
+
+                # ══ [5/6] CREDITS_PARSE ════════════════════════════
+                self._log(f"\n[5/6] CREDITS_PARSE")
+                t = time.time()
+                self.stats.start_stage("CREDITS_PARSE")
+                parser = CreditsParser(turkish_name_db=self._name_db)
+                parsed = parser.parse(ocr_lines, layout_pairs=layout_pairs)
+                cdata = parser.to_report_dict(parsed)
+                self._stage("CREDITS_PARSE", time.time() - t,
+                            actors=cdata["total_actors"],
+                            crew=cdata["total_crew"],
+                            companies=cdata["total_companies"])
+                self._log(f"  OK: Oyuncu:{cdata['total_actors']} "
+                          f"Ekip:{cdata['total_crew']} "
+                          f"Şirket:{cdata['total_companies']}")
+
+                # ══ [6/6] TMDB_VERIFY ══════════════════════════════
+                self._log(f"\n[6/6] TMDB_VERIFY")
+                t = time.time()
+                self.stats.start_stage("TMDB_VERIFY")
+                if not cdata.get("film_title"):
+                    cdata["film_title"] = vname
+                    self._log(f"  [TMDB] film_title yok, video adı kullanılıyor: {vname}")
+
+                tmdb_result = self._run_tmdb(cdata, work_dir)
+                self._stage("TMDB_VERIFY", time.time() - t,
+                            status=tmdb_result.reason,
+                            hits=tmdb_result.hits,
+                            misses=tmdb_result.misses,
+                            updated=tmdb_result.updated,
+                            matched_title=tmdb_result.matched_title)
+                if tmdb_result.updated:
+                    self._log(f"  OK: '{tmdb_result.matched_title}' — "
+                              f"hits:{tmdb_result.hits} misses:{tmdb_result.misses}")
+                    # TMDB-only credits output when verification succeeds
+                    cdata = self._apply_tmdb_credits(cdata, tmdb_result)
+                else:
+                    self._log(f"  --: {tmdb_result.reason}")
+
+            else:
+                for stage_name in ("FRAME_EXTRACT", "TEXT_FILTER", "OCR_CREDITS",
+                                   "CREDITS_PARSE", "TMDB_VERIFY"):
+                    self._stage(stage_name, 0.0, status="skipped",
+                                reason="scope=audio_only")
 
             # ══ EXPORT ════════════════════════════════════════════
             self._log(f"\n[EXPORT]")
@@ -300,7 +311,6 @@ class PipelineRunner:
             self._log(f"  [Audio] HATA: {err}")
 
         return result
-
 
     def _apply_tmdb_credits(self, cdata: dict, tmdb_result):
         """TMDB doğrulama başarılıysa rapor içeriğini TMDB kanonik verisiyle sınırla."""
@@ -395,6 +405,24 @@ class PipelineRunner:
         }
         self.stats.end_stage(name, status)
 
+    @staticmethod
+    def _empty_credits_data(film_title: str = "") -> dict:
+        """audio_only kapsamı için minimal credits şablonu."""
+        return {
+            "film_title": film_title,
+            "year": None,
+            "cast": [],
+            "crew": [],
+            "technical_crew": [],
+            "directors": [],
+            "production_companies": [],
+            "production_info": [],
+            "total_actors": 0,
+            "total_crew": 0,
+            "total_companies": 0,
+            "verification_status": "unverified",
+        }
+
     def _repair_turkish(self, ocr_lines: list) -> list:
         if not ocr_lines:
             return ocr_lines
@@ -425,14 +453,12 @@ class PipelineRunner:
         if not layout_pairs:
             return layout_pairs
 
-        # TurkishNameDB'nin kendi repair metodunu kullan (ISSUE-10 düzeltmesi)
         if hasattr(self._name_db, 'repair_layout_pairs'):
             repaired_pairs, diff = self._name_db.repair_layout_pairs(layout_pairs)
             if diff:
                 self._log(f"  [NameDB] {diff} layout pair ismi onarıldı")
             return repaired_pairs
 
-        # Fallback: kelime kelime düzelt
         repaired = 0
         for pair in layout_pairs:
             original = getattr(pair, 'actor_name', '')
