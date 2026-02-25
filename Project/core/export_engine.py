@@ -354,7 +354,7 @@ def _canonicalize_crew(crew: list[dict]) -> list[dict]:
     buckets: dict[tuple[str,str], dict] = {}
     for row in crew or []:
         name = (row.get("name") or "").strip()
-        role = (row.get("role") or "").strip()
+        role = (row.get("role") or row.get("job") or "").strip()
         if not name and not role:
             continue
         key = (_norm_key(name), _norm_key(role))
@@ -370,7 +370,7 @@ def _canonicalize_crew(crew: list[dict]) -> list[dict]:
         name=_best_variant([v for v in b["name_variants"] if v])
         role=_best_variant([v for v in b["role_variants"] if v])
         if name or role:
-            out.append({"name":name,"role":role})
+            out.append({"name":name,"role":role,"job":role})
     out.sort(key=lambda r: (_norm_key(r.get("role","")), _norm_key(r.get("name",""))))
     return out
 
@@ -411,6 +411,7 @@ class ExportEngine:
                 credits_data['cast'] = _canonicalize_cast(credits_data['cast'])
             if credits_data.get('crew'):
                 credits_data['crew'] = _canonicalize_crew(credits_data['crew'])
+                credits_data['technical_crew'] = list(credits_data['crew'])
         except Exception:
             pass
 
@@ -520,7 +521,8 @@ class ExportEngine:
         if cr.get("technical_crew"):
             L.append(f"\n  TEKNIK EKIP ({cr['total_crew']}):")
             for t in cr["technical_crew"]:
-                L.append(f"    {t['name']} -- {t.get('role_tr','')}")
+                role_txt = t.get('role_tr') or t.get('role') or t.get('job') or ''
+                L.append(f"    {t.get('name','')} -- {role_txt}")
 
         if r.get("keywords"):
             L.append(f"\n{'-'*65}")

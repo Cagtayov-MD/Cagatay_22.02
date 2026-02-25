@@ -22,7 +22,6 @@ from core.text_filter import TextFilter
 from core.ocr_engine import OCREngine
 from core.credits_parser import CreditsParser
 from core.export_engine import ExportEngine
-from core.tmdb_verify import TMDBVerify
 from core.turkish_name_db import TurkishNameDB
 from core.qwen_verifier import QwenVerifier
 from utils.stats_logger import StatsLogger
@@ -105,7 +104,6 @@ class PipelineRunner:
 
         try:
             # ── TextFilter mode bağlantısı ──────────────────────
-            # mode_combo → config["difficulty"] → TextFilter.from_config()
             self._text_filter = TextFilter.from_config(self.config)
 
             self._extractor = FrameExtractor(
@@ -131,11 +129,12 @@ class PipelineRunner:
             self._log(f"  OK: {info['duration_human']} | "
                       f"{info['resolution']} | {info['fps']} FPS")
 
-            # Audio'yu erkenden başlat: video ve ses ayrımı ilk adım yaklaşımı
+            # Audio'yu erkenden başlat (paralel değil; sadece sıra)
             audio_result = None
             if scope in ("audio_only", "video+audio"):
                 audio_result = self._run_audio(video_path, work_dir)
 
+            # Varsayılanlar (audio_only için)
             ocr_lines = []
             cdata = self._empty_credits_data(vname)
             tmdb_result = None
@@ -229,8 +228,11 @@ class PipelineRunner:
                 if tmdb_result.updated:
                     self._log(f"  OK: '{tmdb_result.matched_title}' — "
                               f"hits:{tmdb_result.hits} misses:{tmdb_result.misses}")
+                    # TMDB-only credits output when verification succeeds
+                    cdata = self._apply_tmdb_credits(cdata, tmdb_result)
                 else:
                     self._log(f"  --: {tmdb_result.reason}")
+
             else:
                 for stage_name in ("FRAME_EXTRACT", "TEXT_FILTER", "OCR_CREDITS",
                                    "CREDITS_PARSE", "TMDB_VERIFY"):
@@ -309,6 +311,55 @@ class PipelineRunner:
             self._log(f"  [Audio] HATA: {err}")
 
         return result
+
+    def _apply_tmdb_credits(self, cdata: dict, tmdb_result):
+        """TMDB doğrulama başarılıysa rapor içeriğini TMDB kanonik verisiyle sınırla."""
+        cast = []
+        for item in (tmdb_result.cast or []):
+            name = (item.get("name") or "").strip()
+            if not name:
+                continue
+            cast.append({
+                "actor_name": name,
+                "character_name": (item.get("character") or "").strip(),
+                "role": "Cast",
+                "role_category": "cast",
+                "raw": "tmdb",
+                "confidence": 1.0,
+                "frame": "tmdb",
+            })
+
+        crew = []
+        for item in (tmdb_result.crew or []):
+            name = (item.get("name") or "").strip()
+            if not name:
+                continue
+            job = (item.get("job") or "").strip()
+            crew.append({
+                "name": name,
+                "job": job,
+                "role": job or "Crew",
+                "role_category": "crew",
+                "raw": "tmdb",
+                "confidence": 1.0,
+                "frame": "tmdb",
+            })
+
+        directors = [
+            {"name": c.get("name", "")}
+            for c in crew
+            if (c.get("job") or "").strip().lower() in ("director", "yonetmen", "yönetmen")
+        ]
+
+        cdata["cast"] = cast
+        cdata["crew"] = crew
+        cdata["technical_crew"] = crew
+        cdata["directors"] = directors
+        cdata["total_actors"] = len(cast)
+        cdata["total_crew"] = len(crew)
+        cdata["verification_status"] = "tmdb_verified"
+        cdata["keywords_source"] = "tmdb_only"
+        return cdata
 
     # ──────────────────────────────────────────────────────────────
     # TMDB
@@ -402,14 +453,12 @@ class PipelineRunner:
         if not layout_pairs:
             return layout_pairs
 
-        # TurkishNameDB'nin kendi repair metodunu kullan (ISSUE-10 düzeltmesi)
         if hasattr(self._name_db, 'repair_layout_pairs'):
             repaired_pairs, diff = self._name_db.repair_layout_pairs(layout_pairs)
             if diff:
                 self._log(f"  [NameDB] {diff} layout pair ismi onarıldı")
             return repaired_pairs
 
-        # Fallback: kelime kelime düzelt
         repaired = 0
         for pair in layout_pairs:
             original = getattr(pair, 'actor_name', '')
