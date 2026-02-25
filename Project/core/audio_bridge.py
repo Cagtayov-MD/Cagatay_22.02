@@ -33,7 +33,7 @@ class AudioBridge:
         "VENV_AUDIO_PYTHON", r"F:\Root\venv_audio\Scripts\python.exe"
     )
     DEFAULT_WORKER_SCRIPT = os.environ.get(
-        "AUDIO_WORKER_SCRIPT", r"F:\Project\audio\audio_worker.py"
+        "AUDIO_WORKER_SCRIPT", r"F:\Project\core\audio_worker.py"
     )
 
     # Timeout: 1 saat (90 dakikalık film WhisperX ~20-30dk sürer)
@@ -43,8 +43,34 @@ class AudioBridge:
         cfg = config or {}
         self._log = log_cb or print
         self._venv_python = cfg.get("venv_audio_python", self.DEFAULT_VENV_PYTHON)
-        self._worker_script = cfg.get("audio_worker_script", self.DEFAULT_WORKER_SCRIPT)
+        self._worker_script = cfg.get("audio_worker_script") or self._resolve_worker_script()
         self._timeout = cfg.get("audio_timeout", self.DEFAULT_TIMEOUT)
+
+    def _resolve_worker_script(self) -> str:
+        """
+        Worker script yolunu güvenli şekilde çöz.
+
+        Öncelik:
+          1) AUDIO_WORKER_SCRIPT env (DEFAULT_WORKER_SCRIPT içinde)
+          2) repo içi core/audio_worker.py
+          3) legacy audio/audio_worker.py
+          4) DEFAULT_WORKER_SCRIPT (son fallback)
+        """
+        default_path = Path(self.DEFAULT_WORKER_SCRIPT)
+        if default_path.is_file():
+            return str(default_path)
+
+        project_root = Path(__file__).resolve().parents[1]
+        candidates = [
+            project_root / "core" / "audio_worker.py",
+            project_root / "audio" / "audio_worker.py",
+        ]
+        for candidate in candidates:
+            if candidate.is_file():
+                self._log(f"  [AudioBridge] Worker otomatik bulundu: {candidate}")
+                return str(candidate)
+
+        return str(default_path)
 
     def run(self, video_path: str, work_dir: str, config: dict) -> dict:
         """
