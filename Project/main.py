@@ -2,7 +2,12 @@
 main.py — Arsiv Decode giris noktasi.
 Her zaman PySide6 UI ile baslar. Lite mod yok.
 """
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except Exception:
+    def load_dotenv(*_args, **_kwargs):
+        return False
+
 load_dotenv()  # .env dosyasını yükle — diğer her şeyden önce
 
 import sys
