@@ -81,6 +81,39 @@ class CreditsParser:
         # prefix yakalamada daha doğru sonuç için uzun anahtarları öne al
         self._role_keys_desc = sorted(self._role_map.keys(), key=len, reverse=True)
 
+    def _is_suspicious_actor(self, actor: str) -> bool:
+        """
+        OCR çöp tokenlarını oyuncu adı olarak yazmayı engelle.
+
+        Örnek yanlışlar: "IMEACCVMCA" gibi tek-parça, tamamen büyük harf,
+        aşırı uzun ve isim DB'de karşılığı olmayan tokenlar.
+        """
+        a = (actor or "").strip()
+        if not a:
+            return True
+
+        # Çok parçalı isimleri agresif filtreleme (yanlış negatif istemiyoruz)
+        if len(a.split()) >= 2:
+            return False
+
+        # Tek parça ama kısa ise (örn. "Ruhi") bırak
+        if len(a) <= 8:
+            return False
+
+        # Sadece büyük harf ve alfasayısal ise şüpheli aday
+        is_all_caps = a.upper() == a
+        is_alnum = bool(re.fullmatch(r"[A-Z0-9ÇĞİÖŞÜ]+", a, flags=re.IGNORECASE))
+        if not (is_all_caps and is_alnum):
+            return False
+
+        # NameDB'de güçlü eşleşmesi varsa bırak
+        if self._name_db is not None:
+            fixed, score = self._name_db.find(a)
+            if fixed and score >= 0.95:
+                return False
+
+        return True
+
     # ----------------------------
     # yardımcılar
     # ----------------------------
@@ -122,7 +155,7 @@ class CreditsParser:
         if not text:
             return ""
 
-        if self._name_db:
+        if self._name_db is not None:
             parts = self._name_db.split_concatenated(text)
             if isinstance(parts, (list, tuple)) and len(parts) > 1:
                 return " ".join(p for p in parts if p)
@@ -174,14 +207,19 @@ class CreditsParser:
                 if not actor or len(actor) < 3:
                     continue
 
+                if self._is_suspicious_actor(actor):
+                    continue
+
                 # ── Swap tespiti: oyuncu↔karakter sütunları yer değiştirmiş mi? ──
-                if self._name_db and char_name:
+                if self._name_db is not None and char_name:
                     a0 = actor.split()[0] if actor.split() else ""
                     c0 = char_name.split()[0] if char_name.split() else ""
                     if a0 and c0 and self._name_db.check_swap_risk(a0, c0):
                         actor, char_name = char_name, actor
 
                 actor = self._maybe_split_name(actor)
+                if self._is_suspicious_actor(actor):
+                    continue
                 actor_key = ascii_key(actor)
 
                 if actor_key in seen_name_index:
@@ -242,6 +280,12 @@ class CreditsParser:
                 char_name = parts[1] if len(parts) >= 2 else ""
 
                 actor = self._maybe_split_name(actor)
+                if self._name_db is not None:
+                    fixed_actor, score = self._name_db.find(actor)
+                    if fixed_actor and score >= 0.85:
+                        actor = fixed_actor
+                if self._is_suspicious_actor(actor):
+                    continue
                 actor_key = ascii_key(actor)
                 if not actor_key or actor_key in seen_names:
                     continue

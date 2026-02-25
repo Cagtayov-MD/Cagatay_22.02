@@ -90,6 +90,7 @@ _HARDCODED_FIXES: dict[str, str] = {
     'AYCA': 'Ayça',
     'GUNEY': 'Güney',
     'GULDEN': 'Gülden',
+    'GOLDEN': 'Gülden',
     'UGUR': 'Uğur',
     'ORGUC': 'Örgüç',
     'TUNALI': 'Tunalı',
