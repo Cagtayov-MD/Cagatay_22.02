@@ -1,38 +1,48 @@
 name: CI
 
 on:
-  pull_request:
   push:
-    branches: [ "main" ]
+    branches: ["**"]
+  pull_request:
 
 jobs:
-  test:
+  quick:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
-          
-      - name: Install deps (if requirements exist)
-        shell: bash
+
+      - name: Install ffmpeg
         run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          elif [ -f requirements-dev.txt ]; then
-            pip install -r requirements-dev.txt
-          else
-            echo "No requirements file found, skipping pip install -r ..."
-          fi
-          pip install pytest
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
 
-      - name: Syntax check (compileall)
-        run: python -m compileall .
+      - name: Verify test assets
+        run: |
+          test -s test/ASR_test.wav
+          test -s test/OCR_test.mp4
 
-      - name: Run tests
-        run: pytest -q || true
+      - name: Compile (syntax)
+        run: python -m compileall Project
+
+      - name: Smoke (ASR input)
+        run: |
+          mkdir -p artifacts
+          python Project/tests/asr_smoke.py --wav test/ASR_test.wav --out artifacts/asr_smoke.json
+
+      - name: Smoke (OCR input)
+        run: |
+          python Project/tests/video_smoke.py --video test/OCR_test.mp4 --out artifacts/ocr_smoke.json
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts
+          path: artifacts
