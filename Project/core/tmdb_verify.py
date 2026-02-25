@@ -342,10 +342,10 @@ class TMDBVerify:
             return None
 
     # ── Yardımcılar ─────────────────────────────────────────────────
-    def _extract_names(self, credits_data: dict) -> List[str]:
+    def _extract_names(self, credits_data: dict, section: str = "cast") -> List[str]:
         return [
             (item.get("name") or "").strip()
-            for item in (credits_data.get("cast") or [])
+            for item in (credits_data.get(section) or [])
             if (item.get("name") or "").strip()
         ]
 
@@ -360,8 +360,9 @@ class TMDBVerify:
     def _canonicalize(self, cdata: dict,
                       credits_data: dict) -> tuple:
         """cdata cast'ını TMDB kanonik isimleriyle güncelle."""
-        tmdb_names = self._extract_names(credits_data)
-        if not tmdb_names:
+        tmdb_cast_names = self._extract_names(credits_data, section="cast")
+        tmdb_crew_names = self._extract_names(credits_data, section="crew")
+        if not tmdb_cast_names and not tmdb_crew_names:
             return False, 0, 0
 
         updated = False
@@ -373,7 +374,7 @@ class TMDBVerify:
             actor = (row.get("actor_name") or row.get("actor") or "").strip()
             if not actor:
                 continue
-            canonical = _fuzzy_match(actor, tmdb_names, threshold=82)
+            canonical = _fuzzy_match(actor, tmdb_cast_names, threshold=82)
             if canonical:
                 if canonical != actor:
                     row["actor_name"] = canonical
@@ -382,15 +383,16 @@ class TMDBVerify:
             else:
                 misses += 1
 
-        for row in (cdata.get("technical_crew") or []):
-            if not isinstance(row, dict):
-                continue
-            name = (row.get("name") or "").strip()
-            if not name:
-                continue
-            canonical = _fuzzy_match(name, tmdb_names, threshold=82)
-            if canonical and canonical != name:
-                row["name"] = canonical
-                updated = True
+        for key in ("crew", "technical_crew"):
+            for row in (cdata.get(key) or []):
+                if not isinstance(row, dict):
+                    continue
+                name = (row.get("name") or "").strip()
+                if not name:
+                    continue
+                canonical = _fuzzy_match(name, tmdb_crew_names, threshold=82)
+                if canonical and canonical != name:
+                    row["name"] = canonical
+                    updated = True
 
         return updated, hits, misses

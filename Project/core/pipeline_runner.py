@@ -190,7 +190,7 @@ class PipelineRunner:
             self._log(f"\n[5/6] CREDITS_PARSE")
             t = time.time()
             self.stats.start_stage("CREDITS_PARSE")
-            parser = CreditsParser()
+            parser = CreditsParser(turkish_name_db=self._name_db)
             parsed = parser.parse(ocr_lines, layout_pairs=layout_pairs)
             cdata  = parser.to_report_dict(parsed)
             self._stage("CREDITS_PARSE", time.time() - t,
