@@ -1,0 +1,53 @@
+name: FullTest
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: fulltest
+  cancel-in-progress: true
+
+jobs:
+  fulltest:
+    runs-on: [self-hosted, Windows, X64, gpu]
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: FullTest (GPU)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $PY = "F:\Root\venv\Scripts\python.exe"
+          if (!(Test-Path $PY)) { throw "Venv python yok: $PY" }
+
+          $MP4 = "F:\test\full_test.mp4"
+          if (!(Test-Path $MP4)) { throw "Full test mp4 yok: $MP4" }
+
+          $ff = Get-Command ffmpeg -ErrorAction SilentlyContinue
+          if (-not $ff) { throw "ffmpeg bulunamadı (PATH'te olmalı)." }
+
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          $WAV = (Resolve-Path ".\artifacts").Path + "\full_test.wav"
+
+          & ffmpeg -hide_banner -loglevel error -y -i "$MP4" -vn -ac 1 -ar 16000 -t 60 "$WAV"
+          if ($LASTEXITCODE -ne 0) { throw "ffmpeg audio extract failed" }
+          if (!(Test-Path $WAV)) { throw "Extract edilen wav yok: $WAV" }
+
+          Set-Location ".\Project"
+
+          & $PY -V
+          & $PY -m compileall -q .
+
+          & $PY tests\smoke_imports.py
+          & $PY tests\asr_smoke.py --wav "$WAV" --out "..\artifacts\asr_smoke.json"
+          & $PY tests\video_smoke.py --video "$MP4" --out "..\artifacts\video_smoke.json"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: FullTest-artifacts
+          path: artifacts
