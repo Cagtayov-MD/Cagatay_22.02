@@ -23,7 +23,9 @@ config.json formatı:
     }
   }
 
-Çıktı: work_dir/audio_result.json
+Çıktı:
+  - work_dir/audio_result.json
+  - work_dir/audio_transcript.txt
 Exit codes:
   0 = başarılı
   1 = config hatası
@@ -91,6 +93,7 @@ def main():
 
     t0 = time.time()
     result_path = str(Path(work_dir) / "audio_result.json")
+    transcript_txt_path = str(Path(work_dir) / "audio_transcript.txt")
 
     try:
         # audio paketi import — bu noktada venv_audio aktif olmalı
@@ -103,8 +106,12 @@ def main():
         with open(result_path, "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
 
+        _write_transcript_txt(transcript_txt_path, result)
+
         elapsed = time.time() - t0
-        log_cb(f"\n[AudioWorker] Tamamlandı ({elapsed:.1f}s) → {result_path}")
+        log_cb(
+            f"\n[AudioWorker] Tamamlandı ({elapsed:.1f}s) → {result_path} | {transcript_txt_path}"
+        )
         sys.exit(0)
 
     except ImportError as e:
@@ -113,33 +120,76 @@ def main():
         log_cb(traceback.format_exc())
 
         # Hata sonucunu da JSON'a yaz — bridge okuyabilsin
-        _write_error_result(result_path, str(e), time.time() - t0)
+        error_result = _write_error_result(result_path, str(e), time.time() - t0)
+        _write_transcript_txt(transcript_txt_path, error_result)
         sys.exit(2)
 
     except Exception as e:
         log_cb(f"\n[AudioWorker] Pipeline hatası: {e}")
         log_cb(traceback.format_exc())
 
-        _write_error_result(result_path, str(e), time.time() - t0)
+        error_result = _write_error_result(result_path, str(e), time.time() - t0)
+        _write_transcript_txt(transcript_txt_path, error_result)
         sys.exit(2)
 
 
-def _write_error_result(path: str, error: str, elapsed: float):
+def _write_error_result(path: str, error: str, elapsed: float) -> dict:
     """Hata durumunda minimal sonuç JSON'ı yaz."""
+    result = {
+        "version": "1.0",
+        "status": "error",
+        "error": error,
+        "processing_time_sec": round(elapsed, 2),
+        "transcript": [],
+        "speakers": {},
+        "stages": {},
+    }
     try:
-        result = {
-            "version": "1.0",
-            "status": "error",
-            "error": error,
-            "processing_time_sec": round(elapsed, 2),
-            "transcript": [],
-            "speakers": {},
-            "stages": {},
-        }
         with open(path, "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
+    return result
+
+
+def _write_transcript_txt(path: str, result: dict):
+    """Transcript segmentlerini okunabilir TXT formatında yaz."""
+    segments = result.get("transcript") or []
+    lines = []
+
+    for seg in segments:
+        start = _safe_float(seg.get("start", 0.0))
+        end = _safe_float(seg.get("end", 0.0))
+        speaker = (seg.get("speaker") or "UNK").strip() or "UNK"
+        text = (seg.get("text") or "").strip()
+        if not text:
+            continue
+        lines.append(f"[{_fmt_hms(start)} - {_fmt_hms(end)}] {speaker}: {text}")
+
+    if not lines:
+        status = result.get("status", "unknown")
+        err = result.get("error", "")
+        lines = ["Transcript üretilemedi.", f"status={status}"]
+        if err:
+            lines.append(f"error={err}")
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def _fmt_hms(seconds: float) -> str:
+    total_ms = int(round(max(0.0, seconds) * 1000))
+    h, rem = divmod(total_ms, 3600 * 1000)
+    m, rem = divmod(rem, 60 * 1000)
+    s, ms = divmod(rem, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 if __name__ == "__main__":
