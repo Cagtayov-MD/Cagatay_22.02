@@ -81,6 +81,52 @@ class CreditsParser:
         # prefix yakalamada daha doğru sonuç için uzun anahtarları öne al
         self._role_keys_desc = sorted(self._role_map.keys(), key=len, reverse=True)
 
+        self._role_like_tokens = {
+            "teknik", "ekip", "crew", "cast", "oyuncular", "oyuncu",
+            "yonetmen", "yönetmen", "goruntu", "görüntü", "kurgu",
+            "muzik", "müzik", "senaryo", "yapim", "yapım", "editor",
+            "asistan", "coordinator", "koordinator", "koordınator",
+        }
+
+
+    def _looks_like_role_label(self, text: str) -> bool:
+        norm = normalize_tr_keep_spaces(text or "").lower()
+        norm = re.sub(r"[^a-zçğıöşü\s]", " ", norm)
+        tokens = [t for t in re.split(r"\s+", norm) if t]
+        if not tokens:
+            return False
+        if all(t in self._role_like_tokens for t in tokens):
+            return True
+        return len(tokens) <= 3 and any(t in self._role_like_tokens for t in tokens)
+
+    def _is_probable_name(self, text: str) -> bool:
+        """OCR gürültüsünü elemek için temel kişi adı kontrolü."""
+        t = (text or "").strip()
+        if self._is_fragment(t):
+            return False
+
+        if self._looks_like_role_label(t):
+            return False
+
+        alpha_only = re.sub(r"[^A-Za-zÇĞİÖŞÜçğıöşü]", "", t)
+        if len(alpha_only) < 3:
+            return False
+
+        # Name DB varsa daha güvenilir kontrol yap.
+        if self._name_db:
+            parts = [p for p in re.split(r"\s+", t) if p]
+            if not parts:
+                return False
+            known = sum(1 for p in parts if self._name_db.is_name(p))
+            # Tek kelimede doğrudan isim bekle, çok kelimede en az bir parça yeterli.
+            if len(parts) == 1:
+                return known >= 1
+            if known == 0:
+                # Bazen DB'de olmayan ama makul isimler olabilir; tamamen eleme.
+                return False
+
+        return True
+
     # ----------------------------
     # yardımcılar
     # ----------------------------
@@ -226,6 +272,12 @@ class CreditsParser:
             # normalize_tr_keep_spaces: boşlukları korur (normalize_tr kaldırır)
             norm_l = re.sub(r"\s+", " ", normalize_tr_keep_spaces(text)).strip().lower()
 
+            # Role benzeri başlık satırları (örn: TEKNIK EKIP)
+            if self._looks_like_role_label(text):
+                current_role = text.strip()
+                current_role_cat = "crew"
+                continue
+
             # Role line mı? (exact veya prefix)
             is_role = any(norm_l == k or norm_l.startswith(k + " ") for k in self._role_keys_desc)
             if is_role:
@@ -235,11 +287,14 @@ class CreditsParser:
             # Cast / Crew ayrımı
             if current_role_cat == "cast":
                 # "Actor  Character" gibi satırları yakalamaya çalış
-                parts = re.split(r"\s{2,}|\s-\s|—|–", text)
+                parts = re.split(r"\s{2,}|\s-\s|\s--\s|--|—|–|:", text)
                 parts = [p.strip() for p in parts if p and p.strip()]
 
                 actor = parts[0] if parts else ""
                 char_name = parts[1] if len(parts) >= 2 else ""
+
+                if not self._is_probable_name(actor):
+                    continue
 
                 actor = self._maybe_split_name(actor)
                 actor_key = ascii_key(actor)
@@ -263,11 +318,14 @@ class CreditsParser:
 
             else:
                 # crew satırları: "Name  Job"
-                parts = re.split(r"\s{2,}|—|–", text)
+                parts = re.split(r"\s{2,}|\s--\s|--|—|–|:", text)
                 parts = [p.strip() for p in parts if p and p.strip()]
 
                 name = parts[0] if parts else ""
                 job = parts[1] if len(parts) >= 2 else (current_role or "")
+
+                if not self._is_probable_name(name):
+                    continue
 
                 name = self._maybe_split_name(name)
                 name_key = ascii_key(name)
