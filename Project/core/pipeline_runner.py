@@ -291,15 +291,28 @@ class PipelineRunner:
 
         self._log(f"\n[AUDIO] Ses analizi başlatılıyor...")
 
+        # Kullanıcı config'de açıkça belirtmişse onu kullan; yoksa profil bazlı seç
+        stages = self.config.get("audio_stages", None)
+        if stages is None:
+            program_type = self.config.get("program_type", "film_dizi")
+            if program_type in ("film_dizi", "kisa_haber"):
+                # Sadece extract + transcribe (düz deşifre) — denoise/diarize gerekmez
+                stages = ["extract", "transcribe"]
+            else:
+                # mac, muzik_programi vb. tam pipeline gerektirir (ileride genişletilecek)
+                stages = ["extract", "denoise", "diarize", "transcribe", "post_process"]
+
+        self._log(f"  [Audio] Stages: {stages}")
+
         audio_cfg = {
-            "program_type": "film_dizi",
+            "program_type": self.config.get("program_type", "film_dizi"),
             "hf_token":     self.config.get("hf_token", ""),
             "ffmpeg":       self._ffmpeg,
             "ollama_url":   self.config.get("ollama_url", "http://localhost:11434"),
             "tmdb_cast":    [],
-            "stages": ["extract", "denoise", "diarize", "transcribe", "post_process"],
+            "stages": stages,
             "options": {
-                "denoise_enabled":  self.config.get("denoise_enabled", True),
+                "denoise_enabled":  "denoise" in stages,
                 "whisper_model":    self.config.get("whisper_model", "large-v3"),
                 "whisper_language": self.config.get("whisper_language", "tr"),
                 "compute_type":     self.config.get("compute_type", "float16"),
