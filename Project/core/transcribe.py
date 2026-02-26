@@ -52,9 +52,7 @@ class TranscribeStage:
         language = opts.get("whisper_language", "tr")
         batch_size = int(opts.get("batch_size", 16))
         device = VRAMManager.get_device()
-        compute_type = opts.get("compute_type") or (
-            "float16" if device == "cuda" else "int8"
-        )
+        compute_type = self._resolve_compute_type(opts.get("compute_type"), device)
 
         # CPU'da float16 hesaplama desteklenmediği için güvenli fallback.
         if device != "cuda" and str(compute_type).lower() == "float16":
@@ -160,6 +158,24 @@ class TranscribeStage:
                 del align_model
             VRAMManager.release()
             self._log(f"  [WhisperX] Model boşaltıldı (VRAM: {VRAMManager.get_usage()})")
+
+    def _resolve_compute_type(self, raw_compute_type, device: str) -> str:
+        """compute_type değerini normalize et ve cihaza göre güvenli hale getir."""
+        default_type = "float16" if device == "cuda" else "int8"
+
+        if raw_compute_type is None:
+            return default_type
+
+        normalized = str(raw_compute_type).strip().lower()
+        if normalized in ("", "none", "null", "auto"):
+            return default_type
+
+        # CPU'da float16 hesaplama desteklenmediği için güvenli fallback.
+        if device != "cuda" and normalized == "float16":
+            self._log("  [WhisperX] CPU'da float16 desteklenmiyor — int8'e düşülüyor")
+            return "int8"
+
+        return normalized
 
     def _assign_speakers_by_time(self, result: dict,
                                   diar_segments: list):
