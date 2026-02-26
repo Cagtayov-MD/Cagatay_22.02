@@ -23,7 +23,9 @@ config.json formatı:
     }
   }
 
-Çıktı: work_dir/audio_result.json
+Çıktı:
+  - work_dir/audio_result.json
+  - work_dir/audio_transcript.txt
 Exit codes:
   0 = başarılı
   1 = config hatası
@@ -33,8 +35,10 @@ Exit codes:
 import json
 import os
 import sys
+import tempfile
 import time
 import traceback
+import uuid
 from pathlib import Path
 
 
@@ -90,7 +94,23 @@ def main():
     log_cb(f"[AudioWorker] CWD: {os.getcwd()}")
 
     t0 = time.time()
+    trace_id = uuid.uuid4().hex[:12]
     result_path = str(Path(work_dir) / "audio_result.json")
+    transcript_txt_path = str(Path(work_dir) / "audio_transcript.txt")
+    lock_path = str(Path(work_dir) / "audio_worker.lock")
+
+    lock_fd = _acquire_lock(lock_path)
+    if lock_fd is None:
+        error_result = _build_error_result(
+            error="work_dir is locked by another audio worker",
+            elapsed=time.time() - t0,
+            error_code="WORKDIR_LOCKED",
+            trace_id=trace_id,
+        )
+        _write_json_atomic(result_path, error_result)
+        _write_transcript_txt_atomic(transcript_txt_path, error_result)
+        log_cb("[AudioWorker] Çalışma klasörü kilitli — başka worker aktif olabilir")
+        sys.exit(2)
 
     try:
         # audio paketi import — bu noktada venv_audio aktif olmalı
@@ -100,11 +120,14 @@ def main():
         result = pipeline.run()
 
         # Sonucu JSON'a yaz
-        with open(result_path, "w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
+        _write_json_atomic(result_path, result)
+
+        _write_transcript_txt_atomic(transcript_txt_path, result)
 
         elapsed = time.time() - t0
-        log_cb(f"\n[AudioWorker] Tamamlandı ({elapsed:.1f}s) → {result_path}")
+        log_cb(
+            f"\n[AudioWorker] Tamamlandı ({elapsed:.1f}s) → {result_path} | {transcript_txt_path}"
+        )
         sys.exit(0)
 
     except ImportError as e:
@@ -113,32 +136,147 @@ def main():
         log_cb(traceback.format_exc())
 
         # Hata sonucunu da JSON'a yaz — bridge okuyabilsin
-        _write_error_result(result_path, str(e), time.time() - t0)
+        error_result = _write_error_result(
+            result_path,
+            str(e),
+            time.time() - t0,
+            error_code="IMPORT_ERROR",
+            trace_id=trace_id,
+        )
+        _write_transcript_txt_atomic(transcript_txt_path, error_result)
         sys.exit(2)
 
     except Exception as e:
         log_cb(f"\n[AudioWorker] Pipeline hatası: {e}")
         log_cb(traceback.format_exc())
 
-        _write_error_result(result_path, str(e), time.time() - t0)
+        error_result = _write_error_result(
+            result_path,
+            str(e),
+            time.time() - t0,
+            error_code="PIPELINE_ERROR",
+            trace_id=trace_id,
+        )
+        _write_transcript_txt_atomic(transcript_txt_path, error_result)
         sys.exit(2)
 
+    finally:
+        _release_lock(lock_fd, lock_path)
 
-def _write_error_result(path: str, error: str, elapsed: float):
+
+def _write_error_result(path: str, error: str, elapsed: float,
+                        error_code: str = "PIPELINE_ERROR",
+                        trace_id: str = "") -> dict:
     """Hata durumunda minimal sonuç JSON'ı yaz."""
+    result = _build_error_result(error, elapsed, error_code=error_code, trace_id=trace_id)
     try:
-        result = {
-            "version": "1.0",
-            "status": "error",
-            "error": error,
-            "processing_time_sec": round(elapsed, 2),
-            "transcript": [],
-            "speakers": {},
-            "stages": {},
-        }
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
+        _write_json_atomic(path, result)
     except Exception:
+        pass
+    return result
+
+
+def _write_transcript_txt_atomic(path: str, result: dict):
+    """Transcript segmentlerini okunabilir TXT formatında yaz."""
+    segments = result.get("transcript") or []
+    lines = []
+
+    for seg in segments:
+        start = _safe_float(seg.get("start", 0.0))
+        end = _safe_float(seg.get("end", 0.0))
+        speaker = (seg.get("speaker") or "UNK").strip() or "UNK"
+        text = (seg.get("text") or "").strip()
+        if not text:
+            continue
+        lines.append(f"[{_fmt_hms(start)} - {_fmt_hms(end)}] {speaker}: {text}")
+
+    if not lines:
+        status = result.get("status", "unknown")
+        err = result.get("error", "")
+        lines = ["Transcript üretilemedi.", f"status={status}"]
+        if err:
+            lines.append(f"error={err}")
+
+    _write_text_atomic(path, "\n".join(lines) + "\n")
+
+
+def _fmt_hms(seconds: float) -> str:
+    total_ms = int(round(max(0.0, seconds) * 1000))
+    h, rem = divmod(total_ms, 3600 * 1000)
+    m, rem = divmod(rem, 60 * 1000)
+    s, ms = divmod(rem, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _build_error_result(error: str, elapsed: float,
+                        error_code: str = "PIPELINE_ERROR",
+                        trace_id: str = "") -> dict:
+    return {
+        "version": "1.0",
+        "status": "error",
+        "error": error,
+        "error_code": error_code,
+        "trace_id": trace_id,
+        "processing_time_sec": round(elapsed, 2),
+        "transcript": [],
+        "speakers": {},
+        "stages": {},
+    }
+
+
+def _write_json_atomic(path: str, payload: dict):
+    body = json.dumps(payload, ensure_ascii=False, indent=2)
+    _write_text_atomic(path, body)
+
+
+def _write_text_atomic(path: str, content: str):
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp_fd, tmp_path = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp",
+                                        dir=str(target.parent))
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, target)
+    finally:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
+
+
+def _acquire_lock(lock_path: str):
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    try:
+        fd = os.open(lock_path, flags)
+        os.write(fd, f"pid={os.getpid()} time={time.time()}\n".encode("utf-8"))
+        return fd
+    except FileExistsError:
+        return None
+    except OSError:
+        return None
+
+
+def _release_lock(lock_fd, lock_path: str):
+    try:
+        if lock_fd is not None:
+            os.close(lock_fd)
+    except OSError:
+        pass
+    try:
+        if lock_fd is not None and os.path.exists(lock_path):
+            os.remove(lock_path)
+    except OSError:
         pass
 
 
