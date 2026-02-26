@@ -54,6 +54,11 @@ class TranscribeStage:
         device = VRAMManager.get_device()
         compute_type = self._resolve_compute_type(opts.get("compute_type"), device)
 
+        # CPU'da float16 hesaplama desteklenmediği için güvenli fallback.
+        if device != "cuda" and str(compute_type).lower() == "float16":
+            self._log("  [WhisperX] CPU'da float16 desteklenmiyor — int8'e düşülüyor")
+            compute_type = "int8"
+
         whisperx_model = None
         align_model = None
 

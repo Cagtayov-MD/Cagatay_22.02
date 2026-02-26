@@ -75,19 +75,18 @@ def main():
 
     os.makedirs(work_dir, exist_ok=True)
 
-    # ── Log fonksiyonu ──
+    # ── Log ──
     log_path = str(Path(work_dir) / "audio_pipeline.log")
 
     def log_cb(msg: str):
-        """Hem stdout'a hem log dosyasına yaz."""
         print(msg, flush=True)
         try:
-            with open(log_path, "a", encoding="utf-8") as lf:
+            with open(log_path, "a", encoding="utf-8", newline="\n") as lf:
                 lf.write(msg + "\n")
         except Exception:
             pass
 
-    # ── Pipeline çalıştır ──
+    # ── Başlangıç ──
     log_cb(f"[AudioWorker] Başlıyor — {Path(video_path).name}")
     log_cb(f"[AudioWorker] Config: {config_path}")
     log_cb(f"[AudioWorker] Python: {sys.executable}")
