@@ -31,7 +31,6 @@ class TranscribeStage:
                 whisper_model: "large-v3" (default)
                 whisper_language: "tr" (default)
                 compute_type: "float16" (default, GPU) / "int8" (CPU)
-                hf_token: HuggingFace token (speaker atama için)
                 batch_size: 16 (default)
 
         Returns:
@@ -52,11 +51,15 @@ class TranscribeStage:
         model_name = opts.get("whisper_model", "large-v3")
         language = opts.get("whisper_language", "tr")
         batch_size = int(opts.get("batch_size", 16))
-        hf_token = opts.get("hf_token", "")
         device = VRAMManager.get_device()
         compute_type = opts.get("compute_type") or (
             "float16" if device == "cuda" else "int8"
         )
+
+        # CPU'da float16 hesaplama desteklenmediği için güvenli fallback.
+        if device != "cuda" and str(compute_type).lower() == "float16":
+            self._log("  [WhisperX] CPU'da float16 desteklenmiyor — int8'e düşülüyor")
+            compute_type = "int8"
 
         whisperx_model = None
         align_model = None

@@ -315,7 +315,9 @@ class PipelineRunner:
                 "denoise_enabled":  "denoise" in stages,
                 "whisper_model":    self.config.get("whisper_model", "large-v3"),
                 "whisper_language": self.config.get("whisper_language", "tr"),
-                "compute_type":     self.config.get("compute_type", "float16"),
+                # compute_type verilmezse TranscribeStage cihaz bazlı otomatik seçer
+                # (cuda=float16, cpu=int8). CPU'da float16 hatasını önler.
+                "compute_type":     self.config.get("compute_type"),
                 "max_speakers":     self.config.get("max_speakers", 10),
                 "ollama_model":     self.config.get("ollama_model", "llama3.1:8b"),
             },
