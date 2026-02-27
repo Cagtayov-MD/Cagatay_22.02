@@ -57,6 +57,40 @@ def test_transcript_txt_handles_bad_timestamps(tmp_path):
     assert "[00:00:01.250 - 00:00:00.000] SPEAKER_00: Merhaba" in txt
 
 
+def test_transcript_txt_surfaces_stage_transcribe_error(tmp_path):
+    """Transcribe stage hatası TXT fallback mesajına yansımalı."""
+    txt_path = tmp_path / "audio_transcript.txt"
+    result = {
+        "status": "error",
+        "error": "transcribe stage failed",
+        "transcript": [],
+        "stages": {
+            "transcribe": {"status": "error", "error": "whisperx not installed"}
+        },
+    }
+    audio_worker._write_transcript_txt_atomic(str(txt_path), result)
+    txt = txt_path.read_text(encoding="utf-8")
+    assert "Transcript üretilemedi." in txt
+    assert "status=error" in txt
+    assert "transcribe stage failed" in txt
+
+
+def test_transcript_txt_surfaces_stage_error_when_top_level_error_missing(tmp_path):
+    """Üst düzey error yoksa stage-level transcribe error gösterilmeli."""
+    txt_path = tmp_path / "audio_transcript.txt"
+    result = {
+        "status": "ok",
+        "transcript": [],
+        "stages": {
+            "transcribe": {"status": "error", "error": "whisperx not installed"}
+        },
+    }
+    audio_worker._write_transcript_txt_atomic(str(txt_path), result)
+    txt = txt_path.read_text(encoding="utf-8")
+    assert "Transcript üretilemedi." in txt
+    assert "whisperx not installed" in txt
+
+
 def test_lock_acquire_release(tmp_path):
     lock_path = tmp_path / "audio_worker.lock"
     fd1 = audio_worker._acquire_lock(str(lock_path))

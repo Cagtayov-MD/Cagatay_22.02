@@ -89,6 +89,8 @@ class AudioPipeline:
 
             if extract_result["status"] != "ok":
                 self._log(f"  !! Extract başarısız — pipeline durduruluyor")
+                result["status"] = "error"
+                result["error"] = extract_result.get("error", "extract stage failed")
                 result["processing_time_sec"] = round(time.time() - t0, 2)
                 return result
 
@@ -215,6 +217,9 @@ class AudioPipeline:
         # Finalize
         # ══════════════════════════════════════════════════════
         result["status"] = "ok"                                    # BUG-K1 FIX
+        if transcribe_result.get("status") == "error":
+            result["status"] = "error"
+            result["error"] = transcribe_result.get("error", "transcribe stage failed")
         result["processing_time_sec"] = round(time.time() - t0, 2)
 
         self._log(f"\n{'='*60}")

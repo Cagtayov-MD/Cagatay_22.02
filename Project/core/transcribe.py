@@ -181,10 +181,9 @@ class TranscribeStage:
                                   diar_segments: list):
         """
         WhisperX sonuçlarına zaman bazlı konuşmacı ataması.
-        Her transcript segment'in orta noktasına en yakın diarizasyon segment'ini bul.
+        Her transcript segment için en fazla örtüşen diarizasyon segment'ini bul.
         """
         for seg in result.get("segments", []):
-            mid = (seg.get("start", 0) + seg.get("end", 0)) / 2.0
             best_speaker = ""
             best_overlap = 0.0
 
