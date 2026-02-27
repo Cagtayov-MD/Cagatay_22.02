@@ -320,7 +320,7 @@ class PipelineRunner:
                 "compute_type":     self.config.get("compute_type"),
                 "max_speakers":     self.config.get("max_speakers", 10),
                 "ollama_model":     self.config.get("ollama_model", "llama3.1:8b"),
-                "batch_size":       self.config.get("batch_size", 16),
+                "batch_size":       self.config.get("batch_size"),
             },
         }
 

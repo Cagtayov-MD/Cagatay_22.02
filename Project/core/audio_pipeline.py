@@ -163,7 +163,7 @@ class AudioPipeline:
                 whisper_model=options.get("whisper_model", "large-v3"),
                 whisper_language=options.get("whisper_language", "tr"),
                 compute_type=options.get("compute_type"),
-                batch_size=options.get("batch_size", 16),
+                batch_size=options.get("batch_size"),
             )
             result["stages"]["transcribe"] = {
                 "duration_sec": transcribe_result["stage_time_sec"],

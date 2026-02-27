@@ -16,7 +16,7 @@ config.json formatı:
     "options": {
       "whisper_model": "large-v3",
       "whisper_language": "tr",
-      "compute_type": "float16",
+      "compute_type": null,
       "max_speakers": 10,
       "denoise_enabled": true,
       "ollama_model": "llama3.1:8b"

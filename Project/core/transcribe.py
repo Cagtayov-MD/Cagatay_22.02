@@ -23,8 +23,8 @@ class TranscribeStage:
             opts:
                 whisper_model: "large-v3" (default)
                 whisper_language: "tr" (default)
-                compute_type: "float16" (default, GPU) / "int8" (CPU)
-                batch_size: 16 (default)
+                compute_type: "float16" (GPU) / "int8" (CPU) — None=otomatik
+                batch_size: GPU varsayılan=16, CPU varsayılan=1
 
         Returns:
             {
@@ -43,9 +43,11 @@ class TranscribeStage:
         t0 = time.time()
         model_name = opts.get("whisper_model", "large-v3")
         language = opts.get("whisper_language", "tr")
-        batch_size = int(opts.get("batch_size", 16))
         device = VRAMManager.get_device()
         compute_type = self._resolve_compute_type(opts.get("compute_type"), device)
+        # CPU'da batch_size=16 bellek sorununa yol açabilir; varsayılan CPU=1, GPU=16
+        default_batch = 1 if device != "cuda" else 16
+        batch_size = int(opts.get("batch_size") or default_batch)
 
         if compute_type is None:
             compute_type = "float16" if device == "cuda" else "int8"
