@@ -1,11 +1,4 @@
 """
-transcribe.py — [D] WhisperX large-v3 Türkçe transcript + kelime hizalama.
-
-Girdi:  audio_clean.wav (16kHz mono) + diarization segments
-Çıktı:  segments[ {start, end, speaker_id, text, confidence, words} ]
-
-Kelime bazlı timestamp + konuşmacı ataması.
-
 VRAM: ~3-4 GB → stage sonrası boşaltılır.
 """
 
@@ -54,7 +47,9 @@ class TranscribeStage:
         device = VRAMManager.get_device()
         compute_type = self._resolve_compute_type(opts.get("compute_type"), device)
 
-        # CPU'da float16 hesaplama desteklenmediği için güvenli fallback.
+        if compute_type is None:
+            compute_type = "float16" if device == "cuda" else "int8"
+
         if device != "cuda" and str(compute_type).lower() == "float16":
             self._log("  [WhisperX] CPU'da float16 desteklenmiyor — int8'e düşülüyor")
             compute_type = "int8"
@@ -65,7 +60,6 @@ class TranscribeStage:
         try:
             import whisperx
 
-            # ── Model yükleme ──
             self._log(f"  [WhisperX] {model_name} yükleniyor ({device}, {compute_type})...")
             whisperx_model = whisperx.load_model(
                 model_name, device,
@@ -74,7 +68,6 @@ class TranscribeStage:
             )
             self._log(f"  [WhisperX] Yüklendi (VRAM: {VRAMManager.get_usage()})")
 
-            # ── Transkripsiyon ──
             self._log("  [WhisperX] Transkripsiyon başlıyor...")
             result = whisperx_model.transcribe(
                 audio_path,
@@ -82,7 +75,6 @@ class TranscribeStage:
                 language=language,
             )
 
-            # ── Kelime hizalama ──
             try:
                 self._log("  [WhisperX] Kelime hizalama...")
                 align_model, metadata = whisperx.load_align_model(
@@ -95,14 +87,10 @@ class TranscribeStage:
             except Exception as e:
                 self._log(f"  [WhisperX] Hizalama hatası: {e} — devam ediliyor")
 
-            # ── Konuşmacı ataması (diarizasyon varsa) ──
-            # BUG-K3 FIX: DiarizationPipeline burada TEKRAR oluşturulmaz.
-            # DiarizeStage [C] zaten çalıştırdı. Sadece zaman bazlı eşleştirme yap.
             diar_segments = (diarization or {}).get("segments", [])
             if diar_segments:
                 self._assign_speakers_by_time(result, diar_segments)
 
-            # ── Sonuçları formatla ──
             segments = []
             for seg in result.get("segments", []):
                 words = seg.get("words", [])
@@ -151,7 +139,6 @@ class TranscribeStage:
             }
 
         finally:
-            # VRAM boşalt
             if whisperx_model is not None:
                 del whisperx_model
             if align_model is not None:
@@ -170,7 +157,6 @@ class TranscribeStage:
         if normalized in ("", "none", "null", "auto"):
             return default_type
 
-        # CPU'da float16 hesaplama desteklenmediği için güvenli fallback.
         if device != "cuda" and normalized == "float16":
             self._log("  [WhisperX] CPU'da float16 desteklenmiyor — int8'e düşülüyor")
             return "int8"
@@ -181,14 +167,14 @@ class TranscribeStage:
                                   diar_segments: list):
         """
         WhisperX sonuçlarına zaman bazlı konuşmacı ataması.
-        Her transcript segment için en fazla örtüşen diarizasyon segment'ini bul.
+        Her transcript segment'in orta noktasına en yakın diarizasyon segment'ini bul.
         """
         for seg in result.get("segments", []):
+            mid = (seg.get("start", 0) + seg.get("end", 0)) / 2.0
             best_speaker = ""
             best_overlap = 0.0
 
             for ds in diar_segments:
-                # Overlap hesabı
                 overlap_start = max(seg.get("start", 0), ds["start"])
                 overlap_end = min(seg.get("end", 0), ds["end"])
                 overlap = max(0, overlap_end - overlap_start)
