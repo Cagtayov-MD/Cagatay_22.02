@@ -192,6 +192,11 @@ def _write_transcript_txt_atomic(path: str, result: dict):
     if not lines:
         status = result.get("status", "unknown")
         err = result.get("error", "")
+        # Also surface stage-level transcribe error when top-level error is absent
+        if not err:
+            err = (result.get("stages", {})
+                         .get("transcribe", {})
+                         .get("error", ""))
         lines = ["Transcript üretilemedi.", f"status={status}"]
         if err:
             lines.append(f"error={err}")
