@@ -61,7 +61,14 @@ class PipelineRunner:
         # QwenVerifier
         qwen_enabled = bool(self.config.get("qwen_verify", True))
         qwen_model   = self.config.get("qwen_model", "qwen3-vl:8b")
-        qwen_thresh  = float(self.config.get("qwen_threshold", 0.80))
+        # Safe float conversion with validation
+        try:
+            qwen_thresh = float(self.config.get("qwen_threshold", 0.80))
+            # Clamp to valid range [0.0, 1.0]
+            qwen_thresh = max(0.0, min(1.0, qwen_thresh))
+        except (ValueError, TypeError) as e:
+            self._log(f"  [INIT] Geçersiz qwen_threshold değeri, varsayılan 0.80 kullanılıyor: {e}")
+            qwen_thresh = 0.80
         self._qwen = QwenVerifier(
             model=qwen_model,
             confidence_threshold=qwen_thresh,

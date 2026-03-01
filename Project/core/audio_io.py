@@ -13,14 +13,17 @@ def get_wav_duration(wav_path: str) -> float:
         import torchaudio
         info = torchaudio.info(wav_path)
         return info.num_frames / info.sample_rate
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logging.debug(f"torchaudio failed for {wav_path}: {e}")
     # Fallback: wave modülü (stdlib)
     try:
         import wave
         with wave.open(wav_path, 'rb') as wf:
             return wf.getnframes() / wf.getframerate()
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.warning(f"Failed to get WAV duration for {wav_path}: {e}")
         return 0.0
 
 
@@ -45,7 +48,9 @@ def get_wav_info(wav_path: str) -> dict:
             result["sample_rate"] = wf.getframerate()
             result["channels"] = wf.getnchannels()
             result["duration_sec"] = round(wf.getnframes() / wf.getframerate(), 2)
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.debug(f"Failed to get WAV info with wave module for {wav_path}: {e}")
         result["duration_sec"] = get_wav_duration(wav_path)
 
     return result

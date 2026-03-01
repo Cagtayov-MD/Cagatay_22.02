@@ -39,6 +39,19 @@ class ExtractStage:
             }
         """
         t0 = time.time()
+
+        # Input validation
+        if not video_path or not Path(video_path).is_file():
+            self._log(f"  [Extract] HATA: Video dosyası bulunamadı: {video_path}")
+            return {
+                "status": "error",
+                "wav_16k": "",
+                "wav_48k": "",
+                "duration_sec": 0.0,
+                "stage_time_sec": round(time.time() - t0, 2),
+                "error": f"Video dosyası bulunamadı: {video_path}",
+            }
+
         os.makedirs(work_dir, exist_ok=True)
 
         wav_16k = str(Path(work_dir) / "audio_raw_16k.wav")
@@ -64,8 +77,12 @@ class ExtractStage:
                 "error": str(e),
             }
 
-        # Süre hesabı
-        duration = self._get_duration(wav_16k)
+        # Süre hesabı - validate file exists first
+        if not Path(wav_16k).is_file():
+            self._log(f"  [Extract] UYARI: 16kHz WAV oluşmadı: {wav_16k}")
+            duration = 0.0
+        else:
+            duration = self._get_duration(wav_16k)
 
         elapsed = round(time.time() - t0, 2)
         self._log(f"  [Extract] Tamamlandı: {duration:.0f}s audio ({elapsed:.1f}s)")
@@ -117,5 +134,7 @@ class ExtractStage:
             import wave
             with wave.open(wav_path, 'rb') as wf:
                 return wf.getnframes() / wf.getframerate()
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.warning(f"Failed to get WAV duration for {wav_path}: {e}")
             return 0.0

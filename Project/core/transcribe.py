@@ -139,15 +139,31 @@ class TranscribeStage:
         return normalized
 
     def _assign_speakers(self, segments, diar_segments):
+        """Assign speakers from diarization to transcription segments."""
+        def safe_float(val, default=0.0):
+            """Safely convert to float, handling None and invalid values."""
+            if val is None:
+                return default
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                return default
+
         for seg in segments:
             best_speaker = ''
             best_overlap = 0.0
             for ds in diar_segments:
-                overlap_start = max(seg['start'], ds['start'])
-                overlap_end = min(seg['end'], ds['end'])
+                # Safe float conversion for timestamps
+                ds_start = safe_float(ds.get('start', 0))
+                ds_end = safe_float(ds.get('end', 0))
+                seg_start = safe_float(seg.get('start', 0))
+                seg_end = safe_float(seg.get('end', 0))
+
+                overlap_start = max(seg_start, ds_start)
+                overlap_end = min(seg_end, ds_end)
                 overlap = max(0, overlap_end - overlap_start)
                 if overlap > best_overlap:
                     best_overlap = overlap
-                    best_speaker = ds['speaker']
+                    best_speaker = ds.get('speaker', '')
             if best_speaker:
                 seg['speaker'] = best_speaker

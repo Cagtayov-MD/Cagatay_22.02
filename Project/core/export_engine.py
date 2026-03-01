@@ -64,8 +64,10 @@ def _split_name(word: str) -> str:
         try:
             from utils.turkish import split_concatenated_name as _scn
             return _scn(word)
-        except Exception:
-            pass
+        except Exception as e:
+            # Log the error but don't fail
+            import logging
+            logging.debug(f"split_concatenated_name failed for '{word}': {e}")
     return word
 
 
@@ -148,8 +150,10 @@ def _best_actor(actors: list) -> str:
             else:
                 fixed_words.append(w)
         best = ' '.join(fixed_words)
-    except Exception:
-        pass
+    except Exception as e:
+        # Log the error for debugging but return best effort result
+        import logging
+        logging.debug(f"_ocr_correct_name exception for '{actor}': {e}")
     return best
 
 def _ocr_correct_name_legacy(name: str) -> str:
@@ -413,8 +417,10 @@ class ExportEngine:
             if credits_data.get('crew'):
                 credits_data['crew'] = _canonicalize_crew(credits_data['crew'])
                 credits_data['technical_crew'] = list(credits_data['crew'])
-        except Exception:
-            pass
+        except Exception as e:
+            # Log canonicalization errors but continue with uncanonicalized data
+            import logging
+            logging.warning(f"Credits canonicalization failed: {e}")
 
         if not keywords:
             keywords = [c["actor_name"] for c in credits_data.get("cast", [])[:20]

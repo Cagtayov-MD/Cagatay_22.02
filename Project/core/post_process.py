@@ -243,15 +243,19 @@ class PostProcessStage:
             return name_parts[0] in context_words
 
         # Sliding window
-        window_size = len(name_parts) + 1  # +1 ara kelimeye izin ver
+        # Allow up to 1 extra word gap between name parts
+        max_span = len(name_parts) + 1  # +1 allows 1 word gap
         for i in range(len(context_words) - len(name_parts) + 1):
-            window = context_words[i:i + window_size]
+            # Extract window large enough to check for gaps
+            window_end = min(i + max_span, len(context_words))
+            window = context_words[i:window_end]
             positions = []
             for part in name_parts:
                 for j, w in enumerate(window):
                     if w == part and j not in positions:
                         positions.append(j)
                         break
+            # Check if all parts found in order with acceptable span
             if (len(positions) == len(name_parts) and
                     positions == sorted(positions) and
                     positions[-1] - positions[0] <= len(name_parts)):
