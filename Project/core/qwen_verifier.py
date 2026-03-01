@@ -77,11 +77,13 @@ class QwenVerifier:
                  model: str = DEFAULT_MODEL,
                  confidence_threshold: float = DEFAULT_THRESHOLD,
                  ollama_url: str = OLLAMA_API_URL,
-                 enabled: bool = True):
+                 enabled: bool = True,
+                 name_checker=None):
         self.model = model
         self.threshold = confidence_threshold
         self.url = ollama_url
         self.enabled = enabled
+        self.name_checker = name_checker
         self._available = None  # lazy check
 
     def is_available(self) -> bool:
@@ -145,7 +147,11 @@ class QwenVerifier:
 
             # Metin kaliteli mi? (Türkçe karakter, düzgün büyük/küçük harf)
             if conf >= self.threshold and self._is_quality_text(text):
-                continue  # güvenilir, dokunma
+                # Çok güvenli + kaliteli satırlar normalde atlanır.
+                # Ancak kişi adı gibi görünen ama NameDB'de olmayan bir değer
+                # (örn: OCR kaynaklı küçük harf/harf kayması) yine de doğrulanmalı.
+                if not self._should_force_verify_name_like_text(text):
+                    continue  # güvenilir, dokunma
 
             # conf >= threshold ama kalitesiz metin → Qwen'e gönder (DYAYUCE gibi durumlar)
             # veya conf noise_threshold-threshold arası → Qwen'e gönder
@@ -180,6 +186,34 @@ class QwenVerifier:
 
         log(f"  [Qwen] {fixed_count} satır düzeltildi")
         return ocr_lines
+
+    def _should_force_verify_name_like_text(self, text: str) -> bool:
+        """
+        Yüksek confidence satırlar için ek güvenlik:
+        Kişi adı gibi görünen satır NameDB'de yoksa Qwen doğrulamasına zorla gönder.
+        """
+        if not self.name_checker:
+            return False
+        if not self._looks_like_person_name(text):
+            return False
+        try:
+            return not bool(self.name_checker(text))
+        except Exception:
+            return False
+
+    @staticmethod
+    def _looks_like_person_name(text: str) -> bool:
+        words = [w for w in text.strip().split() if w]
+        if len(words) < 2:
+            return False
+        # Tipik isim biçimi: en az iki kelime, kelimeler alfabetik + baş harf büyük
+        for w in words:
+            if not w[0].isalpha() or not w[0].isupper():
+                return False
+            tail = w[1:]
+            if tail and not all(ch.isalpha() or ch in "'-" for ch in tail):
+                return False
+        return True
 
     def _is_quality_text(self, text: str) -> bool:
         """

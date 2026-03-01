@@ -78,6 +78,7 @@ class PipelineRunner:
             model=qwen_model,
             confidence_threshold=qwen_thresh,
             enabled=qwen_enabled,
+            name_checker=self._name_db.is_name,
         )
 
         # LLMCastFilter config
