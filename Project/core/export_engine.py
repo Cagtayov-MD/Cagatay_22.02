@@ -307,12 +307,21 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
             b = char_buckets.get(key)
             if not b:
                 char_buckets[key] = {"actor_variants": [a] if a else [],
-                                     "char_variants": [c]}
+                                     "char_variants": [c],
+                                     "confidences": [row.get("confidence", 0.6)],
+                                     "verified": [row.get("is_verified_name", False)]}
             else:
                 if a: b["actor_variants"].append(a)
                 b["char_variants"].append(c)
+                b["confidences"].append(row.get("confidence", 0.6))
+                b["verified"].append(row.get("is_verified_name", False))
         else:
-            no_char_rows.append({"actor_name": a, "character_name": ""})
+            no_char_rows.append({
+                "actor_name": a,
+                "character_name": "",
+                "confidence": row.get("confidence", 0.6),
+                "is_verified_name": row.get("is_verified_name", False),
+            })
 
     # Karakter bazlı bucket'lardan en iyi oyuncu + karakter seç
     char_based: list[dict] = []
@@ -327,7 +336,14 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
             continue
         if actor_key:
             seen_actors.add(actor_key)
-        char_based.append({"actor_name": actor, "character_name": char})
+        best_conf = max(b.get("confidences") or [0.6])
+        is_verified = any(b.get("verified") or [])
+        char_based.append({
+            "actor_name": actor,
+            "character_name": char,
+            "confidence": round(best_conf, 3),
+            "is_verified_name": is_verified,
+        })
 
     # ── GRUP 2: Karakter ismi olmayanlar (açılış jenerik) ──
     actor_buckets: dict[str, dict] = {}
@@ -336,9 +352,15 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
         key = _norm_key(a)
         if not key: continue
         if key not in actor_buckets:
-            actor_buckets[key] = {"actor_variants": [a]}
+            actor_buckets[key] = {
+                "actor_variants": [a],
+                "confidences": [row.get("confidence", 0.6)],
+                "verified": [row.get("is_verified_name", False)],
+            }
         else:
             actor_buckets[key]["actor_variants"].append(a)
+            actor_buckets[key]["confidences"].append(row.get("confidence", 0.6))
+            actor_buckets[key]["verified"].append(row.get("is_verified_name", False))
 
     no_char_based: list[dict] = []
     for key, b in actor_buckets.items():
@@ -346,12 +368,26 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
             continue  # kapanış jenerikle çakışıyorsa atla
         actor = _best_actor([v for v in b["actor_variants"] if v])
         if actor:
-            no_char_based.append({"actor_name": actor, "character_name": ""})
+            best_conf = max(b.get("confidences") or [0.6])
+            is_verified = any(b.get("verified") or [])
+            no_char_based.append({
+                "actor_name": actor,
+                "character_name": "",
+                "confidence": round(best_conf, 3),
+                "is_verified_name": is_verified,
+            })
 
     # Birleştir: önce karakter bilgisi olanlar, sonra olmayanlar
     out = char_based + no_char_based
     out.sort(key=lambda r: (_norm_key(r.get("character_name", "")),
                              _norm_key(r.get("actor_name", ""))))
+
+    # Çöp filtresi: verified değilse ve confidence < 0.50 ise çıkar
+    out = [
+        r for r in out
+        if r.get("is_verified_name") or r.get("confidence", 0.6) >= 0.50
+    ]
+
     return out
 
 def _canonicalize_crew(crew: list[dict]) -> list[dict]:
@@ -497,9 +533,11 @@ class ExportEngine:
         L.append(f"  Icerik     : {p.get('content_type','?')}")
         L.append(f"  OCR Motor  : {p.get('ocr_engine','?')}")
         asr_model = "—"
+        asr_engine = "ASR"
         if audio_result and isinstance(audio_result, dict):
+            asr_engine = audio_result.get("asr_engine") or "ASR"
             asr_model = audio_result.get("whisper_model") or audio_result.get("model", "—")
-        L.append(f"  ASR Motor  : WhisperX ({asr_model})")
+        L.append(f"  ASR Motor  : {asr_engine} ({asr_model})")
         L.append(f"  Toplam sure: {p['total_duration_sec']:.1f}s ({p['speed_ratio']}x)")
 
         # ASR BİLGİLERİ
@@ -537,15 +575,18 @@ class ExportEngine:
         L.append("  OYUNCULAR")
         L.append(sep2)
         if cr.get("cast"):
-            L.append(f"  {'Karakter Adı':22s}  --  Gerçek İsim")
-            L.append(f"  {'─'*45}")
+            L.append(f"  {'Karakter Adı':22s}  --  {'Gerçek İsim':<22s}  [Skor]")
+            L.append(f"  {'─'*63}")
             for c in cr["cast"]:
                 ch = c.get("character_name") or ""
                 ac = c.get("actor_name") or ""
+                score = c.get("confidence")
+                score_str = f"[{score:.2f}]" if score is not None else ""
+                icon = "✓" if c.get("is_verified_name") else "?"
                 if ch:
-                    L.append(f"  {ch:22s}  --  {ac}")
+                    L.append(f"  {icon} {ch:22s}  --  {ac:<22s}  {score_str}")
                 else:
-                    L.append(f"  {ac}")
+                    L.append(f"  {icon} {ac:<46s}  {score_str}")
         else:
             L.append("  (Oyuncu verisi yok)")
 
@@ -617,9 +658,11 @@ class ExportEngine:
         L.append(f"  Dosya: {video_info.get('filename', '')}")
         L.append(f"  Sure : {video_info.get('duration_human', '')}")
         asr_model = "—"
+        asr_engine = "ASR"
         if audio_result and isinstance(audio_result, dict):
+            asr_engine = audio_result.get("asr_engine") or "ASR"
             asr_model = audio_result.get("whisper_model") or audio_result.get("model", "—")
-        L.append(f"  ASR  : WhisperX {asr_model}")
+        L.append(f"  ASR  : {asr_engine} {asr_model}")
         L.append(f"\n{sep2}\n")
 
         transcript = []
