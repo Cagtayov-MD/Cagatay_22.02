@@ -24,10 +24,17 @@ from pathlib import Path
 
 try:
     import cv2
-    import numpy as np
     HAS_CV2 = True
 except ImportError:
     HAS_CV2 = False
+    cv2 = None
+
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
+    np = None
 
 
 # ── Sabitler ──────────────────────────────────────────────────────
@@ -208,7 +215,7 @@ class QwenVerifier:
                 return None
 
             # bbox crop varsa daha odaklı prompt kullan
-            if bbox and len(bbox) == 4 and HAS_CV2:
+            if bbox and len(bbox) == 4 and HAS_CV2 and HAS_NUMPY:
                 prompt = PROMPT_TEMPLATE_CROP.format(ocr_text=ocr_text)
             else:
                 prompt = PROMPT_TEMPLATE.format(ocr_text=ocr_text)
@@ -282,7 +289,7 @@ class QwenVerifier:
         Padding (%30): bağlam korunsun (üst/alt satırdaki ipuçları).
         """
         try:
-            if bbox and len(bbox) == 4 and HAS_CV2:
+            if bbox and len(bbox) == 4 and HAS_CV2 and HAS_NUMPY:
                 img = cv2.imread(frame_path)
                 if img is not None:
                     h, w = img.shape[:2]
