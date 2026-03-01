@@ -309,18 +309,18 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
                 char_buckets[key] = {"actor_variants": [a] if a else [],
                                      "char_variants": [c],
                                      "confidences": [row.get("confidence", 0.6)],
-                                     "verified": [row.get("is_verified_name", False)]}
+                                     "verified": [row.get("is_verified_name", False) or row.get("is_llm_verified", False)]}
             else:
                 if a: b["actor_variants"].append(a)
                 b["char_variants"].append(c)
                 b["confidences"].append(row.get("confidence", 0.6))
-                b["verified"].append(row.get("is_verified_name", False))
+                b["verified"].append(row.get("is_verified_name", False) or row.get("is_llm_verified", False))
         else:
             no_char_rows.append({
                 "actor_name": a,
                 "character_name": "",
                 "confidence": row.get("confidence", 0.6),
-                "is_verified_name": row.get("is_verified_name", False),
+                "is_verified_name": row.get("is_verified_name", False) or row.get("is_llm_verified", False),
             })
 
     # Karakter bazlı bucket'lardan en iyi oyuncu + karakter seç
@@ -343,6 +343,7 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
             "character_name": char,
             "confidence": round(best_conf, 3),
             "is_verified_name": is_verified,
+            "is_llm_verified": is_verified,
         })
 
     # ── GRUP 2: Karakter ismi olmayanlar (açılış jenerik) ──
@@ -375,6 +376,7 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
                 "character_name": "",
                 "confidence": round(best_conf, 3),
                 "is_verified_name": is_verified,
+                "is_llm_verified": is_verified,
             })
 
     # Birleştir: önce karakter bilgisi olanlar, sonra olmayanlar
@@ -382,13 +384,15 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
     out.sort(key=lambda r: (_norm_key(r.get("character_name", "")),
                              _norm_key(r.get("actor_name", ""))))
 
-    # Çöp filtresi: verified değilse ve confidence < 0.50 ise çıkar
-    out = [
-        r for r in out
-        if r.get("is_verified_name") or r.get("confidence", 0.6) >= 0.50
-    ]
+    # Çöp filtresi: doğrulanmamış ve düşük confidence → çıkar
+    final = []
+    for row in out:
+        verified = row.get("is_verified_name", False) or row.get("is_llm_verified", False)
+        conf = row.get("confidence", 0.5)
+        if verified or conf >= 0.45:
+            final.append(row)
 
-    return out
+    return final
 
 def _canonicalize_crew(crew: list[dict]) -> list[dict]:
     buckets: dict[tuple[str,str], dict] = {}
@@ -582,7 +586,7 @@ class ExportEngine:
                 ac = c.get("actor_name") or ""
                 score = c.get("confidence")
                 score_str = f"[{score:.2f}]" if score is not None else ""
-                icon = "✓" if c.get("is_verified_name") else "?"
+                icon = "✓" if (c.get("is_verified_name") or c.get("is_llm_verified")) else "?"
                 if ch:
                     L.append(f"  {icon} {ch:22s}  --  {ac:<22s}  {score_str}")
                 else:
