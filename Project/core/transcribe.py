@@ -1,10 +1,9 @@
-@"
-\"\"\"
+"""
 [D] TRANSCRIBE - faster-whisper large-v3 Turkce transcript + kelime timestamp.
 
 Bu stage, AudioPipeline standardina uyar:
   run(context: dict, config: dict) -> dict
-\"\"\"
+"""
 
 import time
 from audio.utils.vram_manager import VRAMManager
@@ -32,23 +31,23 @@ class TranscribeStage:
         if not audio_path and isinstance(context.get('extract'), dict):
             audio_path = context['extract'].get('wav_16k') or context['extract'].get('wav_48k')
 
-        self._log(f\"  [Whisper] Input WAV: {audio_path}\")
+        self._log(f"  [Whisper] Input WAV: {audio_path}")
         if not audio_path:
             return {
                 'status': 'error',
                 'segments': [],
                 'total_segments': 0,
                 'stage_time_sec': round(time.time() - t0, 2),
-                'error': \"missing_audio_path (expected context['denoise'].clean_wav or context['extract'].wav_16k)\",
+                'error': "missing_audio_path (expected context['denoise'].clean_wav or context['extract'].wav_16k)",
             }
 
         fw_model = None
         try:
             from faster_whisper import WhisperModel
 
-            self._log(f\"  [Whisper] {model_name} yukleniyor ({device}, {compute_type})...\")
+            self._log(f"  [Whisper] {model_name} yukleniyor ({device}, {compute_type})...")
             fw_model = WhisperModel(model_name, device=device, compute_type=compute_type)
-            self._log(f\"  [Whisper] Yuklendi (VRAM: {VRAMManager.get_usage()})\")
+            self._log(f"  [Whisper] Yuklendi (VRAM: {VRAMManager.get_usage()})")
             self._log('  [Whisper] Transkripsiyon basliyor...')
 
             raw_segments, info = fw_model.transcribe(
@@ -60,7 +59,7 @@ class TranscribeStage:
                 vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=200),
             )
 
-            self._log(f\"  [Whisper] Dil: {info.language} (olasilik: {info.language_probability:.2f})\")
+            self._log(f"  [Whisper] Dil: {info.language} (olasilik: {info.language_probability:.2f})")
 
             segments = []
             for seg in raw_segments:
@@ -91,7 +90,7 @@ class TranscribeStage:
                 self._assign_speakers(segments, diar_segments)
 
             elapsed = round(time.time() - t0, 2)
-            self._log(f\"  [Whisper] {len(segments)} segment ({elapsed:.1f}s)\")
+            self._log(f"  [Whisper] {len(segments)} segment ({elapsed:.1f}s)")
 
             return {
                 'status': 'ok',
@@ -111,7 +110,7 @@ class TranscribeStage:
             }
 
         except Exception as e:
-            self._log(f\"  [Whisper] Hata: {e}\")
+            self._log(f"  [Whisper] Hata: {e}")
             import traceback
             traceback.print_exc()
             return {
@@ -126,7 +125,7 @@ class TranscribeStage:
             if fw_model is not None:
                 del fw_model
             VRAMManager.release()
-            self._log(f\"  [Whisper] Model bosaltildi (VRAM: {VRAMManager.get_usage()})\")
+            self._log(f"  [Whisper] Model bosaltildi (VRAM: {VRAMManager.get_usage()})")
 
     def _resolve_compute_type(self, raw_compute_type, device):
         default_type = 'float16' if device == 'cuda' else 'int8'
@@ -152,4 +151,3 @@ class TranscribeStage:
                     best_speaker = ds['speaker']
             if best_speaker:
                 seg['speaker'] = best_speaker
-"@ | Set-Content "F:\Project\audio\stages\transcribe.py" -Encoding UTF8
