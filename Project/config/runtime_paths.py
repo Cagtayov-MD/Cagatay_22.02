@@ -13,26 +13,25 @@ from pathlib import Path
 from typing import Any
 
 # Kullanıcı kararı: sabit yollar
-NAME_DB_DIR = Path(os.environ.get("NAME_DB_DIR", r"F:\Source\name_db"))
-NAME_DB_ROLE_ALIAS_TR = NAME_DB_DIR / "credits_role_alias_tr.json"
-NAME_DB_NAMES_BY_COUNTRY = NAME_DB_DIR / "names_by_country.json"
+# SECURITY: Hardcoded paths removed - all paths must be set via environment variables
+# This prevents accidental credential exposure in the codebase
+NAME_DB_DIR = Path(os.environ.get("NAME_DB_DIR", ""))
+NAME_DB_ROLE_ALIAS_TR = NAME_DB_DIR / "credits_role_alias_tr.json" if NAME_DB_DIR else Path("")
+NAME_DB_NAMES_BY_COUNTRY = NAME_DB_DIR / "names_by_country.json" if NAME_DB_DIR else Path("")
 
-API_KEYS_JSON = Path(os.environ.get("API_KEYS_JSON", r"F:\Project\config\api_keys.json"))
-GOOGLE_KEYS_JSON = Path(
-    os.environ.get(
-        "GOOGLE_KEYS_JSON",
-        r"F:\Project\config\video-analiz-sistemi-a59996f04788.json",
-    )
-)
-LOGOLAR_DIR = Path(os.environ.get("LOGOLAR_DIR", r"F:\Source\Logo"))
+# API keys and credentials must be configured via environment variables
+# No default paths to prevent credential exposure
+API_KEYS_JSON = Path(os.environ.get("API_KEYS_JSON", ""))
+GOOGLE_KEYS_JSON = Path(os.environ.get("GOOGLE_KEYS_JSON", ""))
+LOGOLAR_DIR = Path(os.environ.get("LOGOLAR_DIR", ""))
 
-FFMPEG_BIN_DIR = Path(os.environ.get("FFMPEG_BIN_DIR", r"F:\Source\ffmpeg\bin"))
+FFMPEG_BIN_DIR = Path(os.environ.get("FFMPEG_BIN_DIR", ""))
 
 # İsim DB için olası dosyalar (varsa ilk bulunan kullanılır)
 NAME_DB_SQLITE_CANDIDATES = [
-    NAME_DB_DIR / "compiled" / "names.db",
-    NAME_DB_DIR / "compiled" / "names.sqlite",
-    NAME_DB_DIR / "compiled" / "names.sql",
+    NAME_DB_DIR / "compiled" / "names.db" if NAME_DB_DIR else Path(""),
+    NAME_DB_DIR / "compiled" / "names.sqlite" if NAME_DB_DIR else Path(""),
+    NAME_DB_DIR / "compiled" / "names.sql" if NAME_DB_DIR else Path(""),
 ]
 
 

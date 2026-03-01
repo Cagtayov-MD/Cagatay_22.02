@@ -527,6 +527,34 @@ class OCREngine:
           - Arka plan gradient temizleme (morphological top-hat)
           - Alt bölge (ROI) crop — jenerik yazıları frame alt %30'unda yoğun
           - Hard frame için özel strateji (daha agresif preprocessing)
+
+        PERFORMANCE NOTES:
+        ─────────────────────────────────────────────────────────────────
+        Current implementation has significant performance bottlenecks:
+
+        1. MEMORY OVERHEAD: Creates 3-8 image variants per frame
+           → For 1000 frames: 3000-8000 images in memory
+           → Each variant requires full image copy + processing
+           → Recommendation: Process variants serially (load → OCR → discard)
+             instead of buffering all variants
+
+        2. RESIZE COST: Uses INTER_CUBIC for all resizes
+           → INTER_CUBIC is 3-4x slower than INTER_LINEAR
+           → Quality difference minimal for OCR
+           → Recommendation: Use INTER_LINEAR for speed
+
+        3. HARD MODE OVERHEAD: Creates 6+ additional variants
+           → Consider limiting to 2-3 most effective variants
+           → Otsu + CLAHE usually sufficient
+           → Gradient tophat rarely improves results significantly
+
+        4. NO PARALLELIZATION: Frames processed sequentially
+           → Could use ThreadPoolExecutor for parallel frame processing
+           → 4-8x speedup on multi-core systems
+           → Recommendation: Add parallel processing option
+
+        Estimated improvement with optimizations: 4-8x faster
+        ─────────────────────────────────────────────────────────────────
         """
         h, w = img.shape[:2]
 
@@ -708,6 +736,29 @@ class OCREngine:
         return results
 
     def _fuzzy_dedup(self, results: list[OCRResult]) -> list[OCRResult]:
+        """
+        PERFORMANCE WARNING: O(n²) complexity with expensive fuzzy matching
+        ─────────────────────────────────────────────────────────────────
+        Current implementation compares every result pair using fuzzy string matching.
+        For 1000 OCR results = 1,000,000 comparisons with Levenshtein distance.
+
+        Bottlenecks:
+        1. Nested loop: O(n²) iterations
+        2. Fuzzy matching on every pair (expensive string operations)
+        3. No early termination or hashing
+
+        Optimization recommendations:
+        1. Hash-based bucketing: Group similar strings before fuzzy matching
+           → Use first 3 chars or length as bucket key
+           → Only compare within same bucket
+        2. Early termination: Stop comparing after large time gap
+           → If timecode difference > 5 seconds, skip remaining
+        3. Use faster similarity: TF-IDF cosine similarity for initial filter
+           → Only use fuzzy match on promising candidates
+
+        Estimated improvement: 10-100x faster for large result sets
+        ─────────────────────────────────────────────────────────────────
+        """
         if not results:
             return []
         sorted_r = sorted(results, key=lambda r: r.timecode_sec)

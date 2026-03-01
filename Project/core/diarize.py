@@ -70,7 +70,21 @@ class DiarizeStage:
                 self.MODEL_ID,
                 use_auth_token=hf_token
             )
-            pipeline = pipeline.to(torch.device(device))
+
+            # GPU OOM fallback: Try GPU first, fallback to CPU if CUDA OOM occurs
+            try:
+                pipeline = pipeline.to(torch.device(device))
+            except (RuntimeError, Exception) as gpu_err:
+                # Check if it's a CUDA OOM error
+                err_str = str(gpu_err).lower()
+                if device == "cuda" and ("out of memory" in err_str or "cuda" in err_str or "oom" in err_str):
+                    self._log(f"  [PyAnnote] GPU belleği yetersiz, CPU'ya geçiliyor...")
+                    device = "cpu"
+                    VRAMManager.release()  # Clear any partial GPU allocation
+                    pipeline = pipeline.to(torch.device(device))
+                else:
+                    raise  # Not a GPU OOM error, re-raise
+
             self._log(f"  [PyAnnote] Yüklendi (VRAM: {VRAMManager.get_usage()})")
 
             # Diarizasyon

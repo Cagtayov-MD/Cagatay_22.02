@@ -89,11 +89,20 @@ class QwenVerifier:
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read())
                 models = [m["name"] for m in data.get("models", [])]
+                # Improved model matching: exact match or version-aware match
+                model_base = self.model.split(":")[0]
                 self._available = any(
-                    self.model.split(":")[0] in m for m in models
+                    m.startswith(model_base + ":") or m == self.model for m in models
                 )
-        except Exception:
+                if not self._available:
+                    # Log available models for debugging
+                    available_str = ", ".join(models[:5])  # Show first 5
+                    if hasattr(self, '_log') and callable(self._log):
+                        self._log(f"  [Qwen] Model '{self.model}' not found. Available: {available_str}")
+        except Exception as e:
             self._available = False
+            if hasattr(self, '_log') and callable(self._log):
+                self._log(f"  [Qwen] Connection check failed: {type(e).__name__}")
         return self._available
 
     def verify(self, ocr_lines: list, log_cb=None) -> list:
@@ -265,9 +274,25 @@ class QwenVerifier:
                 confidence_before=0.0
             )
 
-        except urllib.error.URLError:
+        except urllib.error.URLError as e:
+            # Log network errors for debugging
+            if hasattr(self, '_log') and self._log:
+                try:
+                    from pathlib import Path
+                    log_msg = f"  [Qwen] Network error verifying '{Path(frame_path).name}': {type(e).__name__}"
+                    self._log(log_msg)
+                except:
+                    pass
             return None
-        except Exception:
+        except Exception as e:
+            # Log unexpected errors for debugging
+            if hasattr(self, '_log') and self._log:
+                try:
+                    from pathlib import Path
+                    log_msg = f"  [Qwen] Error verifying '{Path(frame_path).name}': {type(e).__name__}: {str(e)[:100]}"
+                    self._log(log_msg)
+                except:
+                    pass
             return None
 
     def _encode_image_with_crop(self, frame_path: str,
@@ -322,7 +347,15 @@ class QwenVerifier:
             # Fallback: tüm frame
             with open(frame_path, "rb") as f:
                 return base64.b64encode(f.read()).decode("utf-8")
-        except Exception:
+        except Exception as e:
+            # Log image encoding errors for debugging
+            if hasattr(self, '_log') and self._log:
+                try:
+                    from pathlib import Path
+                    log_msg = f"  [Qwen] Image encoding error '{Path(frame_path).name}': {type(e).__name__}"
+                    self._log(log_msg)
+                except:
+                    pass
             return None
 
     def _encode_image(self, frame_path: str) -> str | None:

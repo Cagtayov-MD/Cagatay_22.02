@@ -46,7 +46,22 @@ class TranscribeStage:
             from faster_whisper import WhisperModel
 
             self._log(f"  [Whisper] {model_name} yukleniyor ({device}, {compute_type})...")
-            fw_model = WhisperModel(model_name, device=device, compute_type=compute_type)
+
+            # GPU OOM fallback: Try GPU first, fallback to CPU if CUDA OOM occurs
+            try:
+                fw_model = WhisperModel(model_name, device=device, compute_type=compute_type)
+            except (RuntimeError, Exception) as gpu_err:
+                # Check if it's a CUDA OOM error
+                err_str = str(gpu_err).lower()
+                if device == "cuda" and ("out of memory" in err_str or "cuda" in err_str or "oom" in err_str):
+                    self._log(f"  [Whisper] GPU belleği yetersiz, CPU'ya geçiliyor...")
+                    device = "cpu"
+                    compute_type = "int8"  # CPU için uygun compute type
+                    VRAMManager.release()  # Clear any partial GPU allocation
+                    fw_model = WhisperModel(model_name, device=device, compute_type=compute_type)
+                else:
+                    raise  # Not a GPU OOM error, re-raise
+
             self._log(f"  [Whisper] Yuklendi (VRAM: {VRAMManager.get_usage()})")
             self._log('  [Whisper] Transkripsiyon basliyor...')
 
