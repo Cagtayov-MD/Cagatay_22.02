@@ -76,8 +76,21 @@ class DiarizeStage:
             # Diarizasyon
             self._log("  [PyAnnote] Diarizasyon başlıyor...")
             kwargs = {}
-            if max_speakers and int(max_speakers) > 0:
-                kwargs["max_speakers"] = int(max_speakers)
+            if max_speakers is not None:
+                try:
+                    ms_val = int(max_speakers)
+                    if ms_val > 0:
+                        kwargs["max_speakers"] = ms_val
+                    else:
+                        self._log(
+                            f"  [PyAnnote] Geçersiz max_speakers={max_speakers!r} "
+                            "(negatif/sıfır) — görmezden gelinir"
+                        )
+                except (ValueError, TypeError):
+                    self._log(
+                        f"  [PyAnnote] Geçersiz max_speakers={max_speakers!r} "
+                        "(tamsayıya dönüştürülemedi) — görmezden gelinir"
+                    )
 
             diarization = pipeline(audio_path, **kwargs)
 

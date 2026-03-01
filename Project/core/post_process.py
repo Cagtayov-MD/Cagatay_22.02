@@ -16,8 +16,9 @@ Ollama harici süreç olarak çalışır — VRAM yönetimi kendine ait.
 import json
 import re
 import time
-import urllib.request
 import urllib.error
+import urllib.parse
+import urllib.request
 
 
 class PostProcessStage:
@@ -57,6 +58,19 @@ class PostProcessStage:
         base_url = opts.get("ollama_url", "http://localhost:11434")
         model = opts.get("ollama_model", "llama3.1:8b")
         tmdb_cast = opts.get("tmdb_cast", [])
+
+        # Validate URL format before any network call
+        if not self._validate_ollama_url(base_url):
+            self._log(f"  [PostProcess] Geçersiz ollama_url={base_url!r} — post-process atlanıyor")
+            processed = self._mark_low_confidence(segments) if segments else []
+            return {
+                "status": "skipped",
+                "segments": processed,
+                "corrections": 0,
+                "summary_tr": "",
+                "stage_time_sec": round(time.time() - t0, 2),
+                "error": "invalid_ollama_url",
+            }
 
         if not segments:
             return {
@@ -262,6 +276,14 @@ class PostProcessStage:
                 return True
         return False
 
+    def _validate_ollama_url(self, url: str) -> bool:
+        """URL format doğrulama: http/https scheme ve host gereklidir."""
+        try:
+            parsed = urllib.parse.urlparse(url)
+            return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+        except Exception:
+            return False
+
     def _check_ollama(self, base_url: str) -> bool:
         """Ollama çalışıyor mu?"""
         try:
@@ -270,7 +292,14 @@ class PostProcessStage:
             )
             with urllib.request.urlopen(req, timeout=5) as resp:
                 return resp.status == 200
-        except Exception:
+        except urllib.error.HTTPError as e:
+            self._log(f"  [Ollama] Erişim kontrolü HTTP hatası: {e.code} {e.reason}")
+            return False
+        except urllib.error.URLError as e:
+            self._log(f"  [Ollama] Erişim kontrolü bağlantı hatası: {e.reason}")
+            return False
+        except Exception as e:
+            self._log(f"  [Ollama] Erişim kontrolü hatası: {e}")
             return False
 
     def _chat(self, prompt: str, system: str,
@@ -302,6 +331,19 @@ class PostProcessStage:
                     r"<think>.*?</think>", "", content, flags=re.DOTALL
                 ).strip()
                 return content
+        except urllib.error.HTTPError as e:
+            self._log(f"  [Ollama] HTTP hatası: {e.code} {e.reason}")
+            return ""
+        except urllib.error.URLError as e:
+            reason = e.reason
+            if hasattr(reason, "errno"):
+                self._log(f"  [Ollama] Bağlantı reddedildi (errno={reason.errno}): {reason}")
+            else:
+                self._log(f"  [Ollama] Bağlantı hatası: {reason}")
+            return ""
+        except TimeoutError:
+            self._log("  [Ollama] İstek zaman aşımı (120s)")
+            return ""
         except Exception as e:
             self._log(f"  [Ollama] İstek hatası: {e}")
             return ""
