@@ -60,6 +60,8 @@ class AudioPipeline:
             "video_path": video_path,
             "duration_sec": 0.0,
             "processing_time_sec": 0.0,
+            "asr_engine": "faster-whisper",
+            "whisper_model": options.get("whisper_model", "large-v3"),
             "speakers": {},
             "transcript": [],
             "summary_tr": "",

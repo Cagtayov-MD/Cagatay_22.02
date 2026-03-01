@@ -13,5 +13,7 @@
   "max_speakers": 10,
   "qwen_verify": true,
   "qwen_model": "qwen3-vl:8b",
-  "qwen_threshold": 0.80
+  "qwen_threshold": 0.80,
+  "database_root": "D:\\DATABASE",
+  "database_enabled": true
 }
