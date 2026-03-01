@@ -1,0 +1,8 @@
+{
+  "scope": "video_only",
+  "program_type": "film_dizi",
+  "first_min": 2.0,
+  "last_min": 6.0,
+  "use_gpu": true,
+  "output_root": "./test_results"
+}

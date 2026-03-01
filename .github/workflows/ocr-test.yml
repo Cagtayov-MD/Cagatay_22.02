@@ -1,0 +1,31 @@
+name: OCR Test GPU
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: self-hosted
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Install
+        run: pip install -r Project/requirements.txt
+      
+      - name: Test OCR
+        run: |
+          python Project/run_ocr_test.py --video "test.mp4"
+      
+      - name: Upload Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test_results/
