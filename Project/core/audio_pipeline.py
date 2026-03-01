@@ -157,13 +157,19 @@ class AudioPipeline:
             # içinde segmentler var. Eğer hf_token geçilirse TranscribeStage
             # yeniden DiarizationPipeline oluşturur → VRAM ve zaman ikiye katlanır.
             # Çözüm: diarization= parametresi yeterli; hf_token YOK.
+            # BUG-02 FIX: diarize_result (tam dict) yerine sadece segments listesi
+            # geçirilmeli; _assign_speakers list bekler, dict gelince sessizce dönerdi.
+            # BUG-03 FIX: Whisper ayarları options={} ile geçiriliyor; ayrı kwargs
+            # olarak geçirildiğinde _run_legacy bunları görmüyordu.
             transcribe_result = transcribe.run(
                 clean_wav,
-                diarization=diarize_result,
-                whisper_model=options.get("whisper_model", "large-v3"),
-                whisper_language=options.get("whisper_language", "tr"),
-                compute_type=options.get("compute_type"),
-                batch_size=options.get("batch_size", 16),
+                diarization=diarize_result.get("segments", []),
+                options={
+                    "whisper_model": options.get("whisper_model", "large-v3"),
+                    "whisper_language": options.get("whisper_language", "tr"),
+                    "compute_type": options.get("compute_type"),
+                    "batch_size": options.get("batch_size", 16),
+                },
             )
             result["stages"]["transcribe"] = {
                 "duration_sec": transcribe_result["stage_time_sec"],

@@ -38,6 +38,9 @@ class TranscribeStage:
     def _run_legacy(self, audio_path=None, *args, **kwargs) -> dict:
         # audio_pipeline.py sometimes passes diarization=...
         diarization = kwargs.get("diarization", None) or kwargs.get("diarize", None)
+        # Normalise: if the full diarize-result dict is passed, extract the list
+        if isinstance(diarization, dict):
+            diarization = diarization.get("segments", [])
         # It may also pass options directly or as config/options
         config = kwargs.get("config", {}) or {}
         opts = kwargs.get("options", None)
@@ -45,6 +48,10 @@ class TranscribeStage:
             opts = config.get("options") or {}
         if opts is None:
             opts = {}
+        # Extract direct kwargs that mirror option keys (legacy calling convention)
+        for key in ("whisper_model", "whisper_language", "compute_type", "batch_size"):
+            if key in kwargs and key not in opts:
+                opts[key] = kwargs[key]
 
         return self._transcribe(
             audio_path=audio_path,
@@ -154,7 +161,9 @@ class TranscribeStage:
 
     def _assign_speakers(self, segments, diar_segments):
         # diar_segments expected: list[dict] with keys start/end/speaker
-        # Be tolerant: sometimes pipeline passes a string/None
+        # Be tolerant: sometimes pipeline passes a string/None or full result dict
+        if isinstance(diar_segments, dict):
+            diar_segments = diar_segments.get("segments", [])
         if not diar_segments or isinstance(diar_segments, (str, bytes)):
             return
         if not isinstance(diar_segments, (list, tuple)):

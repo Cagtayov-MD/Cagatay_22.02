@@ -468,11 +468,13 @@ class OCREngine:
 
         for variant in variants:
             ocr_out = self._run_paddle(variant)
-            it = self._iter_paddle_lines(ocr_out)
-            if not it:
+            # _iter_paddle_lines is a generator -- always truthy even when empty.
+            # Materialise into a list so the empty-check actually works.
+            lines = list(self._iter_paddle_lines(ocr_out))
+            if not lines:
                 continue
 
-            for bbox_points, raw_text, conf in it:
+            for bbox_points, raw_text, conf in lines:
                 text = str(raw_text).strip()
                 conf = float(conf) if conf is not None else 0.0
                 text = self._clean_text(text)
