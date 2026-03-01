@@ -13,7 +13,7 @@ VRAM: ~200 MB → stage sonrası boşaltılır.
 import time
 from pathlib import Path
 
-from audio.utils.vram_manager import VRAMManager
+from core.vram_manager import VRAMManager
 
 
 class DenoiseStage:

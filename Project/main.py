@@ -1,4 +1,4 @@
-﻿# --- HEADLESS (CLI) MODE ---
+# --- HEADLESS (CLI) MODE ---
 # Set HEADLESS=1 to run without PySide6/Qt UI (avoids Qt font warnings).
 import os, sys
 from pathlib import Path
@@ -46,7 +46,7 @@ if os.environ.get("HEADLESS", "0") == "1":
 # --- END HEADLESS ---
 
 """
-main.py â€” Arsiv Decode giris noktasi.
+main.py — Arsiv Decode giris noktasi.
 Her zaman PySide6 UI ile baslar. Lite mod yok.
 """
 try:
@@ -55,7 +55,7 @@ except Exception:
     def load_dotenv(*_args, **_kwargs):
         return False
 
-load_dotenv()  # .env dosyasÄ±nÄ± yÃ¼kle â€” diÄŸer her ÅŸeyden Ã¶nce
+load_dotenv()  # .env dosyasını yükle — diğer her şeyden önce
 
 import sys
 import os
@@ -78,9 +78,9 @@ def main():
     try:
         import paddleocr  # noqa: F401
     except ImportError:
-        print("PaddleOCR kurulu degil â€” OCR calismayacak!")
+        print("PaddleOCR kurulu degil — OCR calismayacak!")
         print("  pip install paddlepaddle paddleocr")
-        print("  Not: PaddleOCR 3.x (PP-OCRv5) iÃ§in NumPy 1.26.x Ã¶nerilir: pip install numpy==1.26.4")
+        print("  Not: PaddleOCR 3.x (PP-OCRv5) için NumPy 1.26.x önerilir: pip install numpy==1.26.4")
 
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)

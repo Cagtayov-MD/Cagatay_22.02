@@ -2,9 +2,9 @@
 watch_folder.py — Automatic video test runner with folder monitoring.
 
 Usage:
-    python watch_folder.py F:\test
-    python watch_folder.py F:\test --config test_config.json --interval 10
-    python watch_folder.py F:\test --once (test existing then exit)
+    python watch_folder.py <YOUR_TEST_DIR>
+    python watch_folder.py <YOUR_TEST_DIR> --config test_config.json --interval 10
+    python watch_folder.py <YOUR_TEST_DIR> --once (test existing then exit)
 """
 
 import os
@@ -17,6 +17,8 @@ from datetime import datetime
 from typing import Set
 
 from test_runner import TestRunner
+
+VIDEO_EXTENSIONS = ("*.mp4", "*.mkv", "*.avi", "*.mov", "*.ts")
 
 
 class FolderWatcher:
@@ -39,9 +41,10 @@ class FolderWatcher:
 
         # Optionally add existing files to processed set
         if not auto_test_existing:
-            for video in self.watch_dir.glob("*.mp4"):
-                if video.is_file():
-                    self.processed_files.add(str(video.absolute()))
+            for ext in VIDEO_EXTENSIONS:
+                for video in self.watch_dir.glob(ext):
+                    if video.is_file():
+                        self.processed_files.add(str(video.absolute()))
 
     def _load_processed_log(self):
         """Load list of already processed videos."""
@@ -68,14 +71,15 @@ class FolderWatcher:
         """Scan folder for new unprocessed video files."""
         new_videos = []
 
-        for video_path in self.watch_dir.glob("*.mp4"):
-            if not video_path.is_file():
-                continue
+        for ext in VIDEO_EXTENSIONS:
+            for video_path in self.watch_dir.glob(ext):
+                if not video_path.is_file():
+                    continue
 
-            abs_path = str(video_path.absolute())
+                abs_path = str(video_path.absolute())
 
-            if abs_path not in self.processed_files:
-                new_videos.append(abs_path)
+                if abs_path not in self.processed_files:
+                    new_videos.append(abs_path)
 
         return new_videos
 
