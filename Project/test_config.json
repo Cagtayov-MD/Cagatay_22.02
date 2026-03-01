@@ -1,0 +1,17 @@
+{
+  "scope": "video+audio",
+  "first_min": 2.0,
+  "last_min": 6.0,
+  "difficulty": "heavy",
+  "use_gpu": true,
+  "program_type": "film_dizi",
+  "output_root": "F:/test",
+  "ocr_fps": 1.0,
+  "audio_stages": ["extract", "transcribe"],
+  "whisper_model": "large-v3",
+  "whisper_language": "tr",
+  "max_speakers": 10,
+  "qwen_verify": true,
+  "qwen_model": "qwen3-vl:8b",
+  "qwen_threshold": 0.80
+}
