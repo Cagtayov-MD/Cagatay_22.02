@@ -22,6 +22,8 @@ PROFILE_PRESETS = {
     "medium": {"threshold": 0.25, "mser_min_boxes": 3, "max_per_segment": 110},
     # Daha çok frame → daha iyi yakalama
     "heavy":  {"threshold": 0.20, "mser_min_boxes": 2, "max_per_segment": 160},
+    # İçerik profili override'ı için (FilmDizi varsayılanı)
+    "custom": {"threshold": 0.23, "mser_min_boxes": 3, "max_per_segment": 135},
 }
 
 

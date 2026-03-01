@@ -1,13 +1,13 @@
 """
 main_window.py — PySide6 Dark Theme Ana Pencere
 
-Değişiklikler v2.0:
-- Sound Detail paneli kaldırıldı → yerine Canlı Log taşındı
-- FFmpeg, FFprobe, Google API JSON, LOGOLAR yolları sabit (path_resolver)
-- Kullanıcı sadece Kaynak Video + Çıktı Dizini seçer
-- mode_combo → pipeline_runner'a TextFilter.from_config() ile iletilir
-- scope_combo → audio/video/both seçimi korundu
-- UI thread fix korundu
+Değişiklikler v3.0:
+- İçerik profili sistemi: scope/mod/segment slider'lar kaldırıldı, profil JSON'dan okunuyor
+- content_combo → Kontrol Kulesi'ne taşındı (FilmDizi, Spor, StudyoProgram, MuzikProgram, KisaHaber)
+- Sistem bilgisi widget: CPU %, GPU %, RAM GB, Saat, Tarih
+- DAG Widget entegrasyonu: profil bazlı pipeline diyagramı
+- QTabWidget: Sekme 1 = Ana UI, Sekme 2 = (ileride doldurulacak)
+- Yeni layout: başlık + sistem bilgisi (üst), Splitter sol/sağ (alt)
 """
 
 import os
@@ -20,9 +20,9 @@ from datetime import datetime
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QGroupBox, QLabel, QPushButton, QComboBox, QSlider, QLineEdit,
+    QGroupBox, QLabel, QPushButton, QComboBox, QLineEdit,
     QTextEdit, QProgressBar, QFileDialog, QSplitter, QFrame,
-    QApplication, QMessageBox,
+    QApplication, QMessageBox, QTabWidget,
 )
 from PySide6.QtCore import Qt, Signal, QObject, QTimer
 from PySide6.QtGui import QFont
@@ -150,93 +150,72 @@ class MainWindow(QMainWindow):
         root.setSpacing(6)
         root.setContentsMargins(10, 8, 10, 8)
 
-        # Başlık
+        # ── Başlık satırı (sol: isim+subtitle, sağ: sistem bilgisi) ──
+        header = QHBoxLayout()
+        title_col = QVBoxLayout()
         title = QLabel("ARSIV DECODE")
         title.setObjectName("titleLabel")
-        title.setAlignment(Qt.AlignCenter)
         sub = QLabel("Video Analiz Sistemi — PaddleOCR GPU + WhisperX")
         sub.setObjectName("subtitleLabel")
-        sub.setAlignment(Qt.AlignCenter)
-        root.addWidget(title)
-        root.addWidget(sub)
+        title_col.addWidget(title)
+        title_col.addWidget(sub)
+        header.addLayout(title_col)
+        header.addStretch()
+        header.addWidget(self._build_system_info())
+        root.addLayout(header)
 
-        # Üst blok — analiz ayarları
-        root.addWidget(self._build_top_block())
+        # ── QTabWidget ──────────────────────────────────────────────
+        tabs = QTabWidget()
 
-        # Orta — sol: kontrol + sağ: canlı log
+        # Sekme 1: Ana UI
+        tab1 = QWidget()
+        tab1_lay = QVBoxLayout(tab1)
+        tab1_lay.setContentsMargins(0, 4, 0, 0)
+        tab1_lay.setSpacing(6)
+
+        # Ana splitter: sol (kontrol + DAG), sağ (canlı log)
         mid = QSplitter(Qt.Horizontal)
-        mid.addWidget(self._build_control_panel())
-        mid.addWidget(self._build_log_panel())   # Canlı Log → eski Sound Detail yeri
+        left_widget = QWidget()
+        left_lay = QVBoxLayout(left_widget)
+        left_lay.setContentsMargins(0, 0, 0, 0)
+        left_lay.setSpacing(4)
+        left_lay.addWidget(self._build_control_panel())
+        left_lay.addWidget(self._build_dag_panel())
+        mid.addWidget(left_widget)
+        mid.addWidget(self._build_log_panel())
         mid.setSizes([500, 500])
-        root.addWidget(mid)
+        tab1_lay.addWidget(mid)
 
-        # Alt — istatistik + pipeline
+        # Alt istatistik + pipeline paneli (küçültülmüş)
         bot = QSplitter(Qt.Horizontal)
         bot.addWidget(self._build_stats_panel())
         bot.addWidget(self._build_pipeline_panel())
         bot.setSizes([350, 650])
-        root.addWidget(bot)
+        tab1_lay.addWidget(bot)
 
-    def _build_top_block(self):
-        grp = QGroupBox("Analiz Ayarlari")
-        lay = QGridLayout(grp)
-        lay.setSpacing(8)
+        tabs.addTab(tab1, "Ana Panel")
 
-        # Scope
-        lay.addWidget(QLabel("Scope:"), 0, 0)
-        self.scope_combo = QComboBox()
-        self.scope_combo.addItems(["Sadece Video", "Sadece Ses", "Video + Ses"])
-        lay.addWidget(self.scope_combo, 0, 1)
+        # Sekme 2: (ileride doldurulacak)
+        tab2 = QWidget()
+        tabs.addTab(tab2, "İkinci Panel")
 
-        # İçerik
-        lay.addWidget(QLabel("Icerik:"), 0, 2)
-        self.content_combo = QComboBox()
-        self.content_combo.addItems([
-            "Film / Dizi", "Spor Maçı", "Haber", "Belgesel", "Magazin"
-        ])
-        lay.addWidget(self.content_combo, 0, 3)
-
-        # Mod — TextFilter.from_config() ile pipeline'a iletilir
-        lay.addWidget(QLabel("Mod:"), 0, 4)
-        self.mode_combo = QComboBox()
-        self.mode_combo.addItems(["Light", "Medium", "Heavy"])
-        self.mode_combo.setCurrentIndex(1)
-        lay.addWidget(self.mode_combo, 0, 5)
-
-        # Giriş segmenti
-        lay.addWidget(QLabel("Giris segment:"), 1, 0)
-        self.entry_slider = QSlider(Qt.Horizontal)
-        self.entry_slider.setRange(1, 8)
-        self.entry_slider.setValue(4)
-        self.entry_slider.setTickPosition(QSlider.TicksBelow)
-        self.entry_slider.setTickInterval(1)
-        self.entry_label = QLabel("4 dk")
-        self.entry_label.setMinimumWidth(50)
-        self.entry_slider.valueChanged.connect(
-            lambda v: self.entry_label.setText(f"{v} dk"))
-        lay.addWidget(self.entry_slider, 1, 1, 1, 3)
-        lay.addWidget(self.entry_label, 1, 4)
-
-        # Çıkış segmenti
-        lay.addWidget(QLabel("Cikis segment:"), 2, 0)
-        self.exit_slider = QSlider(Qt.Horizontal)
-        self.exit_slider.setRange(1, 20)
-        self.exit_slider.setValue(8)
-        self.exit_slider.setTickPosition(QSlider.TicksBelow)
-        self.exit_slider.setTickInterval(2)
-        self.exit_label = QLabel("8 dk")
-        self.exit_label.setMinimumWidth(50)
-        self.exit_slider.valueChanged.connect(
-            lambda v: self.exit_label.setText(f"{v} dk"))
-        lay.addWidget(self.exit_slider, 2, 1, 1, 3)
-        lay.addWidget(self.exit_label, 2, 4)
-
-        return grp
+        root.addWidget(tabs)
 
     def _build_control_panel(self):
         grp = QGroupBox("Kontrol Kulesi")
         lay = QVBoxLayout(grp)
         lay.setSpacing(6)
+
+        # İçerik profili seçimi
+        icerik_row = QHBoxLayout()
+        icerik_row.addWidget(QLabel("İçerik:"))
+        self.content_combo = QComboBox()
+        self.content_combo.addItems(["FilmDizi", "Spor", "StudyoProgram", "MuzikProgram", "KisaHaber"])
+        self.content_combo.currentTextChanged.connect(self._on_profile_changed)
+        icerik_row.addWidget(self.content_combo)
+        lay.addLayout(icerik_row)
+
+        lay.addWidget(self._sep())
 
         # Başlat
         self.start_btn = QPushButton("  BASLAT")
@@ -382,9 +361,77 @@ class MainWindow(QMainWindow):
         lay.addStretch()
         return grp
 
+    def _build_system_info(self):
+        """CPU %, GPU %, RAM GB, Saat, Tarih gösteren sistem bilgisi widget'ı."""
+        widget = QWidget()
+        lay = QHBoxLayout(widget)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(12)
+
+        self._sys_cpu_lbl  = QLabel("CPU: —")
+        self._sys_gpu_lbl  = QLabel("GPU: —")
+        self._sys_ram_lbl  = QLabel("RAM: —")
+        self._sys_time_lbl = QLabel("—")
+        self._sys_date_lbl = QLabel("—")
+
+        for lbl in (self._sys_cpu_lbl, self._sys_gpu_lbl, self._sys_ram_lbl,
+                    self._sys_time_lbl, self._sys_date_lbl):
+            lbl.setObjectName("subtitleLabel")
+            lay.addWidget(lbl)
+
+        self._sys_timer = QTimer(widget)
+        self._sys_timer.timeout.connect(self._update_system_info)
+        self._sys_timer.start(1000)
+        self._update_system_info()
+        return widget
+
+    def _update_system_info(self):
+        """Sistem bilgisi etiketlerini güncelle."""
+        try:
+            import psutil
+            cpu = psutil.cpu_percent(interval=None)
+            ram_gb = psutil.virtual_memory().used / (1024 ** 3)
+            self._sys_cpu_lbl.setText(f"CPU: {cpu:.0f}%")
+            self._sys_ram_lbl.setText(f"RAM: {ram_gb:.1f}GB")
+        except Exception:
+            pass
+        try:
+            import GPUtil
+            gpus = GPUtil.getGPUs()
+            if gpus:
+                self._sys_gpu_lbl.setText(f"GPU: {gpus[0].load*100:.0f}%")
+            else:
+                self._sys_gpu_lbl.setText("GPU: N/A")
+        except Exception:
+            self._sys_gpu_lbl.setText("GPU: N/A")
+        now = datetime.now()
+        self._sys_time_lbl.setText(now.strftime("%H:%M:%S"))
+        self._sys_date_lbl.setText(now.strftime("%d.%m.%Y"))
+
+    def _build_dag_panel(self):
+        """DAG diagram widget'ını içeren grup kutusu."""
+        try:
+            from ui.dag_widget import DAGWidget
+            grp = QGroupBox("Pipeline DAG")
+            lay = QVBoxLayout(grp)
+            initial_profile = self.content_combo.currentText() if hasattr(self, "content_combo") else "FilmDizi"
+            self.dag_widget = DAGWidget(profile_name=initial_profile)
+            self.dag_widget.setMinimumHeight(180)
+            lay.addWidget(self.dag_widget)
+            return grp
+        except Exception:
+            grp = QGroupBox("Pipeline DAG")
+            grp.setMinimumHeight(120)
+            return grp
+
     # ═══════════════════════════════════════════════════════════════
     # EYLEMLER
     # ═══════════════════════════════════════════════════════════════
+    def _on_profile_changed(self, profile_name: str):
+        """İçerik profili değiştiğinde DAG widget'ı güncelle."""
+        if hasattr(self, "dag_widget"):
+            self.dag_widget.set_profile(profile_name)
+
     def _on_start(self):
         if not self.video_path or not os.path.isfile(self.video_path):
             QMessageBox.warning(self, "Hata", "Lutfen gecerli bir video dosyasi secin!")
@@ -400,17 +447,36 @@ class MainWindow(QMainWindow):
 
         # ── FIX: Tüm UI değerleri ANA THREAD'de okunup dict'e kopyalanır ──
         # Worker thread ASLA widget'a dokunmaz.
+        profile_name = self.content_combo.currentText()
+
+        # Profil JSON'dan ayarları oku
+        try:
+            from config.profile_loader import load_profile
+            content_profile = load_profile(profile_name)
+            if content_profile:
+                content_profile["_name"] = profile_name
+            else:
+                content_profile = None
+        except Exception:
+            content_profile = None
+
+        # Profil ayarlarını config'e merge et
+        base_cfg = dict(self.config.get("WORKSTATION", {}))
+        if content_profile:
+            for key in ("text_filter_threshold", "text_filter_mser_min_boxes",
+                        "text_filter_max_per_segment"):
+                if key in content_profile:
+                    base_cfg[key] = content_profile[key]
+
         params = {
-            "video_path": self.video_path,
-            "output_dir": self.output_dir or os.path.dirname(self.video_path),
-            "scope_idx":  self.scope_combo.currentIndex(),
-            "mode":       self.mode_combo.currentText().lower(),   # light/medium/heavy
-            "entry_min":  float(self.entry_slider.value()),
-            "exit_min":   float(self.exit_slider.value()),
-            "config":     self.config.get("WORKSTATION", {}),
+            "video_path":      self.video_path,
+            "output_dir":      self.output_dir or os.path.dirname(self.video_path),
+            "config":          base_cfg,
+            "content_profile": content_profile,
         }
 
         self._log(f"Pipeline baslatiliyor: {Path(self.video_path).name}")
+        self._log(f"  Profil: {profile_name}")
         self.pipeline_thread = threading.Thread(
             target=self._run_pipeline, args=(params,), daemon=True)
         self.pipeline_thread.start()
@@ -445,9 +511,18 @@ class MainWindow(QMainWindow):
                 )
                 return
 
-            # mode → pipeline'a geçir (TextFilter.from_config() için)
             cfg = dict(params["config"])
-            cfg["difficulty"] = params["mode"]      # light/medium/heavy
+            content_profile = params.get("content_profile")
+
+            # Profil varsa scope ve segment değerlerini profilden al
+            scope     = "video+audio"
+            first_min = 4.0
+            last_min  = 8.0
+            if content_profile:
+                scope     = content_profile.get("scope", scope)
+                first_min = float(content_profile.get("first_segment_minutes", first_min))
+                last_min  = float(content_profile.get("last_segment_minutes", last_min))
+
             runner = PipelineRunner(
                 ffmpeg=resolver.ffmpeg,
                 ffprobe=resolver.ffprobe,
@@ -459,14 +534,12 @@ class MainWindow(QMainWindow):
             runner.set_log_callback(
                 lambda msg: self.signals.log_message.emit(msg))
 
-            scope_map = {0: "video_only", 1: "audio_only", 2: "video+audio"}
-            scope = scope_map.get(params["scope_idx"], "video_only")
-
             result = runner.run(
                 video_path=params["video_path"],
                 scope=scope,
-                first_min=params["entry_min"],
-                last_min=params["exit_min"],
+                first_min=first_min,
+                last_min=last_min,
+                content_profile=content_profile,
             )
             self.signals.pipeline_done.emit(result)
 

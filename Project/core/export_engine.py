@@ -400,7 +400,8 @@ class ExportEngine:
         _NAME_DB = self._name_db  # None olsa bile ata — tutarlılık
 
     def generate(self, video_info, credits_data, ocr_lines, stage_stats,
-                 profile, scope, first_min, last_min, keywords=None, logos=None):
+                 profile, scope, first_min, last_min, keywords=None, logos=None,
+                 content_profile_name: str | None = None):
         total_sec = sum(s.get("duration_sec", 0) for s in stage_stats.values())
         dur = video_info.get("duration_seconds", 1)
 
@@ -435,7 +436,7 @@ class ExportEngine:
             },
             "processing": {
                 "scope": scope,
-                "content_type": "film_dizi",
+                "content_type": content_profile_name or "FilmDizi",
                 "ocr_engine": "PaddleOCR (GPU)",
                 "first_segment_min": first_min,
                 "last_segment_min": last_min,
@@ -529,6 +530,35 @@ class ExportEngine:
             L.append("  ANAHTAR KELIMELER")
             L.append(f"{'-'*65}")
             L.append(f"  {' ; '.join(r['keywords'])}")
+
+        # Spor profili: Maç Bilgileri bölümü
+        match_data = r.get("match_data")
+        if match_data or p.get("content_type") == "Spor":
+            L.append(f"\n{'-'*65}")
+            L.append("  MAC BILGILERI")
+            L.append(f"{'-'*65}")
+            if match_data:
+                if match_data.get("spor_turu"):
+                    L.append(f"  Spor Turu     : {match_data['spor_turu']}")
+                if match_data.get("lig"):
+                    L.append(f"  Lig           : {match_data['lig']}")
+                if match_data.get("sehir"):
+                    L.append(f"  Sehir         : {match_data['sehir']}")
+                takimlar = match_data.get("takimlar", [])
+                if takimlar:
+                    L.append("  Takimlar      :")
+                    for tk in takimlar:
+                        L.append(f"    {tk.get('isim','')} — {tk.get('skor','?')}")
+                td = match_data.get("teknik_direktorler", [])
+                if td:
+                    L.append(f"  Teknik Dir.   : {', '.join(td)}")
+                olaylar = match_data.get("olaylar", [])
+                if olaylar:
+                    L.append("  Olaylar       :")
+                    for ol in olaylar:
+                        L.append(f"    {ol.get('dakika','')}' {ol.get('olay','')} — {ol.get('oyuncu','')} ({ol.get('takim','')})")
+            else:
+                L.append("  (Mac verisi bulunamadi)")
 
         ocr = r.get("ocr_results", [])
         if ocr:
