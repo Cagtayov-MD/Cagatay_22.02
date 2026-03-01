@@ -103,7 +103,7 @@ class QwenVerifier:
             self._available = False
         return self._available
 
-    def verify(self, ocr_lines: list, log_cb=None) -> list:
+    def verify(self, ocr_lines: list, log_cb=None, resolution: str = "") -> list:
         """
         OCRLine listesini al, şüphelileri Qwen ile doğrula.
         Döndürür: güncellenmiş ocr_lines (dict listesi veya OCRLine listesi)
@@ -117,6 +117,20 @@ class QwenVerifier:
             log(f"  [Qwen] Ollama bağlantısı yok veya '{self.model}' yüklü değil — atlanıyor")
             return ocr_lines
 
+        # Çözünürlüğe göre gürültü threshold'u
+        noise_threshold = 0.60  # varsayılan
+        if resolution:
+            try:
+                # "384x288" veya "1920x1080" formatında
+                height = int(resolution.split("x")[-1])
+                if height <= 360:
+                    noise_threshold = 0.40
+                    log(f"  [Qwen] Düşük çözünürlük ({resolution}) — gürültü eşiği: {noise_threshold}")
+                elif height <= 480:
+                    noise_threshold = 0.50
+            except (ValueError, IndexError):
+                pass
+
         # Şüpheli satırları belirle — conf + metin kalitesi bazlı
         suspicious = []
         skipped_noise = 0
@@ -124,8 +138,8 @@ class QwenVerifier:
             conf = self._get_conf(line)
             text = self._get_text(line)
 
-            # conf < 0.60: zaten gürültü, Qwen de düzeltemez → atla
-            if conf < 0.60:
+            # conf < noise_threshold: zaten gürültü, Qwen de düzeltemez → atla
+            if conf < noise_threshold:
                 skipped_noise += 1
                 continue
 
@@ -134,11 +148,11 @@ class QwenVerifier:
                 continue  # güvenilir, dokunma
 
             # conf >= threshold ama kalitesiz metin → Qwen'e gönder (DYAYUCE gibi durumlar)
-            # veya conf 0.60-threshold arası → Qwen'e gönder
+            # veya conf noise_threshold-threshold arası → Qwen'e gönder
             suspicious.append(i)
 
         if skipped_noise:
-            log(f"  [Qwen] {skipped_noise} gürültü satırı atlandı (conf<0.60)")
+            log(f"  [Qwen] {skipped_noise} gürültü satırı atlandı (conf<{noise_threshold})")
 
         if not suspicious:
             log(f"  [Qwen] Tüm satırlar kaliteli — doğrulama gerekmedi")
@@ -175,23 +189,32 @@ class QwenVerifier:
         if not text or len(text) < 2:
             return False
 
-        # Türkçe özel karakter içeriyorsa OCR doğru okumuş demek → kaliteli
-        _turk = set("çğıöşüÇĞİÖŞÜ")
-        if any(c in _turk for c in text):
-            return True
-
         words = text.split()
 
         # Boşluksuz 6+ karakter tamamen büyük harf → birleşik/bozuk → kalitesiz
         if ' ' not in text and text.isupper() and len(text) >= 6:
             return False
 
-        # Tüm kelimeler Title Case → düzgün yazım → kaliteli
-        if all(len(w) >= 2 and w[0].isupper() and w[1:].islower() for w in words):
+        # Türkçe özel karakter + Title Case veya çok kelimeli → kaliteli
+        _turk = set("çğıöşüÇĞİÖŞÜ")
+        has_turk = any(c in _turk for c in text)
+
+        if has_turk:
+            # Türkçe karakter VAR ama tek kelime ve kısa (< 4 harf) → şüpheli
+            if len(words) == 1 and len(text) < 4:
+                return False
+            # Türkçe karakter + düzgün kelime yapısı → kaliteli
             return True
 
-        # Tamamen büyük harf çok kelimeli → şüpheli (OKAN SELU, BELGIN EYEL gibi)
-        # Bunları Qwen değil NameDB halletmeli ama yine de gönder
+        # Tüm kelimeler Title Case → düzgün yazım → kaliteli
+        if len(words) >= 2 and all(len(w) >= 2 and w[0].isupper() and w[1:].islower() for w in words):
+            return True
+
+        # Tek kelime Title Case ve 4+ harf → muhtemelen isim → kaliteli
+        if len(words) == 1 and len(text) >= 4 and text[0].isupper() and text[1:].islower():
+            return True
+
+        # Tamamen büyük harf çok kelimeli → şüpheli
         if len(words) >= 2 and all(w.isupper() for w in words):
             return False
 

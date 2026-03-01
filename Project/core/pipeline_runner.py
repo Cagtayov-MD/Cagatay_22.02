@@ -209,7 +209,8 @@ class PipelineRunner:
                 layout_pairs = self._repair_layout_pairs(layout_pairs)
 
                 qwen_t = time.time()
-                ocr_lines = self._qwen.verify(ocr_lines, log_cb=self._log)
+                ocr_lines = self._qwen.verify(ocr_lines, log_cb=self._log,
+                                              resolution=info.get("resolution", ""))
                 qwen_elapsed = time.time() - qwen_t
                 if qwen_elapsed > 0.5:
                     self._log(f"  [Qwen] Doğrulama süresi: {qwen_elapsed:.1f}s")

@@ -186,8 +186,20 @@ def _ocr_correct_name_legacy(name: str) -> str:
 
 def _clean_char(char: str) -> str:
     """Karakter ismindeki OCR gürültüsünü temizle."""
-    # & → g
-    char = char.replace('&', 'g')
+    # & → g dönüşümü: sadece kelime İÇİNDE ise uygula (OCR Ğ→& bozulması)
+    # "Tom & Jerry" → dokunma, "Sa&det" → "Sağdet"
+    words = char.split()
+    fixed_words = []
+    for w in words:
+        if w == '&':
+            # Bağımsız & → olduğu gibi bırak (Tom & Jerry durumu)
+            fixed_words.append(w)
+        elif '&' in w:
+            # Kelime içi & → g (Sa&det → Sağdet OCR bozulması)
+            fixed_words.append(w.replace('&', 'g'))
+        else:
+            fixed_words.append(w)
+    char = ' '.join(fixed_words)
     # Trailing rakam: Satilmis 11 → Satilmis
     char = re.sub(r'\s+\d+\s*$', '', char).strip()
     words = char.split()
