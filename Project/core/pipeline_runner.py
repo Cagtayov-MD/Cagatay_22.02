@@ -10,6 +10,9 @@ v2.0 Değişiklikler:
 - TMDB: ID girmeden çalışır. film_adı + 1 oyuncu = %100 güven.
 """
 
+import copy
+import json
+import shutil
 import time
 import os
 from pathlib import Path
@@ -41,6 +44,7 @@ class PipelineRunner:
             os.path.join(output_root, "logs") if output_root else "logs")
         self.stage_stats  = {}
         self._log_cb      = None
+        self._log_messages: list[str] = []
 
         self._ffmpeg    = ffmpeg
         self._ffprobe   = ffprobe
@@ -86,6 +90,7 @@ class PipelineRunner:
     def _log(self, msg):
         if self._log_cb:
             self._log_cb(msg)
+        self._log_messages.append(str(msg))
         print(msg)
 
     # ──────────────────────────────────────────────────────────────
@@ -117,6 +122,7 @@ class PipelineRunner:
 
         self.stats.start_job(video_path, "WORKSTATION", scope, profile_name)
         self.stage_stats = {}
+        self._log_messages = []
 
         self._log(f"\n{'='*60}")
         self._log(f"  VİTOS — Pipeline v7")
@@ -163,6 +169,7 @@ class PipelineRunner:
             # Varsayılanlar (audio_only için)
             ocr_lines = []
             cdata = self._empty_credits_data(vname)
+            cdata_raw = None
             tmdb_result = None
 
             if scope != "audio_only":
@@ -237,6 +244,9 @@ class PipelineRunner:
                           f"Ekip:{cdata['total_crew']} "
                           f"Şirket:{cdata['total_companies']}")
 
+                # Snapshot before LLM filter (DATABASE credits_raw için)
+                cdata_raw = copy.deepcopy(cdata)
+
                 # ══ [LLM] LLM_CAST_FILTER ══════════════════════════
                 self._log(f"\n[LLM] Cast Filtreleme")
                 t = time.time()
@@ -298,6 +308,21 @@ class PipelineRunner:
                 content_profile_name=profile_name,
                 audio_result=audio_result)
             self._stage("EXPORT", time.time() - t)
+
+            # ══ DATABASE ══════════════════════════════════════════
+            try:
+                self._write_database(
+                    video_info=info,
+                    credits_data=cdata,
+                    credits_raw=cdata_raw,
+                    ocr_lines=ocr_lines,
+                    stage_stats=self.stage_stats,
+                    audio_result=audio_result,
+                    work_dir=work_dir,
+                    content_profile_name=profile_name,
+                )
+            except Exception as e:
+                self._log(f"  [DATABASE] Yazma hatası (pipeline etkilenmedi): {e}")
 
             total = time.time() - t0
             self.stats.finish_job(total)
@@ -500,6 +525,119 @@ class PipelineRunner:
             "total_companies": 0,
             "verification_status": "unverified",
         }
+
+    def _write_database(self, video_info: dict, credits_data: dict,
+                         credits_raw, ocr_lines: list, stage_stats: dict,
+                         audio_result, work_dir: str,
+                         content_profile_name: str) -> None:
+        """DATABASE dizinine pipeline çıktılarının bir kopyasını yaz."""
+        if not self.config.get("database_enabled", True):
+            return
+
+        db_root = (
+            self.config.get("database_root") or
+            os.environ.get("VITOS_DATABASE_ROOT") or
+            "D:\\DATABASE"
+        )
+
+        stem = Path(video_info.get("filename", "out")).stem
+        ts = datetime.now().strftime("%d%m%y-%H%M")
+
+        db_dir = Path(db_root) / (content_profile_name or "FilmDizi") / stem
+        db_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. TXT raporu kopyala
+        src_txt = Path(work_dir) / f"{stem}.txt"
+        if src_txt.is_file():
+            shutil.copy2(src_txt, db_dir / f"{stem}_{ts}.txt")
+
+        # 2. JSON raporu kopyala
+        src_json = Path(work_dir) / f"{stem}_report.json"
+        if src_json.is_file():
+            shutil.copy2(src_json, db_dir / f"{stem}_{ts}_report.json")
+
+        # 3. OCR dual-score JSON yaz
+        ocr_scores = self._build_ocr_scores(ocr_lines, credits_data)
+        with open(db_dir / f"{stem}_{ts}_ocr_scores.json", "w", encoding="utf-8") as f:
+            json.dump(ocr_scores, f, ensure_ascii=False, indent=2)
+
+        # 4. Ham credits JSON yaz (LLM filtre öncesi)
+        with open(db_dir / f"{stem}_{ts}_credits_raw.json", "w", encoding="utf-8") as f:
+            json.dump(credits_raw if credits_raw is not None else credits_data,
+                      f, ensure_ascii=False, indent=2)
+
+        # 5. Transcript JSON yaz
+        transcript = []
+        if audio_result and isinstance(audio_result, dict):
+            for seg in audio_result.get("transcript", []):
+                transcript.append({
+                    "start": seg.get("start", 0),
+                    "end": seg.get("end", 0),
+                    "text": seg.get("text", ""),
+                })
+        with open(db_dir / f"{stem}_{ts}_transcript.json", "w", encoding="utf-8") as f:
+            json.dump(transcript, f, ensure_ascii=False, indent=2)
+
+        # 6. Debug log yaz
+        with open(db_dir / f"{stem}_{ts}_debug.log", "w", encoding="utf-8") as f:
+            f.write("\n".join(self._log_messages))
+
+        self._log(f"  [DATABASE] Yazıldı: {db_dir}")
+
+    @staticmethod
+    def _build_ocr_scores(ocr_lines: list, credits_data: dict) -> dict:
+        """OCR satırları ile pipeline sonuçlarını eşleştirerek ikili skor JSON üret."""
+        import re
+
+        def _norm(s: str) -> str:
+            s = (s or "").lower()
+            s = re.sub(r"[^a-z0-9]", "", s)
+            return s
+
+        cast = credits_data.get("cast", [])
+        cast_lookup: dict[str, dict] = {}
+        for entry in cast:
+            for field in ("actor_name", "character_name"):
+                name = (entry.get(field) or "").strip()
+                if name:
+                    cast_lookup[_norm(name)] = entry
+
+        scores = []
+        for line in ocr_lines:
+            text = (line.text if hasattr(line, "text") else
+                    line.get("text", "") if isinstance(line, dict) else "")
+            ocr_conf = (getattr(line, "avg_confidence", None)
+                        if hasattr(line, "avg_confidence") else
+                        line.get("avg_confidence", line.get("confidence", 0))
+                        if isinstance(line, dict) else 0)
+            seen_count = (getattr(line, "seen_count", 1)
+                          if hasattr(line, "seen_count") else
+                          line.get("seen_count", 1)
+                          if isinstance(line, dict) else 1)
+
+            cast_entry = cast_lookup.get(_norm(text))
+            if cast_entry:
+                pipeline_conf = cast_entry.get("confidence")
+                name_db_match = bool(cast_entry.get("is_verified_name", False))
+                llm_verified = bool(cast_entry.get("is_llm_verified", False))
+                verdict = "KEEP"
+            else:
+                pipeline_conf = None
+                name_db_match = False
+                llm_verified = False
+                verdict = "REJECTED"
+
+            scores.append({
+                "text": text,
+                "ocr_confidence": ocr_conf,
+                "pipeline_confidence": pipeline_conf,
+                "seen_count": seen_count,
+                "name_db_match": name_db_match,
+                "llm_verified": llm_verified,
+                "verdict": verdict,
+            })
+
+        return {"scores": scores}
 
     def _repair_turkish(self, ocr_lines: list) -> list:
         if not ocr_lines:
