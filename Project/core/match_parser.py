@@ -1,5 +1,10 @@
 """match_parser.py — Spor maçı transcript analizi (Ollama)."""
 
+import json
+import re
+import urllib.request
+import urllib.error
+
 
 class MatchParser:
     def __init__(self, ollama_url="http://localhost:11434", model="llama3.1:8b", log_cb=None):
@@ -23,8 +28,6 @@ class MatchParser:
 
     def _ollama_parse(self, text):
         """Ollama'ya transcript gönder, maç bilgilerini JSON olarak al."""
-        import requests
-        import json
         prompt = f"""Aşağıdaki spor maçı yayını transkriptini analiz et ve JSON formatında yanıtla:
 
 Transcript:
@@ -47,15 +50,34 @@ JSON formatı:
 
 Sadece JSON döndür, başka açıklama yapma."""
 
+        payload = json.dumps({
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            f"{self.ollama_url}/api/generate",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
         try:
-            resp = requests.post(
-                f"{self.ollama_url}/api/generate",
-                json={"model": self.model, "prompt": prompt, "stream": False},
-                timeout=120,
-            )
-            if resp.status_code == 200:
-                raw = resp.json().get("response", "")
-                return json.loads(raw)
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+                raw = result.get("response", "")
+
+                # Thinking mode temizliği
+                raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+
+                # JSON bloğunu regex ile çıkar
+                match = re.search(r'\{.*\}', raw, re.DOTALL)
+                if match:
+                    return json.loads(match.group())
+        except urllib.error.HTTPError as e:
+            self._log(f"  [MatchParser] Ollama HTTP hatası: {e.code} {e.reason}")
+        except json.JSONDecodeError:
+            self._log("  [MatchParser] Ollama JSON parse edilemedi")
         except Exception as e:
             self._log(f"  [MatchParser] Ollama hatası: {e}")
         return self._empty_result()

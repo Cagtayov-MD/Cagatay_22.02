@@ -12,21 +12,19 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-# Kullanıcı kararı: sabit yollar
-NAME_DB_DIR = Path(os.environ.get("NAME_DB_DIR", r"F:\Source\name_db"))
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# Kullanıcı kararı: ortam değişkeni veya proje-göreli default
+NAME_DB_DIR = Path(os.environ.get("NAME_DB_DIR", str(_PROJECT_ROOT / "data" / "name_db")))
 NAME_DB_ROLE_ALIAS_TR = NAME_DB_DIR / "credits_role_alias_tr.json"
 NAME_DB_NAMES_BY_COUNTRY = NAME_DB_DIR / "names_by_country.json"
 
-API_KEYS_JSON = Path(os.environ.get("API_KEYS_JSON", r"F:\Project\config\api_keys.json"))
-GOOGLE_KEYS_JSON = Path(
-    os.environ.get(
-        "GOOGLE_KEYS_JSON",
-        r"F:\Project\config\video-analiz-sistemi-a59996f04788.json",
-    )
-)
-LOGOLAR_DIR = Path(os.environ.get("LOGOLAR_DIR", r"F:\Source\Logo"))
+API_KEYS_JSON = Path(os.environ.get("API_KEYS_JSON", str(Path(__file__).resolve().parent / "api_keys.json")))
+_GOOGLE_KEYS_JSON_STR = os.environ.get("GOOGLE_KEYS_JSON", "")
+GOOGLE_KEYS_JSON = Path(_GOOGLE_KEYS_JSON_STR) if _GOOGLE_KEYS_JSON_STR else Path(__file__).resolve().parent / ".google_credentials.json"
+LOGOLAR_DIR = Path(os.environ.get("LOGOLAR_DIR", str(_PROJECT_ROOT / "data" / "logos")))
 
-FFMPEG_BIN_DIR = Path(os.environ.get("FFMPEG_BIN_DIR", r"F:\Source\ffmpeg\bin"))
+FFMPEG_BIN_DIR = Path(os.environ.get("FFMPEG_BIN_DIR", str(_PROJECT_ROOT / "tools" / "ffmpeg" / "bin")))
 
 # İsim DB için olası dosyalar (varsa ilk bulunan kullanılır)
 NAME_DB_SQLITE_CANDIDATES = [

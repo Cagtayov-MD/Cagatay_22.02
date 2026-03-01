@@ -1,9 +1,10 @@
-"""path_resolver.py — Sabit araç yolları.
+"""path_resolver.py — Araç yolları çözücü.
 
-Kullanıcı seçimi kaldırıldı. Tüm araç yolları sabitlendi:
-  FFmpeg/FFprobe : F:\\Source\\ffmpeg\\bin
-  Google API JSON: F:\\Project\\config\\video-analiz-sistemi-a59996f04788.json
-  LOGOLAR        : F:\\Source\\Logo
+Kullanıcı seçimi kaldırıldı. Tüm araç yolları ortam değişkeni
+veya proje-göreli default'tan çözülür:
+  FFmpeg/FFprobe : FFMPEG_BIN_DIR env veya proje-göreli tools/ffmpeg/bin
+  Google API JSON: GOOGLE_KEYS_JSON env
+  LOGOLAR        : LOGOLAR_DIR env veya proje-göreli data/logos
 """
 import shutil
 from pathlib import Path

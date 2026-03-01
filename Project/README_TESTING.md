@@ -16,10 +16,10 @@ Bu klasörde 3 farklı test yöntemi var:
 
 ```bash
 # Tek video
-python test_runner.py --config test_config.json F:\test\test.mp4
+python test_runner.py --config test_config.json <YOUR_TEST_DIR>\test.mp4
 
 # Klasördeki tüm videolar
-python test_runner.py --config test_config.json --folder F:\test
+python test_runner.py --config test_config.json --folder <YOUR_TEST_DIR>
 ```
 
 ### 2️⃣ Batch Script (Tek Tık)
@@ -27,8 +27,8 @@ python test_runner.py --config test_config.json --folder F:\test
 Windows'ta çift tıkla: `run_test.bat`
 
 **Menü:**
-- [1] Tek video test (F:\test\test.mp4)
-- [2] Tüm videolar (F:\test klasörü)
+- [1] Tek video test (<YOUR_TEST_DIR>\test.mp4)
+- [2] Tüm videolar (<YOUR_TEST_DIR> klasörü)
 - [3] Custom video seç
 - [4] Custom klasör seç
 
@@ -36,19 +36,19 @@ Windows'ta çift tıkla: `run_test.bat`
 
 ```bash
 # Sürekli izle (30 saniyede bir kontrol)
-python watch_folder.py F:\test
+python watch_folder.py <YOUR_TEST_DIR>
 
 # Custom interval
-python watch_folder.py F:\test --interval 10
+python watch_folder.py <YOUR_TEST_DIR> --interval 10
 
 # Bir kez kontrol et ve çık
-python watch_folder.py F:\test --once
+python watch_folder.py <YOUR_TEST_DIR> --once
 
 # Mevcut videoları da test et
-python watch_folder.py F:\test --test-existing
+python watch_folder.py <YOUR_TEST_DIR> --test-existing
 
 # Custom config
-python watch_folder.py F:\test --config test_config.json
+python watch_folder.py <YOUR_TEST_DIR> --config test_config.json
 ```
 
 **Özellikler:**
@@ -62,7 +62,7 @@ python watch_folder.py F:\test --config test_config.json
 ## 📁 Çıktı Dosyaları
 
 ```
-F:\test\
+<YOUR_TEST_DIR>\
 ├── test.mp4                           # Input video
 ├── arsiv_test_{timestamp}\            # Test sonuçları
 │   ├── report.json
@@ -85,7 +85,7 @@ F:\test\
   "difficulty": "heavy",
   "use_gpu": true,
   "program_type": "film_dizi",
-  "output_root": "F:/test"
+  "output_root": "<YOUR_TEST_DIR>"
 }
 ```
 
@@ -96,8 +96,8 @@ F:\test\
 **Watch Script için Windows Task Scheduler:**
 ```cmd
 Program: python.exe
-Arguments: F:\REPO_GitHub\Cagatay_22.02\Project\watch_folder.py F:\test
-Start in: F:\REPO_GitHub\Cagatay_22.02\Project
+Arguments: <PATH_TO_PROJECT>\watch_folder.py <YOUR_TEST_DIR>
+Start in: <PATH_TO_PROJECT>
 ```
 
 **Batch Script için Kısayol:**
@@ -115,7 +115,7 @@ Start in: F:\REPO_GitHub\Cagatay_22.02\Project
 - Python scriptlerde `io.TextIOWrapper` fix mevcut
 
 **Video bulunamadı:**
-- Tam path kullan: `F:\test\test.mp4` ✅
+- Tam path kullan: `<YOUR_TEST_DIR>\test.mp4` ✅
 - Relative path: `.\test.mp4` ❌
 
 **Watch script çalışmıyor:**

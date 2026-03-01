@@ -176,9 +176,9 @@ class OCREngine:
             return PaddleOCR(**w)
 
         def _try_with(w: dict):
-            """Verilen kwargs ile en fazla 30 iterasyon dene, argüman budayarak."""
+            """Verilen kwargs ile en fazla 10 iterasyon dene, argüman budayarak."""
             working = dict(w)
-            for _ in range(30):
+            for _ in range(10):
                 try:
                     return _attempt(working)
                 except ValueError as e:

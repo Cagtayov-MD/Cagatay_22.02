@@ -6,9 +6,9 @@ venv_audio içinden çağrılır:
 
 config.json formatı:
   {
-    "video_path": "F:/input/film.mp4",
-    "work_dir": "F:/output/arsiv_film_20260222/",
-    "ffmpeg": "F:/Source/ffmpeg/bin/ffmpeg.exe",
+    "video_path": "/path/to/input/film.mp4",
+    "work_dir": "/path/to/output/arsiv_film_20260222/",
+    "ffmpeg": "/path/to/ffmpeg/bin/ffmpeg",
     "hf_token": "hf_xxx",
     "ollama_url": "http://localhost:11434",
     "tmdb_cast": [],
