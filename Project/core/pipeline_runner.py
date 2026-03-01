@@ -79,7 +79,15 @@ class PipelineRunner:
 
     # ──────────────────────────────────────────────────────────────
     def run(self, video_path, scope="video_only",
-            first_min=4.0, last_min=8.0) -> dict:
+            first_min=4.0, last_min=8.0, content_profile: dict | None = None) -> dict:
+        # İçerik profilinden scope/first_min/last_min değerlerini uygula
+        profile_name = "FilmDizi"
+        if content_profile:
+            profile_name = content_profile.get("_name", "FilmDizi")
+            scope      = content_profile.get("scope", scope)
+            first_min  = float(content_profile.get("first_segment_minutes", first_min))
+            last_min   = float(content_profile.get("last_segment_minutes", last_min))
+
         t0 = time.time()
         video_path = str(Path(video_path).resolve())
         vname = Path(video_path).stem
@@ -90,13 +98,14 @@ class PipelineRunner:
         )
         os.makedirs(work_dir, exist_ok=True)
 
-        self.stats.start_job(video_path, "WORKSTATION", scope, "film_dizi")
+        self.stats.start_job(video_path, "WORKSTATION", scope, profile_name)
         self.stage_stats = {}
 
         self._log(f"\n{'='*60}")
         self._log(f"  ARSIV DECODE — Pipeline v2.0")
         self._log(f"{'='*60}")
         self._log(f"  Video  : {Path(video_path).name}")
+        self._log(f"  Profil : {profile_name}")
         self._log(f"  Scope  : {scope}")
         self._log(f"  Giriş  : {first_min} dk | Çıkış: {last_min} dk")
         self._log(f"  Mod    : {self.config.get('difficulty','medium')}")
@@ -214,24 +223,30 @@ class PipelineRunner:
                 self._log(f"\n[6/6] TMDB_VERIFY")
                 t = time.time()
                 self.stats.start_stage("TMDB_VERIFY")
-                if not cdata.get("film_title"):
-                    cdata["film_title"] = vname
-                    self._log(f"  [TMDB] film_title yok, video adı kullanılıyor: {vname}")
-
-                tmdb_result = self._run_tmdb(cdata, work_dir)
-                self._stage("TMDB_VERIFY", time.time() - t,
-                            status=tmdb_result.reason,
-                            hits=tmdb_result.hits,
-                            misses=tmdb_result.misses,
-                            updated=tmdb_result.updated,
-                            matched_title=tmdb_result.matched_title)
-                if tmdb_result.updated:
-                    self._log(f"  OK: '{tmdb_result.matched_title}' — "
-                              f"hits:{tmdb_result.hits} misses:{tmdb_result.misses}")
-                    # TMDB-only credits output when verification succeeds
-                    cdata = self._apply_tmdb_credits(cdata, tmdb_result)
+                if content_profile and content_profile.get("match_parse_enabled"):
+                    # Spor profili: TMDB yerine MATCH_PARSE çalıştır (ileride implement edilecek)
+                    self._log(f"  [MATCH_PARSE] Profil={profile_name} — match_parse_enabled=True (skipped, ileride implement edilecek)")
+                    self._stage("TMDB_VERIFY", 0.0, status="skipped", reason="match_parse_enabled")
+                    tmdb_result = None
                 else:
-                    self._log(f"  --: {tmdb_result.reason}")
+                    if not cdata.get("film_title"):
+                        cdata["film_title"] = vname
+                        self._log(f"  [TMDB] film_title yok, video adı kullanılıyor: {vname}")
+
+                    tmdb_result = self._run_tmdb(cdata, work_dir)
+                    self._stage("TMDB_VERIFY", time.time() - t,
+                                status=tmdb_result.reason,
+                                hits=tmdb_result.hits,
+                                misses=tmdb_result.misses,
+                                updated=tmdb_result.updated,
+                                matched_title=tmdb_result.matched_title)
+                    if tmdb_result.updated:
+                        self._log(f"  OK: '{tmdb_result.matched_title}' — "
+                                  f"hits:{tmdb_result.hits} misses:{tmdb_result.misses}")
+                        # TMDB-only credits output when verification succeeds
+                        cdata = self._apply_tmdb_credits(cdata, tmdb_result)
+                    else:
+                        self._log(f"  --: {tmdb_result.reason}")
 
             else:
                 for stage_name in ("FRAME_EXTRACT", "TEXT_FILTER", "OCR_CREDITS",
@@ -246,7 +261,8 @@ class PipelineRunner:
             exp = ExportEngine(work_dir, name_db=self._name_db)
             jp, tp = exp.generate(
                 info, cdata, ocr_lines, self.stage_stats,
-                "WORKSTATION", scope, first_min, last_min)
+                "WORKSTATION", scope, first_min, last_min,
+                content_profile_name=profile_name)
             self._stage("EXPORT", time.time() - t)
 
             total = time.time() - t0

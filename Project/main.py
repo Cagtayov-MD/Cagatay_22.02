@@ -27,8 +27,20 @@ if os.environ.get("HEADLESS", "0") == "1":
     first_min = float(os.environ.get("FIRST_MIN", "1.0"))
     last_min = float(os.environ.get("LAST_MIN", "1.0"))
 
+    content_profile = None
+    content_profile_name = os.environ.get("CONTENT_PROFILE", "")
+    if content_profile_name:
+        from config.profile_loader import load_profile
+        content_profile = load_profile(content_profile_name)
+        if content_profile:
+            content_profile["_name"] = content_profile_name
+            scope = content_profile.get("scope", scope)
+            first_min = float(content_profile.get("first_segment_minutes", first_min))
+            last_min = float(content_profile.get("last_segment_minutes", last_min))
+
     runner = PipelineRunner(ffmpeg, ffprobe)
-    runner.run(video_path=video_path, scope=scope, first_min=first_min, last_min=last_min)
+    runner.run(video_path=video_path, scope=scope, first_min=first_min, last_min=last_min,
+               content_profile=content_profile)
 
     raise SystemExit(0)
 # --- END HEADLESS ---
