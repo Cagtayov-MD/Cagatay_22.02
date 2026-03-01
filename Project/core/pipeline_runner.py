@@ -102,7 +102,7 @@ class PipelineRunner:
         self.stage_stats = {}
 
         self._log(f"\n{'='*60}")
-        self._log(f"  ARSIV DECODE — Pipeline v2.0")
+        self._log(f"  VİTOS — Pipeline v7")
         self._log(f"{'='*60}")
         self._log(f"  Video  : {Path(video_path).name}")
         self._log(f"  Profil : {profile_name}")
@@ -259,10 +259,11 @@ class PipelineRunner:
             t = time.time()
             self.stats.start_stage("EXPORT")
             exp = ExportEngine(work_dir, name_db=self._name_db)
-            jp, tp = exp.generate(
+            jp, tp, tr_p = exp.generate(
                 info, cdata, ocr_lines, self.stage_stats,
                 "WORKSTATION", scope, first_min, last_min,
-                content_profile_name=profile_name)
+                content_profile_name=profile_name,
+                audio_result=audio_result)
             self._stage("EXPORT", time.time() - t)
 
             total = time.time() - t0
@@ -271,19 +272,21 @@ class PipelineRunner:
             self._log(f"\n{'='*60}")
             self._log(f"  TAMAMLANDI — {total:.1f}s "
                       f"({info['duration_seconds']/max(total,0.1):.1f}x)")
-            self._log(f"  JSON: {jp}")
-            self._log(f"  TXT : {tp}")
+            self._log(f"  JSON      : {jp}")
+            self._log(f"  Rapor     : {tp}")
+            self._log(f"  Transcript: {tr_p}")
             self._log(f"{'='*60}")
 
             return {
-                "report_json":  jp,
-                "report_txt":   tp,
-                "work_dir":     work_dir,
-                "video_info":   info,
-                "credits":      cdata,
-                "ocr_lines":    len(ocr_lines),
-                "tmdb_result":  tmdb_result,
-                "audio_result": audio_result,
+                "report_json":       jp,
+                "report_txt":        tp,
+                "transcript_txt":    tr_p,
+                "work_dir":          work_dir,
+                "video_info":        info,
+                "credits":           cdata,
+                "ocr_lines":         len(ocr_lines),
+                "tmdb_result":       tmdb_result,
+                "audio_result":      audio_result,
             }
 
         except Exception as e:

@@ -120,7 +120,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("ARSIV DECODE v2.0")
+        self.setWindowTitle("Vitos v7")
         self.setMinimumSize(1100, 820)
         self.resize(1200, 900)
 
@@ -128,6 +128,7 @@ class MainWindow(QMainWindow):
         self.output_dir = ""
         self.running    = False
         self.pipeline_thread = None
+        self.stage_bars = {}
 
         self.signals = PipelineSignals()
         self.signals.log_message.connect(self._append_log)
@@ -153,9 +154,9 @@ class MainWindow(QMainWindow):
         # ── Başlık satırı (sol: isim+subtitle, sağ: sistem bilgisi) ──
         header = QHBoxLayout()
         title_col = QVBoxLayout()
-        title = QLabel("ARSIV DECODE")
+        title = QLabel("VİTOS")
         title.setObjectName("titleLabel")
-        sub = QLabel("Video Analiz Sistemi — PaddleOCR GPU + WhisperX")
+        sub = QLabel("Video İşleme ve Tarama Otomasyonu — ASR · OCR · LLM")
         sub.setObjectName("subtitleLabel")
         title_col.addWidget(title)
         title_col.addWidget(sub)
@@ -173,7 +174,7 @@ class MainWindow(QMainWindow):
         tab1_lay.setContentsMargins(0, 4, 0, 0)
         tab1_lay.setSpacing(6)
 
-        # Ana splitter: sol (kontrol + DAG), sağ (canlı log)
+        # Ana splitter: sol (kontrol + DAG), sağ (canlı log — tam yükseklik)
         mid = QSplitter(Qt.Horizontal)
         left_widget = QWidget()
         left_lay = QVBoxLayout(left_widget)
@@ -186,27 +187,25 @@ class MainWindow(QMainWindow):
         mid.setSizes([500, 500])
         tab1_lay.addWidget(mid)
 
-        # Alt istatistik + pipeline paneli (küçültülmüş)
-        bot = QSplitter(Qt.Horizontal)
-        bot.addWidget(self._build_stats_panel())
-        bot.addWidget(self._build_pipeline_panel())
-        bot.setSizes([350, 650])
-        tab1_lay.addWidget(bot)
+        tabs.addTab(tab1, "Analiz")
 
-        tabs.addTab(tab1, "Ana Panel")
-
-        # Sekme 2: (ileride doldurulacak)
+        # Sekme 2: İstatistik
         tab2 = QWidget()
-        tabs.addTab(tab2, "İkinci Panel")
+        tab2_lay = QVBoxLayout(tab2)
+        tab2_lay.setContentsMargins(4, 4, 4, 4)
+        tab2_lay.addWidget(self._build_stats_panel())
+        tab2_lay.addStretch()
+        tabs.addTab(tab2, "İstatistik")
 
         root.addWidget(tabs)
 
     def _build_control_panel(self):
         grp = QGroupBox("Kontrol Kulesi")
         lay = QVBoxLayout(grp)
-        lay.setSpacing(6)
+        lay.setSpacing(8)
 
         # İçerik profili seçimi
+        lay.addWidget(self._sep())
         icerik_row = QHBoxLayout()
         icerik_row.addWidget(QLabel("İçerik:"))
         self.content_combo = QComboBox()
@@ -214,7 +213,6 @@ class MainWindow(QMainWindow):
         self.content_combo.currentTextChanged.connect(self._on_profile_changed)
         icerik_row.addWidget(self.content_combo)
         lay.addLayout(icerik_row)
-
         lay.addWidget(self._sep())
 
         # Başlat
@@ -362,22 +360,24 @@ class MainWindow(QMainWindow):
         return grp
 
     def _build_system_info(self):
-        """CPU %, GPU %, RAM GB, Saat, Tarih gösteren sistem bilgisi widget'ı."""
+        """Tarih, Saat ve CPU/GPU/RAM — 3 satır dikey, sağa yaslanmış."""
         widget = QWidget()
-        lay = QHBoxLayout(widget)
+        lay = QVBoxLayout(widget)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(12)
+        lay.setSpacing(2)
 
-        self._sys_cpu_lbl  = QLabel("CPU: —")
-        self._sys_gpu_lbl  = QLabel("GPU: —")
-        self._sys_ram_lbl  = QLabel("RAM: —")
-        self._sys_time_lbl = QLabel("—")
         self._sys_date_lbl = QLabel("—")
+        self._sys_time_lbl = QLabel("—")
+        self._sys_hw_lbl   = QLabel("CPU: —  GPU: —  RAM: —")
 
-        for lbl in (self._sys_cpu_lbl, self._sys_gpu_lbl, self._sys_ram_lbl,
-                    self._sys_time_lbl, self._sys_date_lbl):
-            lbl.setObjectName("subtitleLabel")
+        for lbl in (self._sys_date_lbl, self._sys_time_lbl):
+            lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            lbl.setStyleSheet("font-size: 14px; color: #e0e0e0;")
             lay.addWidget(lbl)
+
+        self._sys_hw_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._sys_hw_lbl.setStyleSheet("font-size: 12px; color: #888;")
+        lay.addWidget(self._sys_hw_lbl)
 
         self._sys_timer = QTimer(widget)
         self._sys_timer.timeout.connect(self._update_system_info)
@@ -385,28 +385,58 @@ class MainWindow(QMainWindow):
         self._update_system_info()
         return widget
 
-    def _update_system_info(self):
-        """Sistem bilgisi etiketlerini güncelle."""
-        try:
-            import psutil
-            cpu = psutil.cpu_percent(interval=None)
-            ram_gb = psutil.virtual_memory().used / (1024 ** 3)
-            self._sys_cpu_lbl.setText(f"CPU: {cpu:.0f}%")
-            self._sys_ram_lbl.setText(f"RAM: {ram_gb:.1f}GB")
-        except Exception:
-            pass
+    @staticmethod
+    def _get_gpu_usage() -> str:
+        """GPU kullanımını 3 farklı yöntemle dene."""
+        # Yöntem 1: GPUtil
         try:
             import GPUtil
             gpus = GPUtil.getGPUs()
             if gpus:
-                self._sys_gpu_lbl.setText(f"GPU: {gpus[0].load*100:.0f}%")
-            else:
-                self._sys_gpu_lbl.setText("GPU: N/A")
+                return f"{gpus[0].load * 100:.0f}%"
         except Exception:
-            self._sys_gpu_lbl.setText("GPU: N/A")
+            pass
+        # Yöntem 2: pynvml
+        try:
+            import pynvml
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+            pynvml.nvmlShutdown()
+            return f"{util.gpu}%"
+        except Exception:
+            pass
+        # Yöntem 3: nvidia-smi subprocess
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=utilization.gpu",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return f"{result.stdout.strip()}%"
+        except Exception:
+            pass
+        return "N/A"
+
+    def _update_system_info(self):
+        """Sistem bilgisi etiketlerini güncelle."""
         now = datetime.now()
-        self._sys_time_lbl.setText(now.strftime("%H:%M:%S"))
         self._sys_date_lbl.setText(now.strftime("%d.%m.%Y"))
+        self._sys_time_lbl.setText(now.strftime("%H:%M:%S"))
+
+        cpu_txt = "—"
+        ram_txt = "—"
+        try:
+            import psutil
+            cpu_txt = f"{psutil.cpu_percent(interval=None):.0f}%"
+            ram_txt = f"{psutil.virtual_memory().used / (1024 ** 3):.1f}GB"
+        except Exception:
+            pass
+
+        gpu_txt = self._get_gpu_usage()
+        self._sys_hw_lbl.setText(f"CPU: {cpu_txt}  GPU: {gpu_txt}  RAM: {ram_txt}")
 
     def _build_dag_panel(self):
         """DAG diagram widget'ını içeren grup kutusu."""
@@ -554,8 +584,9 @@ class MainWindow(QMainWindow):
         self.stat_actors.setText(str(cr.get("total_actors", 0)))
         self.stat_crew.setText(str(cr.get("total_crew", 0)))
         self._log("\nTAMAMLANDI!")
-        self._log(f"  JSON: {result.get('report_json', '')}")
-        self._log(f"  TXT : {result.get('report_txt', '')}")
+        self._log(f"  JSON      : {result.get('report_json', '')}")
+        self._log(f"  Rapor     : {result.get('report_txt', '')}")
+        self._log(f"  Transcript: {result.get('transcript_txt', '')}")
         for bar in self.stage_bars.values():
             bar.setValue(100)
 

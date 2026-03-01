@@ -401,12 +401,12 @@ class ExportEngine:
 
     def generate(self, video_info, credits_data, ocr_lines, stage_stats,
                  profile, scope, first_min, last_min, keywords=None, logos=None,
-                 content_profile_name: str | None = None):
+                 content_profile_name: str | None = None,
+                 audio_result: dict | None = None):
         total_sec = sum(s.get("duration_sec", 0) for s in stage_stats.values())
         dur = video_info.get("duration_seconds", 1)
 
         # Final çıktı temizliği (dedup + en iyi varyant seçimi)
-        # ÖNEMLİ: keywords'ten ÖNCE yapılmalı, aksi halde bozuk actor_name'ler keyword'e girer
         try:
             if credits_data.get('cast'):
                 credits_data['cast'] = _canonicalize_cast(credits_data['cast'])
@@ -416,7 +416,6 @@ class ExportEngine:
         except Exception:
             pass
 
-        # Keywords canonicalize'dan SONRA oluştur — Türkçe karakterler korunmuş olur
         if not keywords:
             keywords = [c["actor_name"] for c in credits_data.get("cast", [])[:20]
                         if c.get("actor_name")]
@@ -466,18 +465,21 @@ class ExportEngine:
 
         stem = Path(video_info.get("filename", "out")).stem
         jp = self.out / f"{stem}_report.json"
-        tp = self.out / f"{stem}_report.txt"
+        tp = self.out / f"{stem}.txt"
+        tr_p = self.out / f"{stem}-transcript.txt"
 
         with open(jp, "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
-        self._write_txt(report, tp)
-        return str(jp), str(tp)
+        self._write_report(report, tp, audio_result=audio_result)
+        self._write_transcript(video_info, audio_result, tr_p)
+        return str(jp), str(tp), str(tr_p)
 
-    def _write_txt(self, r, path):
+    def _write_report(self, r, path, audio_result: dict | None = None):
         L = []
-        sep = "=" * 65
+        sep  = "=" * 65
+        sep2 = "-" * 65
         L.append(sep)
-        L.append("  ARSIV DECODE — ANALIZ RAPORU")
+        L.append("  VİTOS — ANALİZ RAPORU")
         L.append(sep)
         fi = r["file_info"]
         L.append(f"\n  Dosya      : {fi['filename']}")
@@ -486,57 +488,88 @@ class ExportEngine:
         L.append(f"  Boyut      : {fi['filesize_bytes']/1024/1024:.1f} MB")
         p = r["processing"]
         L.append(f"\n  Profil     : {r['profile']}")
+        L.append(f"  Icerik     : {p.get('content_type','?')}")
         L.append(f"  OCR Motor  : {p.get('ocr_engine','?')}")
+        asr_model = "—"
+        if audio_result and isinstance(audio_result, dict):
+            asr_model = audio_result.get("whisper_model") or audio_result.get("model", "—")
+        L.append(f"  ASR Motor  : WhisperX ({asr_model})")
         L.append(f"  Toplam sure: {p['total_duration_sec']:.1f}s ({p['speed_ratio']}x)")
 
-        L.append(f"\n{'-'*65}")
+        # ASR BİLGİLERİ
+        if audio_result and isinstance(audio_result, dict) and audio_result.get("status") == "ok":
+            L.append(f"\n{sep2}")
+            L.append("  ASR BİLGİLERİ")
+            L.append(sep2)
+            transcript = audio_result.get("transcript", [])
+            L.append(f"  Segment    : {len(transcript)} segment")
+            audio_dur = audio_result.get("audio_duration_sec") or audio_result.get("duration_sec")
+            if audio_dur:
+                L.append(f"  Audio Sure : {audio_dur:.0f}s")
+            extract_t = audio_result.get("extract_time_sec")
+            if extract_t is not None:
+                L.append(f"  Extract    : {extract_t:.1f}s")
+            transcribe_t = audio_result.get("transcribe_time_sec")
+            if transcribe_t is not None:
+                L.append(f"  Transcribe : {transcribe_t:.1f}s")
+            if asr_model and asr_model != "—":
+                device = audio_result.get("device", "cuda")
+                dtype  = audio_result.get("compute_type", "float16")
+                L.append(f"  Whisper    : {asr_model} ({device}, {dtype})")
+            lang = audio_result.get("language", "tr")
+            L.append(f"  Dil        : {lang}")
+
+        L.append(f"\n{sep2}")
         L.append("  PIPELINE")
-        L.append(f"{'-'*65}")
+        L.append(sep2)
         for s in p["stages"]:
             ico = "[OK]" if s["status"] in ("ok", "completed") else "[--]" if s["status"] == "skipped" else "[!!]"
             L.append(f"  {ico} {s['name']:20s} {s['duration_sec']:8.1f}s")
 
         cr = r["credits"]
-        L.append(f"\n{'-'*65}")
-        L.append(f"  CREDITS [{cr.get('verification_status','unverified')}]")
-        L.append(f"{'-'*65}")
-        if cr.get("year"):
-            L.append(f"\n  YIL: {cr['year']}")
-        if cr.get("production_companies"):
-            L.append("\n  YAPIM SIRKETLERI:")
-            for c in cr["production_companies"]:
-                L.append(f"    {c}")
-        if cr.get("production_info"):
-            L.append("\n  YAPIM BILGISI:")
-            for p in cr["production_info"]:
-                L.append(f"    {p}")
-        if cr.get("directors"):
-            L.append("\n  YONETMEN:")
-            for d in self._director_names(cr):
-                L.append(f"    {d}")
+        L.append(f"\n{sep2}")
+        L.append("  OYUNCULAR")
+        L.append(sep2)
         if cr.get("cast"):
-            L.append(f"\n  OYUNCULAR ({cr['total_actors']}):")
+            L.append(f"  {'Karakter Adı':22s}  --  Gerçek İsim")
+            L.append(f"  {'─'*45}")
             for c in cr["cast"]:
-                ch = f" -> {c['character_name']}" if c.get("character_name") else ""
-                L.append(f"    {c['actor_name']}{ch}")
-        if cr.get("technical_crew"):
-            L.append(f"\n  TEKNIK EKIP ({cr['total_crew']}):")
-            for t in cr["technical_crew"]:
-                role_txt = t.get('role_tr') or t.get('role') or t.get('job') or ''
-                L.append(f"    {t.get('name','')} -- {role_txt}")
+                ch = c.get("character_name") or ""
+                ac = c.get("actor_name") or ""
+                if ch:
+                    L.append(f"  {ch:22s}  --  {ac}")
+                else:
+                    L.append(f"  {ac}")
+        else:
+            L.append("  (Oyuncu verisi yok)")
 
-        if r.get("keywords"):
-            L.append(f"\n{'-'*65}")
-            L.append("  ANAHTAR KELIMELER")
-            L.append(f"{'-'*65}")
-            L.append(f"  {' ; '.join(r['keywords'])}")
+        if cr.get("technical_crew") or cr.get("crew"):
+            L.append(f"\n{sep2}")
+            L.append("  CREDITS (TEKNİK EKİP)")
+            L.append(sep2)
+            for t in (cr.get("technical_crew") or cr.get("crew") or []):
+                role_txt = t.get('role_tr') or t.get('role') or t.get('job') or ''
+                L.append(f"  {role_txt:12s}: {t.get('name','')}")
+
+        if cr.get("directors"):
+            dir_names = self._director_names(cr)
+            if dir_names:
+                L.append(f"\n  Yönetmen   : {', '.join(dir_names)}")
+
+        L.append(f"\n{sep2}")
+        L.append("  ÖZET (Ollama)")
+        L.append(sep2)
+        summary = None
+        if audio_result and isinstance(audio_result, dict):
+            summary = audio_result.get("summary") or audio_result.get("ollama_summary")
+        L.append(f"  {summary}" if summary else "  Özet oluşturma aktif değil")
 
         # Spor profili: Maç Bilgileri bölümü
         match_data = r.get("match_data")
         if match_data or p.get("content_type") == "Spor":
-            L.append(f"\n{'-'*65}")
+            L.append(f"\n{sep2}")
             L.append("  MAC BILGILERI")
-            L.append(f"{'-'*65}")
+            L.append(sep2)
             if match_data:
                 if match_data.get("spor_turu"):
                     L.append(f"  Spor Turu     : {match_data['spor_turu']}")
@@ -560,23 +593,53 @@ class ExportEngine:
             else:
                 L.append("  (Mac verisi bulunamadi)")
 
-        ocr = r.get("ocr_results", [])
-        if ocr:
-            L.append(f"\n{'-'*65}")
-            L.append(f"  OCR SONUCLARI ({len(ocr)} benzersiz satir)")
-            L.append(f"{'-'*65}")
-            for o in ocr:
-                tc = o.get("first_seen", 0)
-                cf = o.get("confidence", 0)
-                cn = o.get("count", 1)
-                L.append(f"  [{tc:7.1f}s] conf:{cf:.2f} x{cn}  {o['text']}")
-
         L.append(f"\n{sep}")
         L.append(f"  Olusturulma: {r['generated_at']}")
         L.append(sep)
 
         with open(path, "w", encoding="utf-8-sig") as f:
             f.write("\n".join(L))
+
+    def _write_transcript(self, video_info: dict, audio_result, path):
+        """Zaman damgalı transcript dosyası yaz."""
+        sep  = "=" * 65
+        sep2 = "-" * 65
+        L = []
+        L.append(sep)
+        L.append("  VİTOS — TRANSCRİPT")
+        L.append(sep)
+        L.append(f"  Dosya: {video_info.get('filename', '')}")
+        L.append(f"  Sure : {video_info.get('duration_human', '')}")
+        asr_model = "—"
+        if audio_result and isinstance(audio_result, dict):
+            asr_model = audio_result.get("whisper_model") or audio_result.get("model", "—")
+        L.append(f"  ASR  : WhisperX {asr_model}")
+        L.append(f"\n{sep2}\n")
+
+        transcript = []
+        if audio_result and isinstance(audio_result, dict):
+            transcript = audio_result.get("transcript", [])
+
+        if transcript:
+            for seg in transcript:
+                start = seg.get("start", 0)
+                text  = seg.get("text", "").strip()
+                h  = int(start) // 3600
+                m  = (int(start) % 3600) // 60
+                s  = int(start) % 60
+                ts = f"{h:02d}:{m:02d}:{s:02d}"
+                L.append(f"[{ts}] {text}")
+        else:
+            L.append("  (Transcript verisi yok)")
+
+        L.append(f"\n{sep}")
+
+        with open(path, "w", encoding="utf-8-sig") as f:
+            f.write("\n".join(L))
+
+    # Keep _write_txt as an alias for backward compatibility
+    def _write_txt(self, r, path):
+        self._write_report(r, path)
 
     @staticmethod
     def _director_names(credits: dict) -> list[str]:
