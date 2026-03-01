@@ -85,8 +85,14 @@ class PipelineRunner:
         if content_profile:
             profile_name = content_profile.get("_name", "FilmDizi")
             scope      = content_profile.get("scope", scope)
-            first_min  = float(content_profile.get("first_segment_minutes", first_min))
-            last_min   = float(content_profile.get("last_segment_minutes", last_min))
+            try:
+                first_min = float(content_profile.get("first_segment_minutes", first_min))
+            except (ValueError, TypeError):
+                print(f"  [Config] Geçersiz first_segment_minutes — varsayılan {first_min} dk kullanılıyor")
+            try:
+                last_min  = float(content_profile.get("last_segment_minutes", last_min))
+            except (ValueError, TypeError):
+                print(f"  [Config] Geçersiz last_segment_minutes — varsayılan {last_min} dk kullanılıyor")
 
         t0 = time.time()
         video_path = str(Path(video_path).resolve())
