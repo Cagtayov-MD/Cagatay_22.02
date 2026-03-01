@@ -28,6 +28,8 @@ from PySide6.QtCore import Qt, Signal, QObject, QTimer
 from PySide6.QtGui import QFont
 
 from config.runtime_paths import API_KEYS_JSON, FFMPEG_BIN_DIR, GOOGLE_KEYS_JSON, LOGOLAR_DIR
+from ui.queue_tab import QueueTab
+from core.queue_manager import VideoStatus
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -129,6 +131,10 @@ class MainWindow(QMainWindow):
         self.running    = False
         self.pipeline_thread = None
         self.stage_bars = {}
+        self._queue_running = False
+        self._queue_stop_requested = False
+        self._queue_thread = None
+        self._queue_profile_name = "FilmDizi"
 
         self.signals = PipelineSignals()
         self.signals.log_message.connect(self._append_log)
@@ -189,13 +195,11 @@ class MainWindow(QMainWindow):
 
         tabs.addTab(tab1, "Analiz")
 
-        # Sekme 2: İstatistik
-        tab2 = QWidget()
-        tab2_lay = QVBoxLayout(tab2)
-        tab2_lay.setContentsMargins(4, 4, 4, 4)
-        tab2_lay.addWidget(self._build_stats_panel())
-        tab2_lay.addStretch()
-        tabs.addTab(tab2, "İstatistik")
+        # Sekme 2: Kuyruk
+        self.queue_tab = QueueTab()
+        self.queue_tab.start_queue.connect(self._on_queue_start)
+        self.queue_tab.stop_queue.connect(self._on_queue_stop)
+        tabs.addTab(self.queue_tab, "Kuyruk")
 
         root.addWidget(tabs)
 
@@ -525,6 +529,146 @@ class MainWindow(QMainWindow):
         self.running = False
         self._reset_ui()
 
+    def _on_queue_start(self):
+        """Kuyruk Başlat butonuna basıldığında."""
+        qm = self.queue_tab.queue_manager
+        if qm.stats()["pending"] == 0:
+            QMessageBox.warning(self, "Uyarı", "Kuyrukta bekleyen video yok!")
+            return
+
+        self._queue_running = True
+        self._queue_stop_requested = False
+        self._queue_profile_name = self.content_combo.currentText()
+        self.queue_tab.set_running(True)
+
+        self._queue_thread = threading.Thread(
+            target=self._run_queue, daemon=True)
+        self._queue_thread.start()
+
+    def _on_queue_stop(self):
+        """Kuyruk Durdur butonuna basıldığında."""
+        self._queue_stop_requested = True
+
+    def _run_queue(self):
+        """Kuyruktaki videoları sırayla işle (arka plan thread)."""
+        from PySide6.QtCore import QMetaObject, Qt as QtConst
+        from utils.path_resolver import PathResolver
+        from config.profile_loader import load_profile
+
+        qm = self.queue_tab.queue_manager
+
+        while not self._queue_stop_requested:
+            item = qm.get_next()
+            if item is None:
+                break  # kuyruk bitti
+
+            video_path = item.path
+
+            # UI güncelle: İşleniyor (ana thread'de çalıştır)
+            self.signals.log_message.emit(f"\n[KUYRUK] İşleniyor: {video_path}")
+            QMetaObject.invokeMethod(
+                self.queue_tab, "update_item_status",
+                QtConst.QueuedConnection,
+                video_path,
+                VideoStatus.PROCESSING,
+                None,
+                "",
+            )
+
+            t_start = time.time()
+            try:
+                resolver = PathResolver()
+                resolver.resolve_all()
+                if not resolver.ffmpeg:
+                    raise RuntimeError(f"FFmpeg bulunamadı: {resolver.errors}")
+
+                profile_name = self._queue_profile_name
+                try:
+                    content_profile = load_profile(profile_name)
+                    if content_profile:
+                        content_profile["_name"] = profile_name
+                    else:
+                        content_profile = None
+                except Exception:
+                    content_profile = None
+
+                base_cfg = dict(self.config.get("WORKSTATION", {}))
+                if content_profile:
+                    for key in ("text_filter_threshold", "text_filter_mser_min_boxes",
+                                "text_filter_max_per_segment"):
+                        if key in content_profile:
+                            base_cfg[key] = content_profile[key]
+
+                out_dir = str(Path(video_path).parent)
+
+                from core.pipeline_runner import PipelineRunner
+                scope = "video+audio"
+                first_min = 4.0
+                last_min = 8.0
+                if content_profile:
+                    scope = content_profile.get("scope", scope)
+                    try:
+                        first_min = float(content_profile.get("first_segment_minutes", first_min))
+                        last_min = float(content_profile.get("last_segment_minutes", last_min))
+                    except (ValueError, TypeError):
+                        pass
+
+                runner = PipelineRunner(
+                    ffmpeg=resolver.ffmpeg,
+                    ffprobe=resolver.ffprobe,
+                    config=base_cfg,
+                    output_root=out_dir,
+                    google_json=resolver.google_json,
+                    logolar_dir=resolver.logolar,
+                )
+                runner.set_log_callback(
+                    lambda msg: self.signals.log_message.emit(msg))
+
+                runner.run(
+                    video_path=video_path,
+                    scope=scope,
+                    first_min=first_min,
+                    last_min=last_min,
+                    content_profile=content_profile,
+                )
+
+                elapsed = time.time() - t_start
+                QMetaObject.invokeMethod(
+                    self.queue_tab, "update_item_status",
+                    QtConst.QueuedConnection,
+                    video_path,
+                    VideoStatus.DONE,
+                    elapsed,
+                    "",
+                )
+                self.signals.log_message.emit(
+                    f"  [KUYRUK] ✅ Bitti: {Path(video_path).name} ({elapsed:.0f}s)")
+
+            except Exception as e:
+                import traceback
+                elapsed = time.time() - t_start
+                error_msg = str(e)
+                self.signals.log_message.emit(
+                    f"  [KUYRUK] ❌ Hata: {Path(video_path).name} — {error_msg}\n"
+                    f"{traceback.format_exc()}")
+                QMetaObject.invokeMethod(
+                    self.queue_tab, "update_item_status",
+                    QtConst.QueuedConnection,
+                    video_path,
+                    VideoStatus.ERROR,
+                    None,
+                    error_msg,
+                )
+
+        # Kuyruk bitti veya durduruldu
+        self._queue_running = False
+        QMetaObject.invokeMethod(
+            self.queue_tab, "set_running",
+            QtConst.QueuedConnection,
+            False,
+        )
+        self.signals.log_message.emit("\n[KUYRUK] Tamamlandı.")
+
     def _run_pipeline(self, params: dict):
         """Pipeline'ı arka plan thread'inde çalıştır."""
         try:
@@ -579,10 +723,13 @@ class MainWindow(QMainWindow):
 
     def _on_done(self, result: dict):
         self._reset_ui()
-        self.stat_ocr.setText(str(result.get("ocr_lines", 0)))
+        if hasattr(self, 'stat_ocr'):
+            self.stat_ocr.setText(str(result.get("ocr_lines", 0)))
         cr = result.get("credits", {})
-        self.stat_actors.setText(str(cr.get("total_actors", 0)))
-        self.stat_crew.setText(str(cr.get("total_crew", 0)))
+        if hasattr(self, 'stat_actors'):
+            self.stat_actors.setText(str(cr.get("total_actors", 0)))
+        if hasattr(self, 'stat_crew'):
+            self.stat_crew.setText(str(cr.get("total_crew", 0)))
         self._log("\nTAMAMLANDI!")
         self._log(f"  JSON      : {result.get('report_json', '')}")
         self._log(f"  Rapor     : {result.get('report_txt', '')}")
@@ -604,7 +751,7 @@ class MainWindow(QMainWindow):
             self._timer.stop()
 
     def _update_elapsed(self):
-        if hasattr(self, "_start_time"):
+        if hasattr(self, "_start_time") and hasattr(self, 'stat_elapsed'):
             e = int(time.time() - self._start_time)
             h, r = divmod(e, 3600)
             m, s = divmod(r, 60)
@@ -620,7 +767,8 @@ class MainWindow(QMainWindow):
         if path:
             self.video_edit.setText(path)
             self.video_path = path
-            self.stat_video.setText(Path(path).name)
+            if hasattr(self, 'stat_video'):
+                self.stat_video.setText(Path(path).name)
             # Çıktı dizini yoksa videoyla aynı dizini öner
             if not self.output_dir:
                 self.output_edit.setText(os.path.dirname(path))
