@@ -47,10 +47,10 @@ def _get_text(line) -> str:
 
 
 def _get_confidence(line) -> float:
-    """OCRLine nesnesi veya dict'ten avg_confidence al."""
+    """OCRLine nesnesi veya dict'ten confidence al."""
     if isinstance(line, dict):
-        return float(line.get("avg_confidence", 0.6))
-    return float(getattr(line, "avg_confidence", 0.6))
+        return float(line.get("avg_confidence", line.get("confidence", 0.6)))
+    return float(getattr(line, "avg_confidence", getattr(line, "confidence", 0.6)))
 
 
 def _is_noise(text: str) -> bool:
@@ -230,20 +230,18 @@ class CreditsParser:
                         if canonical and score >= 0.80:
                             # Fuzzy eşleşme → metni düzelt
                             text = canonical
-                            conf = min(1.0, conf + 0.1)
+                            conf = min(1.0, score)
                             is_verified = True
-                        else:
-                            # NameDB'de bulunamadı → güven düşür
-                            conf = min(conf, 0.35)
+                        # NameDB'de bulunamasa bile cast'a ekle — LLM sonra filtreler
 
                 cast.append({
                     "actor_name": text,
                     "character_name": "",
                     "role": current_role or "Cast",
-                    "role_category": "cast",
+                    "role_category": current_category,
                     "confidence": round(conf, 3),
                     "is_verified_name": is_verified,
-                    "frame": "",
+                    "frame": "ocr_sequential",
                 })
 
         return {

@@ -24,6 +24,7 @@ from core.credits_parser import CreditsParser
 from core.export_engine import ExportEngine
 from core.turkish_name_db import TurkishNameDB
 from core.qwen_verifier import QwenVerifier
+from core.llm_cast_filter import LLMCastFilter
 from utils.stats_logger import StatsLogger
 
 
@@ -74,6 +75,9 @@ class PipelineRunner:
             confidence_threshold=qwen_thresh,
             enabled=qwen_enabled,
         )
+
+        # LLMCastFilter config
+        self._llm_filter_enabled = bool(self.config.get("llm_cast_filter", True))
 
     def set_log_callback(self, cb):
         self._log_cb = cb
@@ -231,6 +235,21 @@ class PipelineRunner:
                 self._log(f"  OK: Oyuncu:{cdata['total_actors']} "
                           f"Ekip:{cdata['total_crew']} "
                           f"Şirket:{cdata['total_companies']}")
+
+                # ══ [LLM] LLM_CAST_FILTER ══════════════════════════
+                self._log(f"\n[LLM] Cast Filtreleme")
+                t = time.time()
+                llm_filter = LLMCastFilter(
+                    ollama_url=self.config.get("ollama_url", "http://localhost:11434"),
+                    model=self.config.get("llm_filter_model") or self.config.get("ollama_model", "llama3.1:8b"),
+                    enabled=self._llm_filter_enabled,
+                    log_cb=self._log,
+                )
+                cdata["cast"] = llm_filter.filter_cast(cdata.get("cast", []), log_cb=self._log)
+                cdata["total_actors"] = len(cdata["cast"])
+                llm_elapsed = time.time() - t
+                if llm_elapsed > 0.1:
+                    self._log(f"  [LLM] Cast filtreleme: {llm_elapsed:.1f}s")
 
                 # ══ [6/6] TMDB_VERIFY ══════════════════════════════
                 self._log(f"\n[6/6] TMDB_VERIFY")
