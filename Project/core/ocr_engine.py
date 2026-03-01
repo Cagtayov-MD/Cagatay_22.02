@@ -78,6 +78,11 @@ BLACKLIST_RE = [re.compile(p, re.IGNORECASE) for p in BLACKLIST_PATTERNS]
 class OCREngine:
     """PaddleOCR GPU engine + agresif dedup + isim bölme."""
 
+    _TR_ASCII_MAP = str.maketrans({
+        "ç": "c", "ğ": "g", "ı": "i", "ö": "o", "ş": "s", "ü": "u",
+        "Ç": "c", "Ğ": "g", "İ": "i", "Ö": "o", "Ş": "s", "Ü": "u",
+    })
+
     def __init__(self, use_gpu=True, lang="en", cfg=None, log_cb=None, name_db=None):
         if not HAS_PADDLE:
             raise ImportError("PaddleOCR kurulu değil! pip install paddlepaddle paddleocr")
@@ -624,6 +629,7 @@ class OCREngine:
 
     def _normalize(self, text: str) -> str:
         t = text.lower().strip()
+        t = t.translate(self._TR_ASCII_MAP)
         t = re.sub(r'[^\w\s]', '', t)
         t = re.sub(r'\s+', ' ', t)
         return t
@@ -722,8 +728,13 @@ class OCREngine:
             for j in range(i + 1, len(sorted_r)):
                 if j in used:
                     continue
+
+                # Timecode-aware threshold: aynı zaman diliminde daha gevşek eşleşme
+                time_diff = abs(r.timecode_sec - sorted_r[j].timecode_sec)
+                effective_threshold = 70 if time_diff <= 2.0 else self.fuzzy_threshold
+
                 sim = self._similarity(r.text, sorted_r[j].text)
-                if sim >= self.fuzzy_threshold:
+                if sim >= effective_threshold:
                     used.add(j)
                     cluster.append(sorted_r[j])
                     if sorted_r[j].confidence > best.confidence:
@@ -751,12 +762,19 @@ class OCREngine:
             if len(group) >= self.watermark_threshold:
                 continue
             best = max(group, key=lambda r: r.confidence)
+            avg_conf = round(sum(r.confidence for r in group) / len(group), 3)
+
+            # Tek seferlik görüntü → confidence penalty
+            # Gerçek isimler genellikle 2+ frame'de görülür
+            if len(group) == 1:
+                avg_conf = round(avg_conf * 0.7, 3)  # %30 penalty
+
             lines.append(OCRLine(
                 text=best.text,
                 first_seen=min(r.timecode_sec for r in group),
                 last_seen=max(r.timecode_sec for r in group),
                 seen_count=len(group),
-                avg_confidence=round(sum(r.confidence for r in group) / len(group), 3),
+                avg_confidence=avg_conf,
                 bbox=best.bbox,
                 frame_path=best.frame_path,
                 source="paddleocr",
