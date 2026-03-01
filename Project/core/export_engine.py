@@ -5,6 +5,12 @@ from pathlib import Path
 
 from config.runtime_paths import resolve_name_db_path
 
+try:
+    from rapidfuzz import fuzz as _fuzz
+    _HAS_RAPIDFUZZ = True
+except ImportError:
+    _HAS_RAPIDFUZZ = False
+
 # ═══════════════════════════════════════════════════════════════════
 # İSİM VERİTABANI — TurkishNameDB (350K+) > ALL_NAMES (9K) fallback
 # ═══════════════════════════════════════════════════════════════════
@@ -301,9 +307,11 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
     İki aşamalı strateji:
     1. Karakter ismi olanlar → karakter bazlı grupla (kapanış jenerik)
        Aynı karakter için birden fazla actor varyantı varsa en temizini seç.
-    2. Karakter ismi olmayanlar → actor bazlı grupla (açılış jenerik)
+    2. Karakter ismi olmayanlar → actor bazlı fuzzy grupla (açılış jenerik)
+       OCR varyantlarını (Ali Ozoqwz, Ali Ozogwz vb.) fuzzy clustering ile birleştir.
 
     Her iki grubu birleştirirken aktör tekrarını önle.
+    Son olarak post-merge fuzzy sweep ile kalan tekrarlı girişleri birleştir.
     """
     # ── GRUP 1: Karakter ismi olanlar (kapanış jenerik) ──
     char_buckets: dict[str, dict] = {}  # fuzzy_char_key → {actor_variants, char_variants}
@@ -333,6 +341,7 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
                 "character_name": "",
                 "confidence": row.get("confidence", 0.6),
                 "is_verified_name": row.get("is_verified_name", False) or row.get("is_llm_verified", False),
+                "seen_count": row.get("seen_count", 1),
             })
 
     # Karakter bazlı bucket'lardan en iyi oyuncu + karakter seç
@@ -358,38 +367,81 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
             "is_llm_verified": is_verified,
         })
 
-    # ── GRUP 2: Karakter ismi olmayanlar (açılış jenerik) ──
-    actor_buckets: dict[str, dict] = {}
+    # ── GRUP 2: Karakter ismi olmayanlar — fuzzy clustering ──
+    # Exact key yerine RapidFuzz WRatio >= 75 ile kümeleme yapılır.
+    # Bu sayede "Ali Ozoqwz", "Ali Ozogwz" vb. OCR varyantları aynı bucket'a düşer.
+    clusters: list[dict] = []  # her cluster: {actor_variants, confidences, verified, seen_counts}
+
     for row in no_char_rows:
         a = row["actor_name"]
-        key = _norm_key(a)
-        if not key: continue
-        if key not in actor_buckets:
-            actor_buckets[key] = {
-                "actor_variants": [a],
-                "confidences": [row.get("confidence", 0.6)],
-                "verified": [row.get("is_verified_name", False)],
-            }
-        else:
-            actor_buckets[key]["actor_variants"].append(a)
-            actor_buckets[key]["confidences"].append(row.get("confidence", 0.6))
-            actor_buckets[key]["verified"].append(row.get("is_verified_name", False))
+        if not a:
+            continue
+        conf = row.get("confidence", 0.6)
+        verified = row.get("is_verified_name", False)
+        seen = row.get("seen_count", 1)
+
+        matched = False
+        if _HAS_RAPIDFUZZ:
+            for cluster in clusters:
+                # Mevcut cluster'daki varyantlarla karşılaştır
+                for existing in cluster["actor_variants"]:
+                    if _fuzz.WRatio(a, existing) >= 75:
+                        cluster["actor_variants"].append(a)
+                        cluster["confidences"].append(conf)
+                        cluster["verified"].append(verified)
+                        cluster["seen_counts"].append(seen)
+                        matched = True
+                        break
+                if matched:
+                    break
+
+        if not matched:
+            # Fuzzy yok veya eşleşme bulunamadı — exact key ile dene
+            key = _norm_key(a)
+            found_exact = False
+            for cluster in clusters:
+                if cluster.get("exact_key") == key:
+                    cluster["actor_variants"].append(a)
+                    cluster["confidences"].append(conf)
+                    cluster["verified"].append(verified)
+                    cluster["seen_counts"].append(seen)
+                    found_exact = True
+                    break
+            if not found_exact:
+                clusters.append({
+                    "exact_key": key,
+                    "actor_variants": [a],
+                    "confidences": [conf],
+                    "verified": [verified],
+                    "seen_counts": [seen],
+                })
 
     no_char_based: list[dict] = []
-    for key, b in actor_buckets.items():
+    for cluster in clusters:
+        key = cluster.get("exact_key", "")
         if key in seen_actors:
-            continue  # kapanış jenerikle çakışıyorsa atla
-        actor = _best_actor([v for v in b["actor_variants"] if v])
-        if actor:
-            best_conf = max(b.get("confidences") or [0.6])
-            is_verified = any(b.get("verified") or [])
-            no_char_based.append({
-                "actor_name": actor,
-                "character_name": "",
-                "confidence": round(best_conf, 3),
-                "is_verified_name": is_verified,
-                "is_llm_verified": is_verified,
-            })
+            continue
+        actor = _best_actor([v for v in cluster["actor_variants"] if v])
+        if not actor:
+            continue
+        best_conf = max(cluster.get("confidences") or [0.6])
+        is_verified = any(cluster.get("verified") or [])
+        total_seen = sum(cluster.get("seen_counts") or [1])
+
+        # Seen count + noise score tabanlı filtreleme:
+        # Tek frame'de görülmüş, çok bozuk, düşük confidence → çıkar
+        if (total_seen <= 1
+                and _noise_score(actor) >= 8
+                and best_conf < 0.90):
+            continue
+
+        no_char_based.append({
+            "actor_name": actor,
+            "character_name": "",
+            "confidence": round(best_conf, 3),
+            "is_verified_name": is_verified,
+            "is_llm_verified": is_verified,
+        })
 
     # Birleştir: önce karakter bilgisi olanlar, sonra olmayanlar
     out = char_based + no_char_based
@@ -403,6 +455,39 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
         conf = row.get("confidence", 0.5)
         if verified or conf >= 0.45:
             final.append(row)
+
+    # ── Post-merge fuzzy sweep ──
+    # Final listedeki actor_name'leri birbirleriyle karşılaştır.
+    # WRatio >= 75 olanları birleştir (en yüksek confidence'lıyı tut).
+    if _HAS_RAPIDFUZZ and len(final) > 1:
+        merged_flags = [False] * len(final)
+        merged_out = []
+        for i, row_i in enumerate(final):
+            if merged_flags[i]:
+                continue
+            a_i = row_i.get("actor_name", "")
+            for j in range(i + 1, len(final)):
+                if merged_flags[j]:
+                    continue
+                a_j = final[j].get("actor_name", "")
+                # Sadece aynı karakter ismine sahip veya ikisi de karakter ismi olmayanları birleştir
+                char_i = row_i.get("character_name", "")
+                char_j = final[j].get("character_name", "")
+                if char_i != char_j:
+                    continue
+                if a_i and a_j and _fuzz.WRatio(a_i, a_j) >= 75:
+                    # En yüksek confidence'lı olanı tut
+                    if final[j].get("confidence", 0) > row_i.get("confidence", 0):
+                        final[i] = final[j]
+                        row_i = final[i]
+                        a_i = row_i.get("actor_name", "")
+                    merged_flags[j] = True
+                    # verified ise işaretle
+                    if final[j].get("is_verified_name") or final[j].get("is_llm_verified"):
+                        final[i]["is_verified_name"] = True
+                        final[i]["is_llm_verified"] = True
+            merged_out.append(final[i])
+        final = merged_out
 
     return final
 

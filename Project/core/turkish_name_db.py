@@ -110,6 +110,11 @@ _HARDCODED_FIXES: dict[str, str] = {
     'SARI': 'Sarı',
     'DEMIR': 'Demir',
     'ONER': 'Öner',
+    # OCR t↔s karışması ve z eksikliği düzeltmeleri
+    'NITA': 'Nisa',
+    'SERELI': 'Serezli',
+    'NITASERELI': 'Nisa Serezli',
+    'NISASEREZLI': 'Nisa Serezli',
 }
 
 
