@@ -12,21 +12,25 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-# Kullanıcı kararı: sabit yollar
-NAME_DB_DIR = Path(os.environ.get("NAME_DB_DIR", r"F:\Source\name_db"))
+# Cross-platform paths with environment variable fallbacks
+# If not set, use home directory based defaults
+_project_root = Path(__file__).resolve().parents[1]
+_home_source = Path.home() / "Source"
+
+NAME_DB_DIR = Path(os.environ.get("NAME_DB_DIR", str(_home_source / "name_db")))
 NAME_DB_ROLE_ALIAS_TR = NAME_DB_DIR / "credits_role_alias_tr.json"
 NAME_DB_NAMES_BY_COUNTRY = NAME_DB_DIR / "names_by_country.json"
 
-API_KEYS_JSON = Path(os.environ.get("API_KEYS_JSON", r"F:\Project\config\api_keys.json"))
+API_KEYS_JSON = Path(os.environ.get("API_KEYS_JSON", str(_project_root / "config" / "api_keys.json")))
 GOOGLE_KEYS_JSON = Path(
     os.environ.get(
         "GOOGLE_KEYS_JSON",
-        r"F:\Project\config\video-analiz-sistemi-a59996f04788.json",
+        str(_project_root / "config" / "video-analiz-sistemi-a59996f04788.json"),
     )
 )
-LOGOLAR_DIR = Path(os.environ.get("LOGOLAR_DIR", r"F:\Source\Logo"))
+LOGOLAR_DIR = Path(os.environ.get("LOGOLAR_DIR", str(_home_source / "Logo")))
 
-FFMPEG_BIN_DIR = Path(os.environ.get("FFMPEG_BIN_DIR", r"F:\Source\ffmpeg\bin"))
+FFMPEG_BIN_DIR = Path(os.environ.get("FFMPEG_BIN_DIR", str(_home_source / "ffmpeg" / "bin")))
 
 # İsim DB için olası dosyalar (varsa ilk bulunan kullanılır)
 NAME_DB_SQLITE_CANDIDATES = [

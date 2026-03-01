@@ -29,11 +29,15 @@ class AudioBridge:
     """
 
     # ── Varsayılan yollar — env var öncelikli ──
+    # Cross-platform default paths
+    _default_venv = Path.home() / "venv_audio" / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
     DEFAULT_VENV_PYTHON = os.environ.get(
-        "VENV_AUDIO_PYTHON", r"F:\Root\venv_audio\Scripts\python.exe"
+        "VENV_AUDIO_PYTHON", str(_default_venv)
     )
+    # Worker script defaults to project core directory
+    _default_worker = Path(__file__).parent / "audio_worker.py"
     DEFAULT_WORKER_SCRIPT = os.environ.get(
-        "AUDIO_WORKER_SCRIPT", r"F:\Project\core\audio_worker.py"
+        "AUDIO_WORKER_SCRIPT", str(_default_worker)
     )
 
     # Timeout: 1 saat (90 dakikalık film faster-whisper ~20-30dk sürer)
@@ -192,7 +196,8 @@ class AudioBridge:
         if not Path(self._venv_python).is_file():
             self._log(f"  [AudioBridge] venv_audio python bulunamadı: {self._venv_python}")
             self._log(f"  [AudioBridge] Beklenen: {self._venv_python}")
-            self._log(f"  [AudioBridge] Çözüm: python -m venv F:\\Root\\venv_audio")
+            venv_path = Path.home() / "venv_audio"
+            self._log(f"  [AudioBridge] Çözüm: python -m venv {venv_path}")
             return False
 
         if not Path(self._worker_script).is_file():

@@ -183,19 +183,25 @@ class AudioPipeline:
         if "post_process" in stages_to_run and transcribe_result.get("segments"):
             self._log(f"\n[E] POST_PROCESS")
             post = PostProcessStage(log_cb=self._log)
-            post_result = post.run(
-                transcribe_result["segments"],
-                ollama_url=self.config.get("ollama_url", "http://localhost:11434"),
-                ollama_model=options.get("ollama_model", "llama3.1:8b"),
-                tmdb_cast=self.config.get("tmdb_cast", []),
-            )
-            result["stages"]["post_process"] = {
-                "duration_sec": post_result["stage_time_sec"],
-                "status": post_result["status"],
-                "corrections": post_result.get("corrections", 0),
-            }
-            result["transcript"] = post_result["segments"]
-            result["summary_tr"] = post_result.get("summary_tr", "")
+            # Pre-check Ollama availability to fail fast
+            ollama_url = self.config.get("ollama_url", "http://localhost:11434")
+            if not post._check_ollama(ollama_url):
+                self._log(f"  [POST_PROCESS] Uyarı: Ollama erişilemiyor ({ollama_url}), stage atlanıyor")
+                result["transcript"] = transcribe_result.get("segments", [])
+            else:
+                post_result = post.run(
+                    transcribe_result["segments"],
+                    ollama_url=ollama_url,
+                    ollama_model=options.get("ollama_model", "llama3.1:8b"),
+                    tmdb_cast=self.config.get("tmdb_cast", []),
+                )
+                result["stages"]["post_process"] = {
+                    "duration_sec": post_result["stage_time_sec"],
+                    "status": post_result["status"],
+                    "corrections": post_result.get("corrections", 0),
+                }
+                result["transcript"] = post_result["segments"]
+                result["summary_tr"] = post_result.get("summary_tr", "")
         else:
             # PostProcess atlandıysa ham transcript'i kullan
             result["transcript"] = transcribe_result.get("segments", [])
