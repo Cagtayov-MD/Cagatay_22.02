@@ -1,5 +1,5 @@
 """export_engine.py — Report schema uyumlu JSON + okunabilir TXT çıktı."""
-import json, os, re
+import json, os, re, shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -278,6 +278,24 @@ def _fuzzy_char_key(char: str) -> str:
     return _norm_key(clean)
 
 
+def _fmt_ts(sec: float) -> str:
+    """Saniyeyi HH:MM:SS formatına çevir."""
+    sec = max(0.0, float(sec))
+    h   = int(sec // 3600)
+    m   = int((sec % 3600) // 60)
+    s   = int(sec % 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def _ocr_line_attr(line, attr_name: str, dict_key: str, default):
+    """OCR satırından attr veya dict key ile değer al."""
+    if hasattr(line, attr_name):
+        return getattr(line, attr_name)
+    if isinstance(line, dict):
+        return line.get(dict_key, default)
+    return default
+
+
 def _canonicalize_cast(cast: list[dict]) -> list[dict]:
     """
     Cast listesini temizle ve tekilleştir.
@@ -401,7 +419,11 @@ class ExportEngine:
 
     def generate(self, video_info, credits_data, ocr_lines, stage_stats,
                  profile, scope, first_min, last_min, keywords=None, logos=None,
-                 content_profile_name: str | None = None):
+                 content_profile_name: str | None = None,
+                 content_profile: dict | None = None,
+                 transcript_segments: list | None = None,
+                 credits_raw: dict | None = None,
+                 debug_logger=None):
         total_sec = sum(s.get("duration_sec", 0) for s in stage_stats.values())
         dur = video_info.get("duration_seconds", 1)
 
@@ -465,13 +487,94 @@ class ExportEngine:
         }
 
         stem = Path(video_info.get("filename", "out")).stem
-        jp = self.out / f"{stem}_report.json"
-        tp = self.out / f"{stem}_report.txt"
 
-        with open(jp, "w", encoding="utf-8") as f:
+        # ── Lokasyon 1: Kullanıcı çıktısı (mevcut output dizini) ──────────────
+        user_txt  = self.out / f"{stem}.txt"
+        user_transcript = self.out / f"{stem}-transcript.txt"
+
+        self._write_txt(report, user_txt)
+        self._write_transcript_txt(transcript_segments or [], user_transcript)
+
+        # ── Lokasyon 2: Database arşivi ────────────────────────────────────────
+        db_dir = self._resolve_database_dir(
+            content_profile_name or "FilmDizi",
+            content_profile,
+            stem,
+        )
+        db_dir.mkdir(parents=True, exist_ok=True)
+
+        # Tam JSON rapor
+        db_json = db_dir / f"{stem}_report.json"
+        with open(db_json, "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
-        self._write_txt(report, tp)
-        return str(jp), str(tp)
+
+        # OCR güven skorları
+        ocr_scores = [
+            {
+                "text":       _ocr_line_attr(l, "text",          "text",       ""),
+                "confidence": _ocr_line_attr(l, "avg_confidence", "confidence", 0),
+                "first_seen": _ocr_line_attr(l, "first_seen",    "first_seen", 0),
+                "last_seen":  _ocr_line_attr(l, "last_seen",     "last_seen",  0),
+                "count":      _ocr_line_attr(l, "seen_count",    "count",      1),
+            }
+            for l in ocr_lines
+        ]
+        db_ocr = db_dir / f"{stem}_ocr_scores.json"
+        with open(db_ocr, "w", encoding="utf-8") as f:
+            json.dump(ocr_scores, f, ensure_ascii=False, indent=2)
+
+        # Ham credits (canonicalize öncesi)
+        db_credits_raw = db_dir / f"{stem}_credits_raw.json"
+        with open(db_credits_raw, "w", encoding="utf-8") as f:
+            json.dump(credits_raw or {}, f, ensure_ascii=False, indent=2)
+
+        # Transcript JSON
+        transcript_data = [
+            {"start": s.get("start", 0), "end": s.get("end", 0), "text": s.get("text", "")}
+            for s in (transcript_segments or [])
+            if isinstance(s, dict)
+        ]
+        db_transcript = db_dir / f"{stem}_transcript.json"
+        with open(db_transcript, "w", encoding="utf-8") as f:
+            json.dump(transcript_data, f, ensure_ascii=False, indent=2)
+
+        # Kullanıcı raporunun kopyası
+        db_txt_copy = db_dir / f"{stem}.txt"
+        shutil.copy2(user_txt, db_txt_copy)
+
+        # Debug log — pipeline_runner tarafından flush edilir; path'i database'e yönlendir
+        if debug_logger is not None:
+            debug_log_path = db_dir / f"{stem}_debug.log"
+            debug_logger.path = debug_log_path
+
+        return str(user_txt), str(user_transcript), str(db_dir)
+
+    @staticmethod
+    def _resolve_database_dir(profile_name: str, content_profile: dict | None,
+                               stem: str) -> Path:
+        """Database klasör yolunu belirle."""
+        if content_profile and content_profile.get("database_path"):
+            base = Path(content_profile["database_path"])
+        else:
+            base = Path("D:\\DATABASE") / profile_name
+        return base / stem
+
+    def _write_transcript_txt(self, segments: list, path):
+        """Zaman damgalı transcript dosyasını yaz."""
+        lines = []
+        for s in segments:
+            if not isinstance(s, dict):
+                continue
+            start = s.get("start", 0)
+            end   = s.get("end",   0)
+            text  = s.get("text",  "").strip()
+            if not text:
+                continue
+            lines.append(f"[{_fmt_ts(start)} → {_fmt_ts(end)}]  {text}")
+        with open(path, "w", encoding="utf-8-sig") as f:
+            f.write("\n".join(lines))
+            if lines:
+                f.write("\n")
 
     def _write_txt(self, r, path):
         L = []

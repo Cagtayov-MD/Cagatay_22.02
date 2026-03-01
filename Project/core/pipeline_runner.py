@@ -12,6 +12,8 @@ v2.0 Değişiklikler:
 
 import time
 import os
+import copy
+import traceback as _traceback
 from pathlib import Path
 from datetime import datetime
 
@@ -24,6 +26,7 @@ from core.credits_parser import CreditsParser
 from core.export_engine import ExportEngine
 from core.turkish_name_db import TurkishNameDB
 from core.qwen_verifier import QwenVerifier
+from core.debug_logger import DebugLogger
 from utils.stats_logger import StatsLogger
 
 
@@ -98,6 +101,12 @@ class PipelineRunner:
         )
         os.makedirs(work_dir, exist_ok=True)
 
+        # Debug logger — database path henüz bilinmiyor, geçici konuma yaz;
+        # generate() içinde gerçek database path'e taşınır.
+        debug_log_tmp = os.path.join(work_dir, f"{vname}_debug.log")
+        dbg = DebugLogger(debug_log_tmp)
+        dbg.header(video_path, profile_name)
+
         self.stats.start_job(video_path, "WORKSTATION", scope, profile_name)
         self.stage_stats = {}
 
@@ -131,12 +140,18 @@ class PipelineRunner:
             self._log(f"\n[1/6] INGEST")
             t = time.time()
             self.stats.start_stage("INGEST")
+            dbg.stage_start(1, 6, "INGEST")
             info = self._extractor.probe_video(video_path)
-            self._stage("INGEST", time.time() - t,
+            elapsed_ingest = time.time() - t
+            self._stage("INGEST", elapsed_ingest,
                         duration=info["duration_human"],
                         resolution=info["resolution"])
             self._log(f"  OK: {info['duration_human']} | "
                       f"{info['resolution']} | {info['fps']} FPS")
+            dbg.stage_ok("INGEST", elapsed_ingest,
+                         cozunurluk=info["resolution"],
+                         fps=info.get("fps", "?"),
+                         sure=info["duration_human"])
 
             # Audio'yu erkenden başlat (paralel değil; sadece sıra)
             audio_result = None
@@ -146,6 +161,7 @@ class PipelineRunner:
             # Varsayılanlar (audio_only için)
             ocr_lines = []
             cdata = self._empty_credits_data(vname)
+            credits_raw_snapshot: dict = {}
             tmdb_result = None
 
             if scope != "audio_only":
@@ -153,21 +169,28 @@ class PipelineRunner:
                 self._log(f"\n[2/6] FRAME_EXTRACT")
                 t = time.time()
                 self.stats.start_stage("FRAME_EXTRACT")
+                dbg.stage_start(2, 6, "FRAME_EXTRACT")
                 fps = self.config.get("ocr_fps", 1.0)
                 fd = self._extractor.extract_credits_frames(
                     video_path, work_dir, info, first_min, last_min, fps)
-                self._stage("FRAME_EXTRACT", time.time() - t,
+                elapsed_fe = time.time() - t
+                self._stage("FRAME_EXTRACT", elapsed_fe,
                             total=fd["total"],
                             entry=len(fd["entry"]),
                             exit_=len(fd["exit"]))
                 self._log(f"  OK: {fd['total']} frame "
                           f"(giriş:{len(fd['entry'])} çıkış:{len(fd['exit'])})")
+                dbg.stage_ok("FRAME_EXTRACT", elapsed_fe,
+                             toplam_frame=fd["total"],
+                             giris_frame=len(fd["entry"]),
+                             cikis_frame=len(fd["exit"]))
 
                 # ══ [3/6] TEXT_FILTER ══════════════════════════════
                 self._log(f"\n[3/6] TEXT_FILTER "
                           f"[mod={self.config.get('difficulty','medium')}]")
                 t = time.time()
                 self.stats.start_stage("TEXT_FILTER")
+                dbg.stage_start(3, 6, "TEXT_FILTER")
                 all_frames = fd["entry"] + fd["exit"]
                 candidates = self._text_filter.filter_frames(all_frames)
                 if not candidates:
@@ -175,15 +198,21 @@ class PipelineRunner:
                     candidates = self._text_filter.fallback_filter(
                         fd["entry"], fd["exit"], 100)
                 rej = 1 - len(candidates) / max(len(all_frames), 1)
-                self._stage("TEXT_FILTER", time.time() - t,
+                elapsed_tf = time.time() - t
+                self._stage("TEXT_FILTER", elapsed_tf,
                             input=len(all_frames), candidates=len(candidates))
                 self._log(f"  OK: {len(all_frames)} -> {len(candidates)} "
                           f"aday (eleme: {rej:.0%})")
+                dbg.stage_ok("TEXT_FILTER", elapsed_tf,
+                             giris=len(all_frames),
+                             aday=len(candidates),
+                             eleme=f"{rej:.0%}")
 
                 # ══ [4/6] OCR_CREDITS ══════════════════════════════
                 self._log(f"\n[4/6] OCR_CREDITS (PaddleOCR GPU)")
                 t = time.time()
                 self.stats.start_stage("OCR_CREDITS")
+                dbg.stage_start(4, 6, "OCR_CREDITS")
                 ocr_lines, layout_pairs = self._ocr_engine.process_frames(
                     candidates, log_callback=self._log)
                 ocr_time = time.time() - t
@@ -203,30 +232,48 @@ class PipelineRunner:
                             lines=len(ocr_lines),
                             layout_pairs=len(layout_pairs))
                 self._log(f"  OK: {len(ocr_lines)} benzersiz satır ({ocr_total:.1f}s)")
+                avg_conf = (
+                    sum(_ocr_line_confidence(l) for l in ocr_lines)
+                    / max(len(ocr_lines), 1)
+                )
+                dbg.stage_ok("OCR_CREDITS", ocr_total,
+                             islenen_frame=len(candidates),
+                             benzersiz_satir=len(ocr_lines),
+                             ort_guven=f"{avg_conf:.3f}")
 
                 # ══ [5/6] CREDITS_PARSE ════════════════════════════
                 self._log(f"\n[5/6] CREDITS_PARSE")
                 t = time.time()
                 self.stats.start_stage("CREDITS_PARSE")
+                dbg.stage_start(5, 6, "CREDITS_PARSE")
                 parser = CreditsParser(turkish_name_db=self._name_db)
                 parsed = parser.parse(ocr_lines, layout_pairs=layout_pairs)
                 cdata = parser.to_report_dict(parsed)
-                self._stage("CREDITS_PARSE", time.time() - t,
+                # Ham credits verisi (canonicalize öncesi snapshot)
+                credits_raw_snapshot = copy.deepcopy(cdata)
+                elapsed_cp = time.time() - t
+                self._stage("CREDITS_PARSE", elapsed_cp,
                             actors=cdata["total_actors"],
                             crew=cdata["total_crew"],
                             companies=cdata["total_companies"])
                 self._log(f"  OK: Oyuncu:{cdata['total_actors']} "
                           f"Ekip:{cdata['total_crew']} "
                           f"Şirket:{cdata['total_companies']}")
+                dbg.stage_ok("CREDITS_PARSE", elapsed_cp,
+                             oyuncu=cdata["total_actors"],
+                             ekip=cdata["total_crew"],
+                             sirket=cdata["total_companies"])
 
                 # ══ [6/6] TMDB_VERIFY ══════════════════════════════
                 self._log(f"\n[6/6] TMDB_VERIFY")
                 t = time.time()
                 self.stats.start_stage("TMDB_VERIFY")
+                dbg.stage_start(6, 6, "TMDB_VERIFY")
                 if content_profile and content_profile.get("match_parse_enabled"):
                     # Spor profili: TMDB yerine MATCH_PARSE çalıştır (ileride implement edilecek)
                     self._log(f"  [MATCH_PARSE] Profil={profile_name} — match_parse_enabled=True (skipped, ileride implement edilecek)")
                     self._stage("TMDB_VERIFY", 0.0, status="skipped", reason="match_parse_enabled")
+                    dbg.stage_skip("TMDB_VERIFY", "match_parse_enabled")
                     tmdb_result = None
                 else:
                     if not cdata.get("film_title"):
@@ -234,7 +281,8 @@ class PipelineRunner:
                         self._log(f"  [TMDB] film_title yok, video adı kullanılıyor: {vname}")
 
                     tmdb_result = self._run_tmdb(cdata, work_dir)
-                    self._stage("TMDB_VERIFY", time.time() - t,
+                    elapsed_tmdb = time.time() - t
+                    self._stage("TMDB_VERIFY", elapsed_tmdb,
                                 status=tmdb_result.reason,
                                 hits=tmdb_result.hits,
                                 misses=tmdb_result.misses,
@@ -245,53 +293,90 @@ class PipelineRunner:
                                   f"hits:{tmdb_result.hits} misses:{tmdb_result.misses}")
                         # TMDB-only credits output when verification succeeds
                         cdata = self._apply_tmdb_credits(cdata, tmdb_result)
+                        dbg.stage_ok("TMDB_VERIFY", elapsed_tmdb,
+                                     eslesen_baslik=tmdb_result.matched_title,
+                                     hits=tmdb_result.hits,
+                                     misses=tmdb_result.misses)
                     else:
                         self._log(f"  --: {tmdb_result.reason}")
+                        dbg.stage_fail("TMDB_VERIFY", elapsed_tmdb,
+                                       tmdb_result.reason)
 
             else:
                 for stage_name in ("FRAME_EXTRACT", "TEXT_FILTER", "OCR_CREDITS",
                                    "CREDITS_PARSE", "TMDB_VERIFY"):
                     self._stage(stage_name, 0.0, status="skipped",
                                 reason="scope=audio_only")
+                    dbg.stage_skip(stage_name, "scope=audio_only")
 
             # ══ EXPORT ════════════════════════════════════════════
             self._log(f"\n[EXPORT]")
             t = time.time()
             self.stats.start_stage("EXPORT")
+
+            # Transcript segments audio_result'tan al
+            transcript_segs = []
+            if audio_result and isinstance(audio_result, dict):
+                transcript_segs = audio_result.get("transcript", []) or []
+
             exp = ExportEngine(work_dir, name_db=self._name_db)
-            jp, tp = exp.generate(
+            user_txt, user_transcript, db_dir = exp.generate(
                 info, cdata, ocr_lines, self.stage_stats,
                 "WORKSTATION", scope, first_min, last_min,
-                content_profile_name=profile_name)
+                content_profile_name=profile_name,
+                content_profile=content_profile,
+                transcript_segments=transcript_segs,
+                credits_raw=credits_raw_snapshot,
+                debug_logger=dbg)
             self._stage("EXPORT", time.time() - t)
 
             total = time.time() - t0
             self.stats.finish_job(total)
 
+            stages_ok   = sum(1 for s in self.stage_stats.values()
+                              if s.get("status") in ("ok", "completed", "skipped"))
+            stages_fail = sum(1 for s in self.stage_stats.values()
+                              if s.get("status") not in ("ok", "completed", "skipped"))
+            dbg.footer(total, stages_ok, stages_fail, {
+                "Kullanici txt": user_txt,
+                "Kullanici trs": user_transcript,
+                "Database dir":  db_dir,
+            })
+            dbg.flush()
+
             self._log(f"\n{'='*60}")
             self._log(f"  TAMAMLANDI — {total:.1f}s "
                       f"({info['duration_seconds']/max(total,0.1):.1f}x)")
-            self._log(f"  JSON: {jp}")
-            self._log(f"  TXT : {tp}")
+            self._log(f"  TXT      : {user_txt}")
+            self._log(f"  TRANSCRIPT: {user_transcript}")
+            self._log(f"  DATABASE : {db_dir}")
             self._log(f"{'='*60}")
 
             return {
-                "report_json":  jp,
-                "report_txt":   tp,
-                "work_dir":     work_dir,
-                "video_info":   info,
-                "credits":      cdata,
-                "ocr_lines":    len(ocr_lines),
-                "tmdb_result":  tmdb_result,
-                "audio_result": audio_result,
+                "report_json":      os.path.join(db_dir, f"{vname}_report.json"),
+                "report_txt":       user_txt,
+                "user_transcript":  user_transcript,
+                "database_dir":     db_dir,
+                "work_dir":         work_dir,
+                "video_info":       info,
+                "credits":          cdata,
+                "ocr_lines":        len(ocr_lines),
+                "tmdb_result":      tmdb_result,
+                "audio_result":     audio_result,
             }
 
         except Exception as e:
             self.stats.log_error(str(e))
             self.stats.finish_job(time.time() - t0)
             self._log(f"\n!! HATA: {e}")
-            import traceback
-            traceback.print_exc()
+            tb_str = _traceback.format_exc()
+            _traceback.print_exc()
+            try:
+                dbg.stage_fail("PIPELINE", time.time() - t0, str(e),
+                               traceback_str=tb_str)
+                dbg.flush()
+            except Exception:
+                pass
             raise
 
     # ──────────────────────────────────────────────────────────────
@@ -522,3 +607,13 @@ class PipelineRunner:
         if repaired:
             self._log(f"  [NameDB] {repaired} layout pair ismi onarıldı")
         return layout_pairs
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+def _ocr_line_confidence(line) -> float:
+    """OCR satırından güven skoru al (attr veya dict)."""
+    if hasattr(line, "avg_confidence"):
+        return float(line.avg_confidence)
+    if isinstance(line, dict):
+        return float(line.get("confidence", 0))
+    return 0.0
