@@ -52,6 +52,13 @@ import uuid
 from pathlib import Path
 
 
+# ---- CRITICAL: proje kökünü sys.path'e ekle (import audio fix) ----
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+# ---------------------------------------------------------------
+
+
 def main():
     # ── Argüman kontrolü ──
     if len(sys.argv) < 2:
@@ -130,13 +137,17 @@ def main():
 
         # Sonucu JSON'a yaz
         _write_json_atomic(result_path, result)
-
         _write_transcript_txt_atomic(transcript_txt_path, result)
 
         elapsed = time.time() - t0
         log_cb(
             f"\n[AudioWorker] Tamamlandı ({elapsed:.1f}s) → {result_path} | {transcript_txt_path}"
         )
+
+        # status=error ise exit 2 dön (bridge daha doğru anlasin)
+        if isinstance(result, dict) and result.get("status") == "error":
+            sys.exit(2)
+
         sys.exit(0)
 
     except ImportError as e:
@@ -144,7 +155,6 @@ def main():
         log_cb("Olası neden: venv_audio aktif değil veya paket eksik")
         log_cb(traceback.format_exc())
 
-        # Hata sonucunu da JSON'a yaz — bridge okuyabilsin
         error_result = _write_error_result(
             result_path,
             str(e),

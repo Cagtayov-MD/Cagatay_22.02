@@ -24,7 +24,7 @@ from audio.stages.post_process import PostProcessStage
 class AudioPipeline:
     """
     Ses pipeline orkestratör.
-    Film/Dizi: DF3 → PyAnnote → WhisperX → Ollama
+    Film/Dizi: DF3 → PyAnnote → faster-whisper → Ollama
     """
 
     VERSION = "1.0"
@@ -116,7 +116,7 @@ class AudioPipeline:
                 "status": denoise_result["status"],
             }
 
-            # DF3 48kHz çıktı → 16kHz'e resample (WhisperX/PyAnnote için)
+            # DF3 48kHz çıktı → 16kHz'e resample (faster-whisper/PyAnnote için)
             if denoise_result["status"] == "ok":
                 clean_wav = self._resample_to_16k(
                     denoise_result["output_path"], audio_dir, ffmpeg
@@ -234,7 +234,7 @@ class AudioPipeline:
 
     def _resample_to_16k(self, input_48k: str, audio_dir: str,
                           ffmpeg: str) -> str:
-        """DF3 çıktısı (48kHz) → 16kHz mono WAV (WhisperX/PyAnnote için)."""
+        """DF3 çıktısı (48kHz) → 16kHz mono WAV (faster-whisper/PyAnnote için)."""
         import subprocess
 
         out_path = str(Path(audio_dir) / "audio_clean_16k.wav")

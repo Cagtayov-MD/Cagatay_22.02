@@ -20,10 +20,10 @@ from pathlib import Path
 
 class AudioBridge:
     """
-    Ana venv (PaddleOCR) → venv_audio (WhisperX/PyAnnote) subprocess köprüsü.
+    Ana venv (PaddleOCR) → venv_audio (faster-whisper/PyAnnote) subprocess köprüsü.
 
     Neden subprocess?
-      - PaddleOCR ve WhisperX farklı PyTorch versiyonları gerektirebilir
+      - PaddleOCR ve faster-whisper farklı PyTorch versiyonları gerektirebilir
       - Aynı venv'de çakışma riski yüksek
       - VRAM izolasyonu: subprocess bitince tüm GPU bellek otomatik serbest kalır
     """
@@ -36,7 +36,7 @@ class AudioBridge:
         "AUDIO_WORKER_SCRIPT", r"F:\Project\core\audio_worker.py"
     )
 
-    # Timeout: 1 saat (90 dakikalık film WhisperX ~20-30dk sürer)
+    # Timeout: 1 saat (90 dakikalık film faster-whisper ~20-30dk sürer)
     DEFAULT_TIMEOUT = 3600
 
     def __init__(self, log_cb=None, config: dict = None):

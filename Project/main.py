@@ -1,5 +1,40 @@
+﻿# --- HEADLESS (CLI) MODE ---
+# Set HEADLESS=1 to run without PySide6/Qt UI (avoids Qt font warnings).
+import os, sys
+from pathlib import Path
+
+if os.environ.get("HEADLESS", "0") == "1":
+    # UTF-8 safe console (best-effort)
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+    # Silence PaddleOCR warnings (ppocr)
+    import logging
+    logging.getLogger("ppocr").setLevel(logging.ERROR)
+    logging.getLogger("paddleocr").setLevel(logging.ERROR)
+
+    from config.runtime_paths import FFMPEG_BIN_DIR
+    from core.pipeline_runner import PipelineRunner
+
+    ffmpeg = str(Path(FFMPEG_BIN_DIR) / "ffmpeg.exe")
+    ffprobe = str(Path(FFMPEG_BIN_DIR) / "ffprobe.exe")
+
+    video_path = sys.argv[1] if len(sys.argv) > 1 else "test.mp4"
+    scope = os.environ.get("SCOPE", "video+audio")
+    first_min = float(os.environ.get("FIRST_MIN", "1.0"))
+    last_min = float(os.environ.get("LAST_MIN", "1.0"))
+
+    runner = PipelineRunner(ffmpeg, ffprobe)
+    runner.run(video_path=video_path, scope=scope, first_min=first_min, last_min=last_min)
+
+    raise SystemExit(0)
+# --- END HEADLESS ---
+
 """
-main.py — Arsiv Decode giris noktasi.
+main.py â€” Arsiv Decode giris noktasi.
 Her zaman PySide6 UI ile baslar. Lite mod yok.
 """
 try:
@@ -8,7 +43,7 @@ except Exception:
     def load_dotenv(*_args, **_kwargs):
         return False
 
-load_dotenv()  # .env dosyasını yükle — diğer her şeyden önce
+load_dotenv()  # .env dosyasÄ±nÄ± yÃ¼kle â€” diÄŸer her ÅŸeyden Ã¶nce
 
 import sys
 import os
@@ -31,9 +66,9 @@ def main():
     try:
         import paddleocr  # noqa: F401
     except ImportError:
-        print("PaddleOCR kurulu degil — OCR calismayacak!")
+        print("PaddleOCR kurulu degil â€” OCR calismayacak!")
         print("  pip install paddlepaddle paddleocr")
-        print("  Not: PaddleOCR 3.x (PP-OCRv5) için NumPy 1.26.x önerilir: pip install numpy==1.26.4")
+        print("  Not: PaddleOCR 3.x (PP-OCRv5) iÃ§in NumPy 1.26.x Ã¶nerilir: pip install numpy==1.26.4")
 
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
@@ -62,3 +97,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+

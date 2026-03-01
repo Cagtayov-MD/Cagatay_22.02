@@ -6,7 +6,7 @@ Girdi:  ham transcript segments
 
 İşler:
   - Türkçe noktalama düzeltme
-  - Cümle bütünlüğü restore (WhisperX kırık cümleler üretir)
+  - Cümle bütünlüğü restore (faster-whisper kırık cümleler üretir)
   - Düşük confidence → [anlaşılamadı] işaretle
   - Konuşmacı adlandırma: SPEAKER_00 → TMDB cast'tan isim (varsa)
 

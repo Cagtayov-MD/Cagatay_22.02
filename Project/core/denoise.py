@@ -4,7 +4,7 @@ denoise.py — [B] DeepFilterNet3 gürültü temizleme.
 Girdi:  audio_raw_48k.wav (48kHz — DF3 48kHz istiyor)
 Çıktı:  audio_clean.wav (48kHz → sonra 16kHz'e resample edilecek)
 
-Konuşma netleşir → WhisperX doğruluğu artar.
+Konuşma netleşir → faster-whisper doğruluğu artar.
 Hata durumunda orijinal WAV döner (fallback — pipeline durmaz).
 
 VRAM: ~200 MB → stage sonrası boşaltılır.

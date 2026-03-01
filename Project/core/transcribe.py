@@ -1,187 +1,155 @@
-"""
-VRAM: ~3-4 GB → stage sonrası boşaltılır.
-"""
+@"
+\"\"\"
+[D] TRANSCRIBE - faster-whisper large-v3 Turkce transcript + kelime timestamp.
+
+Bu stage, AudioPipeline standardina uyar:
+  run(context: dict, config: dict) -> dict
+\"\"\"
 
 import time
-
 from audio.utils.vram_manager import VRAMManager
 
 
 class TranscribeStage:
-    """WhisperX large-v3 transkripsiyon + hizalama."""
-
     def __init__(self, log_cb=None):
         self._log = log_cb or print
 
-    def run(self, audio_path: str, diarization: dict = None, **opts) -> dict:
-        """
-        Transcript üret + kelime hizalama + konuşmacı atama.
-
-        Args:
-            audio_path: 16kHz mono WAV
-            diarization: DiarizeStage çıktısı (segments listesi)
-            opts:
-                whisper_model: "large-v3" (default)
-                whisper_language: "tr" (default)
-                compute_type: "float16" (default, GPU) / "int8" (CPU)
-                batch_size: 16 (default)
-
-        Returns:
-            {
-                "status": "ok",
-                "segments": [{
-                    "start": 0.5, "end": 3.2,
-                    "speaker": "SPEAKER_00",
-                    "text": "Merhaba",
-                    "confidence": 0.95,
-                    "words": [{"word": "Merhaba", "start": 0.5, "end": 0.9, "score": 0.95}]
-                }],
-                "total_segments": 245,
-                "stage_time_sec": 180.0
-            }
-        """
+    def run(self, context: dict, config: dict) -> dict:
         t0 = time.time()
-        model_name = opts.get("whisper_model", "large-v3")
-        language = opts.get("whisper_language", "tr")
-        batch_size = int(opts.get("batch_size", 16))
+
+        opts = (config.get('options') or {})
+        model_name = opts.get('whisper_model', 'large-v3')
+        language = opts.get('whisper_language', 'tr')
+        beam_size = min(int(opts.get('batch_size', 5)), 10)
+
         device = VRAMManager.get_device()
-        compute_type = self._resolve_compute_type(opts.get("compute_type"), device)
+        compute_type = self._resolve_compute_type(opts.get('compute_type', None), device)
 
-        if compute_type is None:
-            compute_type = "float16" if device == "cuda" else "int8"
+        # WAV secimi (pipeline context'inden)
+        audio_path = None
+        if isinstance(context.get('denoise'), dict):
+            audio_path = context['denoise'].get('clean_wav')
+        if not audio_path and isinstance(context.get('extract'), dict):
+            audio_path = context['extract'].get('wav_16k') or context['extract'].get('wav_48k')
 
-        if device != "cuda" and str(compute_type).lower() == "float16":
-            self._log("  [WhisperX] CPU'da float16 desteklenmiyor — int8'e düşülüyor")
-            compute_type = "int8"
+        self._log(f\"  [Whisper] Input WAV: {audio_path}\")
+        if not audio_path:
+            return {
+                'status': 'error',
+                'segments': [],
+                'total_segments': 0,
+                'stage_time_sec': round(time.time() - t0, 2),
+                'error': \"missing_audio_path (expected context['denoise'].clean_wav or context['extract'].wav_16k)\",
+            }
 
-        whisperx_model = None
-        align_model = None
-
+        fw_model = None
         try:
-            import whisperx
+            from faster_whisper import WhisperModel
 
-            self._log(f"  [WhisperX] {model_name} yükleniyor ({device}, {compute_type})...")
-            whisperx_model = whisperx.load_model(
-                model_name, device,
-                compute_type=compute_type,
-                language=language,
-            )
-            self._log(f"  [WhisperX] Yüklendi (VRAM: {VRAMManager.get_usage()})")
+            self._log(f\"  [Whisper] {model_name} yukleniyor ({device}, {compute_type})...\")
+            fw_model = WhisperModel(model_name, device=device, compute_type=compute_type)
+            self._log(f\"  [Whisper] Yuklendi (VRAM: {VRAMManager.get_usage()})\")
+            self._log('  [Whisper] Transkripsiyon basliyor...')
 
-            self._log("  [WhisperX] Transkripsiyon başlıyor...")
-            result = whisperx_model.transcribe(
+            raw_segments, info = fw_model.transcribe(
                 audio_path,
-                batch_size=batch_size,
                 language=language,
+                beam_size=beam_size,
+                word_timestamps=True,
+                vad_filter=True,
+                vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=200),
             )
 
-            try:
-                self._log("  [WhisperX] Kelime hizalama...")
-                align_model, metadata = whisperx.load_align_model(
-                    language_code=language, device=device
-                )
-                result = whisperx.align(
-                    result["segments"], align_model, metadata,
-                    audio_path, device,
-                )
-            except Exception as e:
-                self._log(f"  [WhisperX] Hizalama hatası: {e} — devam ediliyor")
-
-            diar_segments = (diarization or {}).get("segments", [])
-            if diar_segments:
-                self._assign_speakers_by_time(result, diar_segments)
+            self._log(f\"  [Whisper] Dil: {info.language} (olasilik: {info.language_probability:.2f})\")
 
             segments = []
-            for seg in result.get("segments", []):
-                words = seg.get("words", [])
-                scores = [w.get("score", 0) for w in words if "score" in w]
-                avg_conf = round(sum(scores) / len(scores), 3) if scores else 0.0
+            for seg in raw_segments:
+                words = []
+                scores = []
+                for w in (seg.words or []):
+                    words.append({
+                        'word': w.word.strip(),
+                        'start': round(w.start, 3),
+                        'end': round(w.end, 3),
+                        'score': round(w.probability, 3),
+                    })
+                    scores.append(w.probability)
 
+                avg_conf = round(sum(scores) / len(scores), 3) if scores else 0.0
                 segments.append({
-                    "start": round(seg.get("start", 0), 3),
-                    "end": round(seg.get("end", 0), 3),
-                    "text": seg.get("text", "").strip(),
-                    "speaker": seg.get("speaker", ""),
-                    "confidence": avg_conf,
-                    "words": words,
+                    'start': round(seg.start, 3),
+                    'end': round(seg.end, 3),
+                    'text': seg.text.strip(),
+                    'speaker': '',
+                    'confidence': avg_conf,
+                    'words': words,
                 })
 
+            # diarize stage varsa konusmaci ata
+            diar_segments = (context.get('diarize') or {}).get('segments', [])
+            if diar_segments:
+                self._assign_speakers(segments, diar_segments)
+
             elapsed = round(time.time() - t0, 2)
-            self._log(f"  [WhisperX] {len(segments)} segment ({elapsed:.1f}s)")
+            self._log(f\"  [Whisper] {len(segments)} segment ({elapsed:.1f}s)\")
 
             return {
-                "status": "ok",
-                "segments": segments,
-                "total_segments": len(segments),
-                "stage_time_sec": elapsed,
+                'status': 'ok',
+                'segments': segments,
+                'total_segments': len(segments),
+                'stage_time_sec': elapsed,
             }
 
         except ImportError:
-            self._log("  [WhisperX] Kurulu değil — pip install whisperx")
+            self._log('  [Whisper] Kurulu degil - pip install faster-whisper')
             return {
-                "status": "error",
-                "segments": [],
-                "total_segments": 0,
-                "stage_time_sec": round(time.time() - t0, 2),
-                "error": "whisperx not installed",
+                'status': 'error',
+                'segments': [],
+                'total_segments': 0,
+                'stage_time_sec': round(time.time() - t0, 2),
+                'error': 'faster-whisper not installed',
             }
 
         except Exception as e:
-            self._log(f"  [WhisperX] Hata: {e}")
+            self._log(f\"  [Whisper] Hata: {e}\")
             import traceback
             traceback.print_exc()
             return {
-                "status": "error",
-                "segments": [],
-                "total_segments": 0,
-                "stage_time_sec": round(time.time() - t0, 2),
-                "error": str(e),
+                'status': 'error',
+                'segments': [],
+                'total_segments': 0,
+                'stage_time_sec': round(time.time() - t0, 2),
+                'error': str(e),
             }
 
         finally:
-            if whisperx_model is not None:
-                del whisperx_model
-            if align_model is not None:
-                del align_model
+            if fw_model is not None:
+                del fw_model
             VRAMManager.release()
-            self._log(f"  [WhisperX] Model boşaltıldı (VRAM: {VRAMManager.get_usage()})")
+            self._log(f\"  [Whisper] Model bosaltildi (VRAM: {VRAMManager.get_usage()})\")
 
-    def _resolve_compute_type(self, raw_compute_type, device: str) -> str:
-        """compute_type değerini normalize et ve cihaza göre güvenli hale getir."""
-        default_type = "float16" if device == "cuda" else "int8"
-
+    def _resolve_compute_type(self, raw_compute_type, device):
+        default_type = 'float16' if device == 'cuda' else 'int8'
         if raw_compute_type is None:
             return default_type
-
         normalized = str(raw_compute_type).strip().lower()
-        if normalized in ("", "none", "null", "auto"):
+        if normalized in ('', 'none', 'null', 'auto'):
             return default_type
-
-        if device != "cuda" and normalized == "float16":
-            self._log("  [WhisperX] CPU'da float16 desteklenmiyor — int8'e düşülüyor")
-            return "int8"
-
+        if device != 'cuda' and normalized == 'float16':
+            return 'int8'
         return normalized
 
-    def _assign_speakers_by_time(self, result: dict,
-                                  diar_segments: list):
-        """
-        WhisperX sonuçlarına zaman bazlı konuşmacı ataması.
-        Her transcript segment'in orta noktasına en yakın diarizasyon segment'ini bul.
-        """
-        for seg in result.get("segments", []):
-            mid = (seg.get("start", 0) + seg.get("end", 0)) / 2.0
-            best_speaker = ""
+    def _assign_speakers(self, segments, diar_segments):
+        for seg in segments:
+            best_speaker = ''
             best_overlap = 0.0
-
             for ds in diar_segments:
-                overlap_start = max(seg.get("start", 0), ds["start"])
-                overlap_end = min(seg.get("end", 0), ds["end"])
+                overlap_start = max(seg['start'], ds['start'])
+                overlap_end = min(seg['end'], ds['end'])
                 overlap = max(0, overlap_end - overlap_start)
-
                 if overlap > best_overlap:
                     best_overlap = overlap
-                    best_speaker = ds["speaker"]
-
+                    best_speaker = ds['speaker']
             if best_speaker:
-                seg["speaker"] = best_speaker
+                seg['speaker'] = best_speaker
+"@ | Set-Content "F:\Project\audio\stages\transcribe.py" -Encoding UTF8

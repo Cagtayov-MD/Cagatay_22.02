@@ -2,7 +2,7 @@
 extract.py — [A] FFmpeg ile video → WAV ses çıkarma.
 
 İki çıktı üretir:
-  - audio_raw_16k.wav  → 16kHz mono (PyAnnote, WhisperX için)
+  - audio_raw_16k.wav  → 16kHz mono (PyAnnote, faster-whisper için)
   - audio_raw_48k.wav  → 48kHz mono (DeepFilterNet3 için — DF3 48kHz istiyor)
 
 Güvenilirlik: returncode + stderr her zaman kontrol edilir.
@@ -49,7 +49,7 @@ class ExtractStage:
             self._log("  [Extract] 48kHz WAV çıkarılıyor...")
             self._ffmpeg_extract(video_path, wav_48k, sample_rate=48000)
 
-            # ── 16kHz mono WAV (PyAnnote + WhisperX) — 48kHz'den resample ──
+            # ── 16kHz mono WAV (PyAnnote + faster-whisper) — 48kHz'den resample ──
             # PERF-4 FIX: Video tekrar decode etmek yerine WAV→WAV resample (~1s)
             self._log("  [Extract] 48kHz → 16kHz resample...")
             self._ffmpeg_extract(wav_48k, wav_16k, sample_rate=16000)

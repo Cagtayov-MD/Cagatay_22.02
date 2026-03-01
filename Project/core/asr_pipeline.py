@@ -30,7 +30,7 @@ class AudioSegment:
     speaker_id: str = ''            # 'SPEAKER_00' | 'TMDB:Ayşe Kaya' | 'KONUŞMACI_1'
     speaker_label: str = ''         # Çözümlenmiş görünen ad
     transcript: Optional[str] = None
-    confidence: float = 0.0         # WhisperX ortalama kelime confidence
+    confidence: float = 0.0         # faster-whisper ortalama kelime confidence
     language: str = 'tr'
     words: list = field(default_factory=list)  # [{word, start, end, score}]
     # Müzik programı ekleri
