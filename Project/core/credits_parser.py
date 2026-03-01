@@ -46,6 +46,13 @@ def _get_text(line) -> str:
     return getattr(line, "text", "")
 
 
+def _get_confidence(line) -> float:
+    """OCRLine nesnesi veya dict'ten avg_confidence al."""
+    if isinstance(line, dict):
+        return float(line.get("avg_confidence", 0.6))
+    return float(getattr(line, "avg_confidence", 0.6))
+
+
 def _is_noise(text: str) -> bool:
     """Gürültülü OCR satırı mı?"""
     t = text.strip()
@@ -209,12 +216,33 @@ class CreditsParser:
             elif current_category == "company":
                 production_companies.append(text)
             else:
+                # OCR güven değerini al
+                conf = _get_confidence(line)
+                is_verified = False
+
+                if self._name_db:
+                    if self._name_db.is_name(text):
+                        # Tam eşleşme → güven artır
+                        conf = min(1.0, conf + 0.2)
+                        is_verified = True
+                    else:
+                        canonical, score = self._name_db.find(text)
+                        if canonical and score >= 0.80:
+                            # Fuzzy eşleşme → metni düzelt
+                            text = canonical
+                            conf = min(1.0, conf + 0.1)
+                            is_verified = True
+                        else:
+                            # NameDB'de bulunamadı → güven düşür
+                            conf = min(conf, 0.35)
+
                 cast.append({
                     "actor_name": text,
                     "character_name": "",
                     "role": current_role or "Cast",
                     "role_category": "cast",
-                    "confidence": 0.6,
+                    "confidence": round(conf, 3),
+                    "is_verified_name": is_verified,
                     "frame": "",
                 })
 
