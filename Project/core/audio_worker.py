@@ -32,9 +32,19 @@ Exit codes:
   2 = pipeline hatası
 """
 
+# ── Windows console encoding fix ──
+import sys
+import io
+
+# Windows konsolunda UTF-8 kullan
+if sys.platform == "win32":
+    if hasattr(sys.stdout, 'buffer'):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    if hasattr(sys.stderr, 'buffer'):
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+
 import json
 import os
-import sys
 import tempfile
 import time
 import traceback
