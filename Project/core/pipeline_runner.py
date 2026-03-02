@@ -256,6 +256,7 @@ class PipelineRunner:
                     model=self.config.get("llm_filter_model") or self.config.get("ollama_model", "llama3.1:8b"),
                     enabled=self._llm_filter_enabled,
                     log_cb=self._log,
+                    name_checker=self._name_db.is_name,
                 )
                 cdata["cast"] = llm_filter.filter_cast(cdata.get("cast", []), log_cb=self._log)
                 cdata["total_actors"] = len(cdata["cast"])

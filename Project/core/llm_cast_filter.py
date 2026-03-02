@@ -47,11 +47,13 @@ class LLMCastFilter:
     """
 
     def __init__(self, ollama_url="http://localhost:11434",
-                 model="llama3.1:8b", enabled=True, log_cb=None):
+                 model="llama3.1:8b", enabled=True, log_cb=None,
+                 name_checker=None):
         self.ollama_url = ollama_url.rstrip("/")
         self.model = model
         self.enabled = enabled
         self._log_cb = log_cb
+        self.name_checker = name_checker  # callable(text) -> bool, optional
 
     def _log(self, msg, log_cb=None):
         cb = log_cb or self._log_cb
@@ -118,6 +120,18 @@ class LLMCastFilter:
                     approved.add(n)
         return approved
 
+    def _is_namedb_verified(self, entry: dict) -> bool:
+        """actor_name'in herhangi bir kelimesi NameDB'de bulunuyor mu?"""
+        if not self.name_checker:
+            return False
+        name = (entry.get("actor_name") or "").strip()
+        if not name:
+            return False
+        for word in name.split():
+            if self.name_checker(word):
+                return True
+        return False
+
     def _filter_batch(self, batch: list[dict]) -> list[dict]:
         """Tek bir batch'i filtrele."""
         names = [
@@ -179,13 +193,25 @@ class LLMCastFilter:
             log_cb,
         )
 
+        # Orijinal confidence değerlerini sıra ile sakla (NameDB koruması için)
+        orig_confidences = [e.get("confidence", 0.5) for e in cast]
+
         filtered: list[dict] = []
         for start in range(0, len(cast), _BATCH_SIZE):
             batch = cast[start: start + _BATCH_SIZE]
             batch_result = self._filter_batch(batch)
             filtered.extend(batch_result)
 
-        approved = [e for e in filtered if e.get("is_llm_verified")]
+        approved = []
+        for i, e in enumerate(filtered):
+            if e.get("is_llm_verified"):
+                approved.append(e)
+            elif self.name_checker and self._is_namedb_verified(e):
+                # LLM reddetmiş ama NameDB biliyor → koru, orijinal confidence'ı geri yükle
+                e["is_name_db_protected"] = True
+                if e.get("confidence") == _REJECTED_CONFIDENCE:
+                    e["confidence"] = orig_confidences[i]
+                approved.append(e)
         self._log(
             f"  [LLM] {len(approved)}/{len(cast)} giriş onaylandı.",
             log_cb,

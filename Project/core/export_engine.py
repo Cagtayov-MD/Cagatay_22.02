@@ -451,7 +451,9 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
     # Çöp filtresi: doğrulanmamış ve düşük confidence → çıkar
     final = []
     for row in out:
-        verified = row.get("is_verified_name", False) or row.get("is_llm_verified", False)
+        verified = (row.get("is_verified_name", False)
+                    or row.get("is_llm_verified", False)
+                    or row.get("is_name_db_protected", False))
         conf = row.get("confidence", 0.5)
         if verified or conf >= 0.45:
             final.append(row)
