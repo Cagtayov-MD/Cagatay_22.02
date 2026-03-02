@@ -1,0 +1,15 @@
+name: VİTOS Otomatik Güncelleme
+
+on:
+  push:
+    branches:
+      - main  
+
+jobs:
+  otomatik-cekme:
+    runs-on: self-hosted 
+    
+    steps:
+      - name: Yeni Kodu Çek
+        working-directory: F:\REPO_GitHub\Cagatay_22.02\Project
+        run: git pull origin main
