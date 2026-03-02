@@ -91,6 +91,54 @@ python watch_folder.py <YOUR_TEST_DIR> --config test_config.json
 
 ---
 
+## 🤖 VLM Model Yönetimi (GLM-4.6V-Flash)
+
+### GLM Modeli Kurulum
+
+```bash
+ollama pull glm4.6v-flash:q4_K_M
+```
+
+### Qwen'den GLM'e Geçiş
+
+1. `.env` dosyasında `VLM_MODEL` anahtarını ayarlayın:
+   ```
+   VLM_MODEL=glm4.6v-flash:q4_K_M
+   VLM_THRESHOLD=0.80
+   ```
+2. Pipeline otomatik olarak GLM kullanacaktır.
+
+### Geri Alma (Rollback) — Qwen'e Dönüş
+
+`.env` dosyasında `VLM_MODEL` değerini Qwen olarak ayarlayın:
+```
+VLM_MODEL=qwen3-vl:8b
+```
+veya eski `QWEN_MODEL` anahtarını kullanın:
+```
+QWEN_MODEL=qwen3-vl:8b
+```
+
+### Config Öncelik Sırası (Model Seçimi)
+
+1. `vlm_model` (JSON config)
+2. `VLM_MODEL` (çevre değişkeni)
+3. `qwen_model` (JSON config, legacy)
+4. `QWEN_MODEL` (çevre değişkeni, legacy)
+5. Varsayılan: `glm4.6v-flash:q4_K_M`
+
+### VLM-as-OCR (Opsiyonel, Varsayılan Kapalı)
+
+PaddleOCR'ın hiç metin bulamadığı frame'lerde VLM'i OCR yedeği olarak kullanmak için:
+
+```json
+{
+  "vlm_ocr_enabled": true
+}
+```
+
+---
+
 ## 💡 İpuçları
 
 **Watch Script için Windows Task Scheduler:**
