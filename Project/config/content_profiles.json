@@ -1,6 +1,6 @@
 {
   "FilmDizi": {
-    "scope": "video+audio",
+    "scope": "video_only",
     "first_segment_minutes": 2,
     "last_segment_minutes": 7,
     "text_filter_threshold": 0.23,
@@ -13,7 +13,7 @@
     "match_parse_enabled": false
   },
   "Spor": {
-    "scope": "video+audio",
+    "scope": "video_only",
     "first_segment_minutes": 0,
     "last_segment_minutes": 10,
     "text_filter_threshold": 0.30,

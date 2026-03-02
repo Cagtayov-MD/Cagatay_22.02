@@ -602,7 +602,7 @@ class MainWindow(QMainWindow):
                 out_dir = str(Path(video_path).parent)
 
                 from core.pipeline_runner import PipelineRunner
-                scope = "video+audio"
+                scope = "video_only"
                 first_min = 4.0
                 last_min = 8.0
                 if content_profile:
@@ -689,7 +689,7 @@ class MainWindow(QMainWindow):
             content_profile = params.get("content_profile")
 
             # Profil varsa scope ve segment değerlerini profilden al
-            scope     = "video+audio"
+            scope     = "video_only"
             first_min = 4.0
             last_min  = 8.0
             if content_profile:
