@@ -28,6 +28,7 @@ from core.export_engine import ExportEngine
 from core.turkish_name_db import TurkishNameDB
 from core.qwen_verifier import QwenVerifier
 from core.llm_cast_filter import LLMCastFilter
+from core.vlm_reader import VLMReader
 from utils.stats_logger import StatsLogger
 
 
@@ -63,26 +64,66 @@ class PipelineRunner:
             sql_path=name_db_path if os.path.isfile(name_db_path) else "",
         )
 
-        # QwenVerifier
-        qwen_enabled = bool(self.config.get("qwen_verify", True))
-        qwen_model   = self.config.get("qwen_model", "qwen3-vl:8b")
+        # VLM / QwenVerifier — config precedence:
+        # 1. vlm_verify / vlm_enabled (config)
+        # 2. VLM_ENABLED (env)
+        # 3. qwen_verify (config, legacy)
+        # 4. default True
+        vlm_enabled_cfg = self.config.get("vlm_verify",
+                          self.config.get("vlm_enabled", None))
+        if vlm_enabled_cfg is None:
+            env_enabled = os.environ.get("VLM_ENABLED", "")
+            if env_enabled:
+                vlm_enabled = env_enabled.lower() not in ("0", "false", "no")
+            else:
+                vlm_enabled = bool(self.config.get("qwen_verify", True))
+        else:
+            vlm_enabled = bool(vlm_enabled_cfg)
+
+        # Model precedence: vlm_model (config) → VLM_MODEL (env) → qwen_model (config) → QWEN_MODEL (env) → default
+        vlm_model = (
+            self.config.get("vlm_model") or
+            os.environ.get("VLM_MODEL") or
+            self.config.get("qwen_model") or
+            os.environ.get("QWEN_MODEL") or
+            "glm4.6v-flash:q4_K_M"
+        )
+
+        # Threshold precedence: vlm_threshold (config) → VLM_THRESHOLD (env) → qwen_threshold (config) → QWEN_THRESHOLD (env) → default
+        _thresh_raw = (
+            self.config.get("vlm_threshold") or
+            os.environ.get("VLM_THRESHOLD") or
+            self.config.get("qwen_threshold") or
+            os.environ.get("QWEN_THRESHOLD") or
+            0.80
+        )
         # Safe float conversion with validation
         try:
-            qwen_thresh = float(self.config.get("qwen_threshold", 0.80))
+            vlm_thresh = float(_thresh_raw)
             # Clamp to valid range [0.0, 1.0]
-            qwen_thresh = max(0.0, min(1.0, qwen_thresh))
+            vlm_thresh = max(0.0, min(1.0, vlm_thresh))
         except (ValueError, TypeError) as e:
-            self._log(f"  [INIT] Geçersiz qwen_threshold değeri, varsayılan 0.80 kullanılıyor: {e}")
-            qwen_thresh = 0.80
+            self._log(f"  [INIT] Geçersiz vlm_threshold değeri, varsayılan 0.80 kullanılıyor: {e}")
+            vlm_thresh = 0.80
         self._qwen = QwenVerifier(
-            model=qwen_model,
-            confidence_threshold=qwen_thresh,
-            enabled=qwen_enabled,
+            model=vlm_model,
+            confidence_threshold=vlm_thresh,
+            enabled=vlm_enabled,
             name_checker=self._name_db.is_name,
         )
 
         # LLMCastFilter config
         self._llm_filter_enabled = bool(self.config.get("llm_cast_filter", True))
+
+        # VLMReader (VLM-as-OCR) — off by default
+        vlm_ocr_enabled = bool(
+            self.config.get("vlm_ocr_enabled",
+            self.config.get("use_vlm_for_ocr", False))
+        )
+        self._vlm_reader = VLMReader(
+            model=vlm_model,
+            enabled=vlm_ocr_enabled,
+        )
 
     def set_log_callback(self, cb):
         self._log_cb = cb
@@ -216,12 +257,19 @@ class PipelineRunner:
                 ocr_lines = self._repair_turkish(ocr_lines)
                 layout_pairs = self._repair_layout_pairs(layout_pairs)
 
+                # Optional VLM-as-OCR fallback (off by default)
+                if self._vlm_reader.enabled and self._vlm_reader.is_available():
+                    vlm_r_t = time.time()
+                    ocr_lines = self._vlm_reader.augment_ocr_lines(
+                        ocr_lines, candidates, log_cb=self._log)
+                    self._log(f"  [VLM-OCR] Tamamlandı ({time.time()-vlm_r_t:.1f}s)")
+
                 qwen_t = time.time()
                 ocr_lines = self._qwen.verify(ocr_lines, log_cb=self._log,
                                               resolution=info.get("resolution", ""))
                 qwen_elapsed = time.time() - qwen_t
                 if qwen_elapsed > 0.5:
-                    self._log(f"  [Qwen] Doğrulama süresi: {qwen_elapsed:.1f}s")
+                    self._log(f"  [VLM] Doğrulama süresi: {qwen_elapsed:.1f}s")
 
                 ocr_total = ocr_time + qwen_elapsed
                 self._stage("OCR_CREDITS", ocr_total,

@@ -1,22 +1,27 @@
 """
-qwen_verifier.py — Qwen3-VL ile OCR sonrası doğrulama.
+qwen_verifier.py — Model-agnostic VLM ile OCR sonrası doğrulama.
 
 Amaç:
-    PaddleOCR'ın düşük confidence'lı satırlarını Qwen3-VL'ye göndererek
+    PaddleOCR'ın düşük confidence'lı satırlarını bir VLM'ye göndererek
     doğrulat veya düzelt. Özellikle Türkçe özel karakter bozulmalarını
     (Ş→S, ğ→g, ü→u vb.) ve el yazısı font hatalarını yakalar.
 
+Desteklenen modeller:
+    - glm4.6v-flash:q4_K_M  (varsayılan; ollama pull glm4.6v-flash:q4_K_M)
+    - qwen3-vl:8b            (geriye dönük uyumluluk)
+
 Kullanım:
-    verifier = QwenVerifier(model="qwen3-vl:8b", confidence_threshold=0.80)
+    verifier = QwenVerifier(model="glm4.6v-flash:q4_K_M", confidence_threshold=0.80)
     ocr_lines = verifier.verify(ocr_lines, log_cb=self._log)
 
 Gereksinim:
     - Ollama kurulu ve çalışıyor olmalı
-    - qwen3-vl:8b modeli indirilmiş olmalı (ollama pull qwen3-vl:8b)
+    - Model indirilmiş olmalı (ör. ollama pull glm4.6v-flash:q4_K_M)
 """
 
 import base64
 import json
+import re
 import urllib.request
 import urllib.error
 from dataclasses import dataclass
@@ -39,23 +44,34 @@ except ImportError:
 
 # ── Sabitler ──────────────────────────────────────────────────────
 OLLAMA_API_URL  = "http://localhost:11434/api/chat"
-DEFAULT_MODEL   = "qwen3-vl:8b"
+DEFAULT_MODEL   = "glm4.6v-flash:q4_K_M"
 DEFAULT_THRESHOLD = 0.80   # Bu değerin altı şüpheli
 REQUEST_TIMEOUT = 30        # saniye
 
 PROMPT_TEMPLATE = (
-    "Bu görüntüde gördüğün Türkçe metni, özellikle kişi adlarını oku. "
-    "Şu metin OCR tarafından okundu: '{ocr_text}' "
-    "Eğer bu metin doğruysa sadece aynı metni yaz. "
-    "Eğer yanlışsa düzeltilmiş halini yaz. "
-    "Sadece metin yaz, açıklama ekleme. Türkçe karakterleri (Ş,ş,Ğ,ğ,Ü,ü,Ö,ö,Ç,ç,İ,ı) doğru kullan."
+    "Görüntüdeki Türkçe metni — özellikle kişi adlarını — oku. "
+    "OCR şunu okudu: '{ocr_text}'. "
+    "Eğer doğruysa yalnızca aynı metni yaz. "
+    "Yanlışsa yalnızca düzeltilmiş halini yaz. "
+    "Başka hiçbir açıklama, etiket veya önek ekleme. "
+    "Türkçe karakterleri (Ş,ş,Ğ,ğ,Ü,ü,Ö,ö,Ç,ç,İ,ı) doğru kullan."
 )
 
 PROMPT_TEMPLATE_CROP = (
     "Bu kırpılmış görüntüde tam olarak ne yazıyor? "
-    "OCR şunu okudu: '{ocr_text}' "
-    "Doğruysa aynısını yaz. Yanlışsa düzeltilmiş halini yaz. "
-    "Sadece metin yaz, açıklama ekleme. Türkçe karakterleri (Ş,ş,Ğ,ğ,Ü,ü,Ö,ö,Ç,ç,İ,ı) doğru kullan."
+    "OCR şunu okudu: '{ocr_text}'. "
+    "Doğruysa yalnızca aynı metni yaz. Yanlışsa yalnızca düzeltilmiş halini yaz. "
+    "Başka hiçbir açıklama, etiket veya önek ekleme. "
+    "Türkçe karakterleri (Ş,ş,Ğ,ğ,Ü,ü,Ö,ö,Ç,ç,İ,ı) doğru kullan."
+)
+
+# Yanıt temizleme: <think> blokları ve diğer kontrol token'ları
+_STRIP_PATTERNS = re.compile(
+    r"<think>.*?</think>"          # Qwen3 / GLM thinking blocks
+    r"|<\|.*?\|>"                  # <|assistant|> benzeri kontrol token'ları
+    r"|\[INST\].*?\[/INST\]"       # Llama instruction tags
+    r"|<<SYS>>.*?<</SYS>>",        # System tags
+    re.DOTALL
 )
 
 
@@ -69,7 +85,7 @@ class VerifyResult:
 
 class QwenVerifier:
     """
-    Qwen3-VL ile OCR sonrası doğrulama motoru.
+    VLM (GLM-4.6V-Flash / Qwen3-VL) ile OCR sonrası doğrulama motoru.
     Sadece düşük confidence'lı satırları işler → performans kaybı minimal.
     """
 
@@ -116,7 +132,7 @@ class QwenVerifier:
             return ocr_lines
 
         if not self.is_available():
-            log(f"  [Qwen] Ollama bağlantısı yok veya '{self.model}' yüklü değil — atlanıyor")
+            log(f"  [VLM] Ollama bağlantısı yok veya '{self.model}' yüklü değil — atlanıyor")
             return ocr_lines
 
         # Çözünürlüğe göre gürültü threshold'u
@@ -155,13 +171,13 @@ class QwenVerifier:
             suspicious.append(i)
 
         if skipped_noise:
-            log(f"  [Qwen] {skipped_noise} gürültü satırı atlandı (conf<{noise_threshold})")
+            log(f"  [VLM] {skipped_noise} gürültü satırı atlandı (conf<{noise_threshold})")
 
         if not suspicious:
-            log(f"  [Qwen] Tüm satırlar kaliteli — doğrulama gerekmedi")
+            log(f"  [VLM] Tüm satırlar kaliteli — doğrulama gerekmedi")
             return ocr_lines
 
-        log(f"  [Qwen] {len(suspicious)}/{len(ocr_lines)} satır doğrulanıyor...")
+        log(f"  [VLM] {len(suspicious)}/{len(ocr_lines)} satır doğrulanıyor...")
 
         fixed_count = 0
         for i in suspicious:
@@ -179,9 +195,9 @@ class QwenVerifier:
                 # Orijinal metni sakla
                 self._set_original(ocr_lines[i], result.original)
                 fixed_count += 1
-                log(f"  [Qwen] ✓ '{result.original}' → '{result.corrected}'")
+                log(f"  [VLM] ✓ '{result.original}' → '{result.corrected}'")
 
-        log(f"  [Qwen] {fixed_count} satır düzeltildi")
+        log(f"  [VLM] {fixed_count} satır düzeltildi")
         return ocr_lines
 
     def _should_force_verify_name_like_text(self, text: str) -> bool:
@@ -306,9 +322,8 @@ class QwenVerifier:
                         .strip()
             )
 
-            # Thinking modunda <think>...</think> bloğunu temizle
-            import re
-            corrected = re.sub(r"<think>.*?</think>", "", corrected, flags=re.DOTALL).strip()
+            # Kontrol token'larını ve thinking bloklarını temizle
+            corrected = _STRIP_PATTERNS.sub("", corrected).strip()
 
             if not corrected:
                 return None
