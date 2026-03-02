@@ -10,7 +10,15 @@
     "whisper_model": "large-v3",
     "whisper_language": "tr",
     "ocr_enabled": true,
-    "match_parse_enabled": false
+    "match_parse_enabled": false,
+    "ocr_fps": 0.5,
+    "vlm_ocr_enabled": false,
+    "vlm_ocr_model": "qwen2.5vl:7b",
+    "vlm_ocr_fallback": true,
+    "vlm_ocr_min_score": 5.0,
+    "preprocess_enabled": true,
+    "preprocess_upscale": 3,
+    "preprocess_padding": 0.20
   },
   "Spor": {
     "scope": "video_only",

@@ -29,6 +29,7 @@ from core.turkish_name_db import TurkishNameDB
 from core.qwen_verifier import QwenVerifier
 from core.llm_cast_filter import LLMCastFilter
 from core.vlm_reader import VLMReader
+from core.vlm_ocr_engine import VLMOCREngine
 from utils.stats_logger import StatsLogger
 
 
@@ -139,6 +140,9 @@ class PipelineRunner:
             model=vlm_model,
             enabled=vlm_ocr_enabled,
         )
+
+        # VLMOCREngine (Çoklu ROI + Qwen2.5-VL OCR)
+        self._vlm_ocr = VLMOCREngine(cfg=self.config, log_cb=self._log)
 
     def set_log_callback(self, cb):
         self._log_cb = cb
@@ -278,6 +282,26 @@ class PipelineRunner:
                     ocr_lines = self._vlm_reader.augment_ocr_lines(
                         ocr_lines, candidates, log_cb=self._log)
                     self._log(f"  [VLM-OCR] Tamamlandı ({time.time()-vlm_r_t:.1f}s)")
+
+                # VLM Multi-ROI OCR (Qwen2.5-VL ile çoklu ROI + skorlama)
+                if self._vlm_ocr.enabled and self._vlm_ocr.is_available():
+                    vlm_ocr_t = time.time()
+                    vlm_lines = self._vlm_ocr.process_frames(
+                        candidates, work_dir=work_dir, log_cb=self._log)
+                    if vlm_lines:
+                        # VLM satırlarını mevcut OCR satırlarıyla birleştir (dedup)
+                        existing_texts = {
+                            (self._get_line_text(l) or "").lower().strip()
+                            for l in ocr_lines
+                        }
+                        added = 0
+                        for vl in vlm_lines:
+                            vl_text = (vl.get("text") or "").lower().strip()
+                            if vl_text and vl_text not in existing_texts:
+                                ocr_lines.append(vl)
+                                existing_texts.add(vl_text)
+                                added += 1
+                        self._log(f"  [VLM-OCR] {added} yeni satır eklendi ({time.time()-vlm_ocr_t:.1f}s)")
 
                 qwen_t = time.time()
                 ocr_lines = self._qwen.verify(ocr_lines, log_cb=self._log,
@@ -731,6 +755,12 @@ class PipelineRunner:
     # ──────────────────────────────────────────────────────────────
     # YARDIMCI
     # ──────────────────────────────────────────────────────────────
+    @staticmethod
+    def _get_line_text(line) -> str:
+        if isinstance(line, dict):
+            return line.get("text", "")
+        return getattr(line, "text", "")
+
     def _stage(self, name, elapsed, status="ok", **details):
         self.stage_stats[name] = {
             "duration_sec": round(elapsed, 2),

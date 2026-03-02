@@ -3,7 +3,7 @@
 FILM_DIZI_DAG = {
     "VIDEO_INPUT": {"label": "Video", "children": ["ASR_BRANCH", "OCR_BRANCH"]},
     "ASR_BRANCH": {"label": "ASR", "steps": ["Extract", "Transcribe"]},
-    "OCR_BRANCH": {"label": "OCR", "steps": ["Frame Extract", "Text Filter", "OCR", "Credits Parse", "TMDB Verify"]},
+    "OCR_BRANCH": {"label": "OCR", "steps": ["Frame Extract", "Text Filter", "OCR", "VLM OCR", "Credits Parse", "TMDB Verify"]},
 }
 
 SPOR_DAG = {
