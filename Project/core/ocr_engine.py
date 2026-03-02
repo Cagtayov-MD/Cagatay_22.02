@@ -790,3 +790,86 @@ class OCREngine:
             return 100.0
         common = sum(1 for ca, cb in zip(a_n, b_n) if ca == cb)
         return (common / max(len(a_n), len(b_n), 1)) * 100
+
+    @staticmethod
+    def estimate_font_type(frame_paths_and_bboxes: list) -> str:
+        """
+        Bbox geometrisinden font tipini tahmin et.
+
+        Args:
+            frame_paths_and_bboxes: [(frame_path, [bbox1, bbox2, ...]), ...]
+              bbox formatı: [x1, y1, x2, y2]
+
+        Returns:
+            "standard" | "handwriting" | "decorative" | "unknown"
+        """
+        try:
+            from utils.unicode_io import imread_unicode as _imread
+        except ImportError:
+            _imread = None
+
+        heights = []
+        edge_densities = []
+
+        try:
+            for frame_path, bboxes in frame_paths_and_bboxes:
+                if not bboxes:
+                    continue
+                img = None
+                if _imread:
+                    try:
+                        img = _imread(str(frame_path))
+                    except Exception:
+                        img = None
+                if img is None:
+                    try:
+                        img = cv2.imread(str(frame_path))
+                    except Exception:
+                        continue
+                if img is None:
+                    continue
+
+                for bbox in bboxes:
+                    try:
+                        if not bbox or len(bbox) < 4:
+                            continue
+                        x1, y1, x2, y2 = (
+                            int(bbox[0]), int(bbox[1]),
+                            int(bbox[2]), int(bbox[3]),
+                        )
+                        if x2 <= x1 or y2 <= y1:
+                            continue
+                        h_val = y2 - y1
+                        if h_val < 4:
+                            continue
+                        heights.append(float(h_val))
+
+                        region = img[y1:y2, x1:x2]
+                        if region.size == 0:
+                            continue
+                        gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+                        edges = cv2.Canny(gray, 50, 150)
+                        density = float(np.count_nonzero(edges)) / float(edges.size)
+                        edge_densities.append(density)
+                    except Exception:
+                        continue
+
+            if len(heights) < 2:
+                return "unknown"
+
+            h_arr = np.array(heights, dtype=float)
+            h_mean = float(np.mean(h_arr))
+            if h_mean == 0:
+                return "unknown"
+            h_cv = float(np.std(h_arr) / h_mean)
+
+            edge_density = float(np.mean(edge_densities)) if edge_densities else 0.0
+
+            if h_cv < 0.15 and edge_density < 0.25:
+                return "standard"
+            if h_cv > 0.35 or edge_density > 0.40:
+                return "handwriting"
+            return "decorative"
+
+        except Exception:
+            return "unknown"

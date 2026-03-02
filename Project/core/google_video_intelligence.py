@@ -202,6 +202,80 @@ class GoogleVITextEngine:
             f"onarım:{repaired_lines}/{total_ocr_lines})",
         )
 
+    def decide_after_tmdb(
+        self,
+        tmdb_matched: bool,
+        resolution: str,
+        font_type: str,
+        segment_duration_min: float,
+        ocr_avg_conf: float = 0.0,
+        total_ocr_lines: int = 0,
+        cast_count: int = 0,
+    ) -> GVIDecision:
+        """
+        TMDB sonucuna + video kalite özelliklerine göre VI kararı ver.
+
+        Args:
+            tmdb_matched          : TMDB doğrulama başarılı mı?
+            resolution            : "WxH" formatında çözünürlük (probe_video'dan)
+            font_type             : "standard" | "decorative" | "handwriting" | "unknown"
+            segment_duration_min  : Gönderilecek segment süresi (dakika)
+            ocr_avg_conf          : PaddleOCR conf ortalaması (loglama için)
+            total_ocr_lines       : Toplam OCR satır sayısı (loglama için)
+            cast_count            : Oyuncu sayısı (loglama için)
+        """
+        # ── Kota ve erişilebilirlik ──
+        if not self.is_available():
+            return GVIDecision(
+                False,
+                "google_vi kullanılamıyor — kütüphane veya credential eksik",
+            )
+
+        used_min = self._get_monthly_usage()
+        remaining = self.monthly_limit - used_min
+        if remaining < segment_duration_min:
+            return GVIDecision(
+                False,
+                f"aylık kota yetersiz — kalan:{remaining:.1f}dk, "
+                f"gereken:{segment_duration_min:.1f}dk",
+            )
+
+        # ── Karar mantığı ──
+        if tmdb_matched:
+            return GVIDecision(False, "TMDB eşleşti — VI gereksiz")
+
+        height = self._parse_height(resolution)
+
+        if height < 720:
+            return GVIDecision(
+                True,
+                "TMDB miss + düşük çözünürlük",
+                triggers=[f"height={height} < 720"],
+            )
+
+        if font_type != "standard":
+            return GVIDecision(
+                True,
+                "TMDB miss + standard olmayan font",
+                triggers=[f"font_type={font_type!r}"],
+            )
+
+        return GVIDecision(False, "720p+ düz font — lokal yeter")
+
+    @staticmethod
+    def _parse_height(resolution: str) -> int:
+        """
+        "WxH" formatından height (H) değerini çıkar.
+        Parse edemezse 0 döndür (güvenli taraf: VI'ya gönder).
+        """
+        try:
+            parts = str(resolution).strip().lower().split("x")
+            if len(parts) == 2:
+                return int(parts[1])
+        except Exception:
+            pass
+        return 0
+
     # ── İşlem ────────────────────────────────────────────────────────
 
     def process_segments(
