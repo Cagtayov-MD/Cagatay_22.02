@@ -455,7 +455,18 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
                     or row.get("is_llm_verified", False)
                     or row.get("is_name_db_protected", False))
         conf = row.get("confidence", 0.5)
-        if verified or conf >= 0.45:
+        actor = (row.get("actor_name") or "").strip()
+        char = (row.get("character_name") or "").strip()
+
+        # Kısa çöp: actor_name 3 karakterden kısa ve karakter ismi yoksa → çıkar
+        if not char and len(actor) < 3:
+            continue
+
+        # Tamamen küçük harf tek kelime → OCR gürültüsü (oulon, nibeu, etiol)
+        if not char and actor and ' ' not in actor and actor.islower():
+            continue
+
+        if verified or conf >= 0.70:
             final.append(row)
 
     # ── Post-merge fuzzy sweep ──

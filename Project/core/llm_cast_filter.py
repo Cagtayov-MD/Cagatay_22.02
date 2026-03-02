@@ -12,12 +12,21 @@ import json
 CAST_FILTER_PROMPT = """Aşağıdaki liste bir film/dizi jenerik ekranından OCR ile okunmuştur.
 Her satırda bir metin var. Bu metinlerden hangileri gerçek kişi isimleridir?
 
-Kurallar:
-- İsimler herhangi bir dilde olabilir (Türkçe, Fransızca, İngilizce, İtalyanca, Almanca vb.)
-- OCR hataları olabilir — küçük yazım hataları olan isimler yine de isimdir
-- 1-3 harfli anlamsız kısaltmalar (OC, CX, AV, AM) isim DEĞİLDİR
-- Rastgele harf kombinasyonları (COCACO, alqu, DCJV) isim DEĞİLDİR
-- Teknik terimler, rol başlıkları (ceviren, sahneye koyan, yazanlar) isim DEĞİLDİR — bunlar rol başlığıdır
+KATÎ KURALLAR (bu kurallar kesindir, istisna yoktur):
+1. 1-3 harfli metinler ASLA isim değildir (Alt, Cp, Co, JC, CA, TA, Lp, L0 vb.)
+2. Tamamen küçük harfle yazılmış metinler isim değildir (oulon, nibeu, etiol, algw vb.)
+3. Türkçe jenerik rol başlıkları isim DEĞİLDİR:
+   sahneye koyan, yazanlar, yazaniar, çeviren, ceviren, cevirtli, cevirla,
+   yönetmen, yonetmen, yapımcı, yapimci, senarist, müzik, muzik,
+   görüntü yönetmeni, goruntu yonetmeni, kurgu, montaj, oyuncular,
+   oynayanlar, oynayan, basroller, başroller
+4. Anlamsız harf dizileri isim değildir (COEACE, OCOCAOR, ocococ, matCwuda, Ozoquty vb.)
+5. Noktalı/özel karakterli metinler isim değildir (t..Hacti, Pierot.Fali vb.)
+
+İSİM OLAN metinlerin özellikleri:
+- Ad Soyad formatında (iki veya üç kelime, her kelime büyük harfle başlar)
+- Bilinen bir dilde gerçek bir isim (Türkçe, Fransızca, İngilizce, İtalyanca, Almanca vb.)
+- OCR hataları olabilir ama temel yapı isim formatında olmalı
 
 Metin listesi (numaralı):
 {numbered_list}
@@ -28,9 +37,17 @@ ISIM: 5
 ISIM: 12
 ...
 
-Sadece numaraları yaz, açıklama ekleme."""
+Emin olmadığın metinleri EKLEME. Sadece kesin isim olanları yaz."""
+
+_ROLE_KEYWORDS = {
+    "sahneye koyan", "sahneyekoyan", "yazanlar", "yazaniar", "yazantar",
+    "çeviren", "ceviren", "cevirtli", "cevirla", "cevirtln",
+    "yönetmen", "yonetmen", "yapımcı", "yapimci",
+    "oyuncular", "oynayanlar", "oynayan", "olayaniar",
+}
 
 _BATCH_SIZE = 50
+_MIN_NAME_LEN = 3   # actor_name must have at least this many characters
 _TIMEOUT_SEC = 60
 _LLM_CONFIDENCE_BOOST = 0.3   # approved entries get +0.3 confidence
 _REJECTED_CONFIDENCE  = 0.2   # rejected entries get confidence set to 0.2
@@ -132,33 +149,63 @@ class LLMCastFilter:
                 return True
         return False
 
+    def _pre_filter_obvious_junk(self, entry: dict) -> bool:
+        """LLM'e göndermeden önce kesin çöpleri ele. True = çöp, atılmalı."""
+        name = (entry.get("actor_name") or "").strip()
+        if not name:
+            return True
+        # 3 harften kısa
+        if len(name) < _MIN_NAME_LEN:
+            return True
+        # Tamamen küçük harf tek kelime
+        if ' ' not in name and name.islower():
+            return True
+        # Bilinen Türkçe rol başlıkları
+        if name.lower() in _ROLE_KEYWORDS:
+            return True
+        return False
+
     def _filter_batch(self, batch: list[dict]) -> list[dict]:
         """Tek bir batch'i filtrele."""
-        names = [
-            (e.get("actor_name") or "").strip()
-            for e in batch
-        ]
-        numbered_list = "\n".join(f"{i + 1}. {n}" for i, n in enumerate(names))
-        prompt = CAST_FILTER_PROMPT.format(numbered_list=numbered_list)
+        # Pre-filter: kesin çöpleri LLM'e göndermeden işaretle
+        pre_filtered_flags = [self._pre_filter_obvious_junk(e) for e in batch]
 
-        response = self._query_ollama(prompt)
-        if response is None:
-            # Ollama hatası → batch'i olduğu gibi döndür
-            return batch
+        # Sadece pre-filter'dan geçenleri LLM'e gönder
+        llm_batch = [e for e, junk in zip(batch, pre_filtered_flags) if not junk]
 
-        approved_indices = self._parse_response(response, len(batch))
+        if llm_batch:
+            names = [(e.get("actor_name") or "").strip() for e in llm_batch]
+            numbered_list = "\n".join(f"{i + 1}. {n}" for i, n in enumerate(names))
+            prompt = CAST_FILTER_PROMPT.format(numbered_list=numbered_list)
 
-        result = []
-        for i, entry in enumerate(batch):
-            one_based = i + 1
-            entry = dict(entry)  # kopya
-            if one_based in approved_indices:
-                entry["is_llm_verified"] = True
-                existing = float(entry.get("confidence", 0.6))
-                entry["confidence"] = round(min(1.0, existing + _LLM_CONFIDENCE_BOOST), 3)
+            response = self._query_ollama(prompt)
+            if response is None:
+                # Ollama hatası → pre-filter'dan geçenleri olduğu gibi döndür
+                llm_approved: set[int] = set(range(1, len(llm_batch) + 1))
             else:
+                llm_approved = self._parse_response(response, len(llm_batch))
+        else:
+            llm_approved = set()
+
+        # Sonuçları orijinal batch sırasına göre yeniden birleştir
+        result = []
+        llm_idx = 0
+        for i, entry in enumerate(batch):
+            entry = dict(entry)  # kopya
+            if pre_filtered_flags[i]:
+                # Kesin çöp: doğrudan reddet
                 entry["is_llm_verified"] = False
                 entry["confidence"] = _REJECTED_CONFIDENCE
+            else:
+                one_based = llm_idx + 1
+                llm_idx += 1
+                if one_based in llm_approved:
+                    entry["is_llm_verified"] = True
+                    existing = float(entry.get("confidence", 0.6))
+                    entry["confidence"] = round(min(1.0, existing + _LLM_CONFIDENCE_BOOST), 3)
+                else:
+                    entry["is_llm_verified"] = False
+                    entry["confidence"] = _REJECTED_CONFIDENCE
             result.append(entry)
         return result
 
