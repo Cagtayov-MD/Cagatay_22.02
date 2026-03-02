@@ -295,7 +295,16 @@ class TurkishNameDB:
     def is_name(self, text: str) -> bool:
         """Bu metin bir Türkçe isim ya da soyad mı?"""
         key = _normalize_key(text.replace(' ', ''))
-        return key in self._all_keys or key in self._hardcoded
+        if key in self._all_keys or key in self._hardcoded:
+            return True
+        # Çok kelimeli: herhangi bir kelime DB'de varsa True
+        words = text.strip().split()
+        if len(words) >= 2:
+            return any(
+                (k := _normalize_key(w)) in self._all_keys or k in self._hardcoded
+                for w in words
+            )
+        return False
 
     def is_first_name(self, text: str) -> bool:
         key = _normalize_key(text)
