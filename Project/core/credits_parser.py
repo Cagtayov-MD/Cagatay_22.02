@@ -219,20 +219,24 @@ class CreditsParser:
                 # OCR güven değerini al
                 conf = _get_confidence(line)
                 is_verified = False
+                match_method = ""
 
                 if self._name_db:
                     if self._name_db.is_name(text):
                         # Tam eşleşme → güven artır
                         conf = min(1.0, conf + 0.2)
                         is_verified = True
+                        match_method = "exact_db"
                     else:
-                        canonical, score = self._name_db.find(text)
+                        canonical, score, match_method = self._name_db.find_with_method(text)
                         if canonical and score >= 0.80:
-                            # Fuzzy eşleşme → metni düzelt
+                            # Fonetik/fuzzy eşleşme → metni düzelt
                             text = canonical
                             conf = min(1.0, score)
                             is_verified = True
-                        # NameDB'de bulunamasa bile cast'a ekle — LLM sonra filtreler
+                        else:
+                            match_method = ""
+                        # NameDB'de bulunamasa da cast'a ekle — kural filtre + LLM sonra filtreler
 
                 cast.append({
                     "actor_name": text,
@@ -241,6 +245,7 @@ class CreditsParser:
                     "role_category": current_category,
                     "confidence": round(conf, 3),
                     "is_verified_name": is_verified,
+                    "match_method": match_method,
                     "frame": "ocr_sequential",
                 })
 

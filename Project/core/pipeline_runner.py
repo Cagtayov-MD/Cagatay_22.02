@@ -245,29 +245,15 @@ class PipelineRunner:
                           f"Ekip:{cdata['total_crew']} "
                           f"Şirket:{cdata['total_companies']}")
 
-                # Snapshot before LLM filter (DATABASE credits_raw için)
+                # Snapshot before filters (DATABASE credits_raw için)
                 cdata_raw = copy.deepcopy(cdata)
 
-                # ══ [LLM] LLM_CAST_FILTER ══════════════════════════
-                self._log(f"\n[LLM] Cast Filtreleme")
-                t = time.time()
-                llm_filter = LLMCastFilter(
-                    ollama_url=self.config.get("ollama_url", "http://localhost:11434"),
-                    model=self.config.get("llm_filter_model") or self.config.get("ollama_model", "llama3.1:8b"),
-                    enabled=self._llm_filter_enabled,
-                    log_cb=self._log,
-                    name_checker=self._name_db.is_name,
-                )
-                cdata["cast"] = llm_filter.filter_cast(cdata.get("cast", []), log_cb=self._log)
-                cdata["total_actors"] = len(cdata["cast"])
-                llm_elapsed = time.time() - t
-                if llm_elapsed > 0.1:
-                    self._log(f"  [LLM] Cast filtreleme: {llm_elapsed:.1f}s")
-
                 # ══ [6/6] TMDB_VERIFY ══════════════════════════════
+                # TMDB önce çalışsın — eşleşirse cast TMDB'den gelecek, LLM gereksiz
                 self._log(f"\n[6/6] TMDB_VERIFY")
                 t = time.time()
                 self.stats.start_stage("TMDB_VERIFY")
+                tmdb_matched = False
                 if content_profile and content_profile.get("match_parse_enabled"):
                     # Spor profili: TMDB yerine MATCH_PARSE çalıştır (ileride implement edilecek)
                     self._log(f"  [MATCH_PARSE] Profil={profile_name} — match_parse_enabled=True (skipped, ileride implement edilecek)")
@@ -290,8 +276,29 @@ class PipelineRunner:
                                   f"hits:{tmdb_result.hits} misses:{tmdb_result.misses}")
                         # TMDB-only credits output when verification succeeds
                         cdata = self._apply_tmdb_credits(cdata, tmdb_result)
+                        tmdb_matched = True
                     else:
                         self._log(f"  --: {tmdb_result.reason}")
+
+                # ══ [LLM] LLM_CAST_FILTER ══════════════════════════
+                # Sadece TMDB eşleşmezse LLM devreye girsin
+                if not tmdb_matched:
+                    self._log(f"\n[LLM] Cast Filtreleme (TMDB eşleşmedi)")
+                    t = time.time()
+                    llm_filter = LLMCastFilter(
+                        ollama_url=self.config.get("ollama_url", "http://localhost:11434"),
+                        model=self.config.get("llm_filter_model") or self.config.get("ollama_model", "llama3.1:8b"),
+                        enabled=self._llm_filter_enabled,
+                        log_cb=self._log,
+                        name_checker=self._name_db.is_name,
+                    )
+                    cdata["cast"] = llm_filter.filter_cast(cdata.get("cast", []), log_cb=self._log)
+                    cdata["total_actors"] = len(cdata["cast"])
+                    llm_elapsed = time.time() - t
+                    if llm_elapsed > 0.1:
+                        self._log(f"  [LLM] Cast filtreleme: {llm_elapsed:.1f}s")
+                else:
+                    self._log(f"\n[LLM] TMDB eşleşti — LLM filtresi atlanıyor")
 
             else:
                 for stage_name in ("FRAME_EXTRACT", "TEXT_FILTER", "OCR_CREDITS",

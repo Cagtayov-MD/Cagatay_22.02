@@ -163,6 +163,25 @@ class LLMCastFilter:
         # Bilinen Türkçe rol başlıkları
         if name.lower() in _ROLE_KEYWORDS:
             return True
+
+        # Sesli harf oranı kontrolü
+        alpha_chars = [c for c in name.lower() if c.isalpha()]
+        if alpha_chars:
+            vowels = sum(1 for c in alpha_chars if c in 'aeıioöuü')
+            if len(alpha_chars) > 4 and vowels == 0:
+                return True  # Hiç sesli harf yok → çöp
+            if len(alpha_chars) > 5 and vowels / len(alpha_chars) < 0.15:
+                return True  # Sesli harf oranı çok düşük → çöp
+
+        # Özel karakter kontrolü
+        if re.search(r'[.@#$%&{}\[\]]', name):
+            return True
+
+        # Rakam ağırlıklı
+        digits = sum(1 for c in name if c.isdigit())
+        if len(name) > 2 and digits / len(name) > 0.4:
+            return True
+
         return False
 
     def _filter_batch(self, batch: list[dict]) -> list[dict]:
