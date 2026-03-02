@@ -32,6 +32,21 @@ from core.vlm_reader import VLMReader
 from utils.stats_logger import StatsLogger
 
 
+def _safe_path(path: Path) -> Path:
+    """Dosya çakışması varsa _2, _3 ... ekleyerek güvenli bir yol döndür."""
+    if not path.exists():
+        return path
+    stem = path.stem
+    suffix = path.suffix
+    parent = path.parent
+    n = 2
+    while True:
+        candidate = parent / f"{stem}_{n}{suffix}"
+        if not candidate.exists():
+            return candidate
+        n += 1
+
+
 class PipelineRunner:
     """Film/Dizi analiz pipeline."""
 
@@ -391,13 +406,26 @@ class PipelineRunner:
             self._log(f"\n[EXPORT]")
             t = time.time()
             self.stats.start_stage("EXPORT")
+            export_ts = datetime.now().strftime("%d%m%y-%H%M")
             exp = ExportEngine(work_dir, name_db=self._name_db)
             jp, tp, tr_p = exp.generate(
                 info, cdata, ocr_lines, self.stage_stats,
                 "WORKSTATION", scope, first_min, last_min,
                 content_profile_name=profile_name,
-                audio_result=audio_result)
+                audio_result=audio_result,
+                ts=export_ts)
             self._stage("EXPORT", time.time() - t)
+
+            # Kullanıcı çıktı klasörüne (output_root) ana rapor ve transcript TXT'yi kopyala
+            if self.output_root:
+                out_root = Path(self.output_root)
+                out_root.mkdir(parents=True, exist_ok=True)
+                for _src in (tp, tr_p):
+                    _src_p = Path(_src)
+                    if _src_p.is_file():
+                        _dst = _safe_path(out_root / _src_p.name)
+                        shutil.copy2(_src_p, _dst)
+                        self._log(f"  [EXPORT] Kullanıcı klasörüne kopyalandı: {_dst.name}")
 
             # ══ DATABASE ══════════════════════════════════════════
             try:
@@ -410,6 +438,7 @@ class PipelineRunner:
                     audio_result=audio_result,
                     work_dir=work_dir,
                     content_profile_name=profile_name,
+                    ts=export_ts,
                 )
             except Exception as e:
                 self._log(f"  [DATABASE] Yazma hatası (pipeline etkilenmedi): {e}")
@@ -731,7 +760,7 @@ class PipelineRunner:
     def _write_database(self, video_info: dict, credits_data: dict,
                          credits_raw, ocr_lines: list, stage_stats: dict,
                          audio_result, work_dir: str,
-                         content_profile_name: str) -> None:
+                         content_profile_name: str, ts: str) -> None:
         """DATABASE dizinine pipeline çıktılarının bir kopyasını yaz."""
         if not self.config.get("database_enabled", True):
             return
@@ -739,41 +768,31 @@ class PipelineRunner:
         db_root = (
             self.config.get("database_root") or
             os.environ.get("VITOS_DATABASE_ROOT") or
-            "D:\\DATABASE"
+            r"D:\DATABASE\FilmDizi"
         )
 
         stem = Path(video_info.get("filename", "out")).stem
-        ts = datetime.now().strftime("%d%m%y-%H%M")
 
-        db_dir = Path(db_root) / (content_profile_name or "FilmDizi") / stem
+        db_dir = Path(db_root) / stem
         db_dir.mkdir(parents=True, exist_ok=True)
 
-        # 1. TXT raporu kopyala (timestamped filename önce, fallback düz isim)
-        _txt_candidates = [
-            p for p in Path(work_dir).glob(f"{stem}_[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9].txt")
-            if "_transcript" not in p.name
-        ]
-        src_txt = (max(_txt_candidates, key=lambda p: p.stat().st_mtime)
-                   if _txt_candidates else Path(work_dir) / f"{stem}.txt")
-        if src_txt.is_file():
-            shutil.copy2(src_txt, db_dir / f"{stem}_{ts}.txt")
+        # 1. work_dir içindeki tüm dosyaları DB klasörüne kopyala
+        for src in Path(work_dir).iterdir():
+            if src.is_file():
+                dst = _safe_path(db_dir / src.name)
+                shutil.copy2(src, dst)
 
-        # 2. JSON raporu kopyala
-        src_json = Path(work_dir) / f"{stem}_report.json"
-        if src_json.is_file():
-            shutil.copy2(src_json, db_dir / f"{stem}_{ts}_report.json")
-
-        # 3. OCR dual-score JSON yaz
+        # 2. OCR dual-score JSON yaz
         ocr_scores = self._build_ocr_scores(ocr_lines, credits_data)
-        with open(db_dir / f"{stem}_{ts}_ocr_scores.json", "w", encoding="utf-8") as f:
+        with open(_safe_path(db_dir / f"{stem}_{ts}_ocr_scores.json"), "w", encoding="utf-8") as f:
             json.dump(ocr_scores, f, ensure_ascii=False, indent=2)
 
-        # 4. Ham credits JSON yaz (LLM filtre öncesi)
-        with open(db_dir / f"{stem}_{ts}_credits_raw.json", "w", encoding="utf-8") as f:
+        # 3. Ham credits JSON yaz (LLM filtre öncesi)
+        with open(_safe_path(db_dir / f"{stem}_{ts}_credits_raw.json"), "w", encoding="utf-8") as f:
             json.dump(credits_raw if credits_raw is not None else credits_data,
                       f, ensure_ascii=False, indent=2)
 
-        # 5. Transcript JSON yaz
+        # 4. Transcript JSON yaz
         transcript = []
         if audio_result and isinstance(audio_result, dict):
             for seg in audio_result.get("transcript", []):
@@ -782,11 +801,11 @@ class PipelineRunner:
                     "end": seg.get("end", 0),
                     "text": seg.get("text", ""),
                 })
-        with open(db_dir / f"{stem}_{ts}_transcript.json", "w", encoding="utf-8") as f:
+        with open(_safe_path(db_dir / f"{stem}_{ts}_transcript.json"), "w", encoding="utf-8") as f:
             json.dump(transcript, f, ensure_ascii=False, indent=2)
 
-        # 6. Debug log yaz
-        with open(db_dir / f"{stem}_{ts}_debug.log", "w", encoding="utf-8") as f:
+        # 5. Debug log yaz
+        with open(_safe_path(db_dir / f"{stem}_{ts}_debug.log"), "w", encoding="utf-8") as f:
             f.write("\n".join(self._log_messages))
 
         self._log(f"  [DATABASE] Yazıldı: {db_dir}")

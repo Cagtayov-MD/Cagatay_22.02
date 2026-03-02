@@ -166,6 +166,7 @@ def test_write_database_skips_when_disabled(tmp_path):
         audio_result=None,
         work_dir=str(tmp_path),
         content_profile_name="FilmDizi",
+        ts="010125-1200",
     )
 
     assert not (tmp_path / "db").exists()
@@ -177,9 +178,11 @@ def test_write_database_skips_when_disabled(tmp_path):
 
 def test_write_database_creates_all_files(tmp_path):
     """DB-05: _write_database creates all expected output files."""
+    ts = "010125-1200"
     work_dir = tmp_path / "work"
     work_dir.mkdir()
-    (work_dir / "myvideo.txt").write_text("report text", encoding="utf-8")
+    (work_dir / f"myvideo_{ts}.txt").write_text("report text", encoding="utf-8")
+    (work_dir / f"myvideo-tscr_{ts}.txt").write_text("transcript", encoding="utf-8")
     (work_dir / "myvideo_report.json").write_text('{"test": 1}', encoding="utf-8")
 
     db_root = tmp_path / "DATABASE"
@@ -210,9 +213,10 @@ def test_write_database_creates_all_files(tmp_path):
         audio_result=audio_result,
         work_dir=str(work_dir),
         content_profile_name="FilmDizi",
+        ts=ts,
     )
 
-    db_dir = db_root / "FilmDizi" / "myvideo"
+    db_dir = db_root / "myvideo"
     assert db_dir.is_dir()
 
     files = list(db_dir.iterdir())
@@ -224,6 +228,11 @@ def test_write_database_creates_all_files(tmp_path):
     assert any(n.endswith("_credits_raw.json") for n in names)
     assert any(n.endswith("_transcript.json") for n in names)
     assert any(n.endswith("_debug.log") for n in names)
+
+    # Verify work_dir files were copied to db_dir
+    assert f"myvideo_{ts}.txt" in names, "Report TXT not copied from work_dir"
+    assert f"myvideo-tscr_{ts}.txt" in names, "Transcript TXT not copied from work_dir"
+    assert "myvideo_report.json" in names, "Report JSON not copied from work_dir"
 
     # ocr_scores content
     ocr_file = next(f for f in files if f.name.endswith("_ocr_scores.json"))
@@ -248,6 +257,7 @@ def test_write_database_creates_all_files(tmp_path):
 def test_write_database_filename_contains_timestamp(tmp_path):
     """DB-05 variant: output files include DDMMYY-HHmm timestamp in name."""
     import re
+    ts = "010125-1200"
     work_dir = tmp_path / "work"
     work_dir.mkdir()
 
@@ -265,9 +275,10 @@ def test_write_database_filename_contains_timestamp(tmp_path):
         audio_result=None,
         work_dir=str(work_dir),
         content_profile_name="FilmDizi",
+        ts=ts,
     )
 
-    db_dir = tmp_path / "DB" / "FilmDizi" / "clip"
+    db_dir = tmp_path / "DB" / "clip"
     for f in db_dir.iterdir():
         assert re.search(r"clip_\d{6}-\d{4}", f.name), \
             f"Timestamp not found in filename: {f.name}"
@@ -296,9 +307,50 @@ def test_write_database_uses_env_var_fallback(tmp_path, monkeypatch):
         audio_result=None,
         work_dir=str(tmp_path),
         content_profile_name="Spor",
+        ts="010125-1200",
     )
 
-    assert (db_root / "Spor" / "clip").is_dir()
+    assert (db_root / "clip").is_dir()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DB-06b: _safe_path collision protection
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_write_database_collision_protection(tmp_path):
+    """DB-06b: _write_database uses _safe_path so existing files get _2 suffix."""
+    ts = "010125-1200"
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    report_txt = work_dir / f"clip_{ts}.txt"
+    report_txt.write_text("first run", encoding="utf-8")
+
+    db_root = tmp_path / "DB"
+    runner = PipelineRunner.__new__(PipelineRunner)
+    runner.config = {"database_enabled": True, "database_root": str(db_root)}
+    runner._log_messages = []
+    runner._log = lambda msg: None
+
+    _call = dict(
+        video_info={"filename": "clip.mp4"},
+        credits_data=_make_credits([]),
+        credits_raw=None,
+        ocr_lines=[],
+        stage_stats={},
+        audio_result=None,
+        work_dir=str(work_dir),
+        content_profile_name="FilmDizi",
+        ts=ts,
+    )
+
+    runner._write_database(**_call)
+    runner._write_database(**_call)
+
+    db_dir = db_root / "clip"
+    names = [f.name for f in db_dir.iterdir()]
+    # Both copies of report TXT should exist (original + _2 variant)
+    assert f"clip_{ts}.txt" in names
+    assert f"clip_{ts}_2.txt" in names
 
 
 # ─────────────────────────────────────────────────────────────────────────────
