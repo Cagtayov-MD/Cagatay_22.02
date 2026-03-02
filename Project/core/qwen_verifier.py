@@ -7,12 +7,19 @@ Amaç:
     (Ş→S, ğ→g, ü→u vb.) ve el yazısı font hatalarını yakalar.
 
 Kullanım:
-    verifier = QwenVerifier(model="qwen3-vl:8b", confidence_threshold=0.80)
+    verifier = QwenVerifier(model="qwen3-vl:8b", confidence_threshold=0.40)
     ocr_lines = verifier.verify(ocr_lines, log_cb=self._log)
 
 Gereksinim:
     - Ollama kurulu ve çalışıyor olmalı
     - qwen3-vl:8b modeli indirilmiş olmalı (ollama pull qwen3-vl:8b)
+
+Değişiklikler (Qwen3_ocr_test branch):
+    - DEFAULT_THRESHOLD: 0.80 → 0.40
+      El yazısı/kaligrafi fontlu eski film jeneriği frameleri için
+      PaddleOCR düşük confidence verse bile Qwen devreye girer.
+    - num_predict: 50 → 100 (el yazısı okuma için daha fazla token)
+    - REQUEST_TIMEOUT: 30 → 60 saniye
 """
 
 import base64
@@ -40,8 +47,8 @@ except ImportError:
 # ── Sabitler ──────────────────────────────────────────────────────
 OLLAMA_API_URL  = "http://localhost:11434/api/chat"
 DEFAULT_MODEL   = "qwen3-vl:8b"
-DEFAULT_THRESHOLD = 0.80   # Bu değerin altı şüpheli
-REQUEST_TIMEOUT = 30        # saniye
+DEFAULT_THRESHOLD = 0.40   # DEĞİŞTİRİLDİ: 0.80 → 0.40 (el yazısı font desteği)
+REQUEST_TIMEOUT = 60        # DEĞİŞTİRİLDİ: 30 → 60 saniye
 
 PROMPT_TEMPLATE = (
     "Bu görüntüde gördüğün Türkçe metni, özellikle kişi adlarını oku. "
@@ -53,6 +60,7 @@ PROMPT_TEMPLATE = (
 
 PROMPT_TEMPLATE_CROP = (
     "Bu kırpılmış görüntüde tam olarak ne yazıyor? "
+    "El yazısı veya kaligrafi font olabilir, dikkatlice oku. "
     "OCR şunu okudu: '{ocr_text}' "
     "Doğruysa aynısını yaz. Yanlışsa düzeltilmiş halini yaz. "
     "Sadece metin yaz, açıklama ekleme. Türkçe karakterleri (Ş,ş,Ğ,ğ,Ü,ü,Ö,ö,Ç,ç,İ,ı) doğru kullan."
@@ -120,16 +128,16 @@ class QwenVerifier:
             return ocr_lines
 
         # Çözünürlüğe göre gürültü threshold'u
-        noise_threshold = 0.60  # varsayılan
+        noise_threshold = 0.25  # DEĞİŞTİRİLDİ: 0.60 → 0.25 (el yazısı için daha toleranslı)
         if resolution:
             try:
                 # "384x288" veya "1920x1080" formatında
                 height = int(resolution.split("x")[-1])
                 if height <= 360:
-                    noise_threshold = 0.40
+                    noise_threshold = 0.15
                     log(f"  [Qwen] Düşük çözünürlük ({resolution}) — gürültü eşiği: {noise_threshold}")
                 elif height <= 480:
-                    noise_threshold = 0.50
+                    noise_threshold = 0.20
             except (ValueError, IndexError):
                 pass
 
@@ -285,7 +293,7 @@ class QwenVerifier:
                 "stream": False,
                 "options": {
                     "temperature": 0.0,   # deterministik
-                    "num_predict": 50,    # kısa cevap yeterli
+                    "num_predict": 100,   # DEĞİŞTİRİLDİ: 50 → 100 (el yazısı için)
                 }
             }
 
