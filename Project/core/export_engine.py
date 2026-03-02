@@ -3,6 +3,21 @@ import json, os, re
 from datetime import datetime
 from pathlib import Path
 
+
+def _safe_path(path: Path) -> Path:
+    """Dosya çakışması varsa _2, _3 ... ekleyerek güvenli bir yol döndür."""
+    if not path.exists():
+        return path
+    stem = path.stem
+    suffix = path.suffix
+    parent = path.parent
+    n = 2
+    while True:
+        candidate = parent / f"{stem}_{n}{suffix}"
+        if not candidate.exists():
+            return candidate
+        n += 1
+
 from config.runtime_paths import resolve_name_db_path
 
 try:
@@ -556,7 +571,8 @@ class ExportEngine:
     def generate(self, video_info, credits_data, ocr_lines, stage_stats,
                  profile, scope, first_min, last_min, keywords=None, logos=None,
                  content_profile_name: str | None = None,
-                 audio_result: dict | None = None):
+                 audio_result: dict | None = None,
+                 ts: str | None = None):
         total_sec = sum(s.get("duration_sec", 0) for s in stage_stats.values())
         dur = video_info.get("duration_seconds", 1)
 
@@ -620,10 +636,11 @@ class ExportEngine:
         }
 
         stem = Path(video_info.get("filename", "out")).stem
-        ts = datetime.now().strftime("%d%m%y-%H%M")
+        if ts is None:
+            ts = datetime.now().strftime("%d%m%y-%H%M")
         jp = self.out / f"{stem}_report.json"
-        tp = self.out / f"{stem}_{ts}.txt"
-        tr_p = self.out / f"{stem}_{ts}_transcript.txt"
+        tp = _safe_path(self.out / f"{stem}_{ts}.txt")
+        tr_p = _safe_path(self.out / f"{stem}-tscr_{ts}.txt")
 
         with open(jp, "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
