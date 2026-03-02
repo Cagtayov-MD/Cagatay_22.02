@@ -300,6 +300,39 @@ class PipelineRunner:
                 else:
                     self._log(f"\n[LLM] TMDB eşleşti — LLM filtresi atlanıyor")
 
+                # ══ [GOOGLE_VI] Akıllı tetik ════════════════════════════
+                # TMDB miss + düşük çözünürlük veya non-standard font ise Google VI çağır
+                vi_decision = self._decide_google_vi(
+                    tmdb_matched=tmdb_matched,
+                    resolution=info.get("resolution", ""),
+                    ocr_lines=ocr_lines,
+                    segment_duration_min=(first_min + last_min),
+                    cast_count=cdata.get("total_actors", 0),
+                )
+                if vi_decision.should_run:
+                    self._log(f"\n[GOOGLE_VI] {vi_decision.reason}")
+                    for trigger in vi_decision.triggers:
+                        self._log(f"  → {trigger}")
+                    vi_lines = self._run_google_vi(video_path, info, first_min, last_min)
+                    if vi_lines:
+                        try:
+                            from core.google_video_intelligence import GoogleVITextEngine
+                            vi_engine = GoogleVITextEngine(self.config, log_cb=self._log)
+                            ocr_lines = vi_engine.merge_with_paddle(ocr_lines, vi_lines)
+                        except Exception as _e:
+                            self._log(f"  [GOOGLE_VI] Merge hatası: {_e}")
+                        # VI sonrası tekrar parse et
+                        parser = CreditsParser(turkish_name_db=self._name_db)
+                        parsed = parser.parse(ocr_lines, layout_pairs=layout_pairs)
+                        cdata = parser.to_report_dict(parsed)
+                        self._log(
+                            f"  [GOOGLE_VI] Tekrar parse: "
+                            f"Oyuncu:{cdata['total_actors']} "
+                            f"Ekip:{cdata['total_crew']}"
+                        )
+                else:
+                    self._log(f"\n[GOOGLE_VI] {vi_decision.reason}")
+
             else:
                 for stage_name in ("FRAME_EXTRACT", "TEXT_FILTER", "OCR_CREDITS",
                                    "CREDITS_PARSE", "TMDB_VERIFY"):
@@ -505,6 +538,118 @@ class PipelineRunner:
             log_cb=self._log,
         )
         return verifier.verify_credits(cdata)
+
+    # ──────────────────────────────────────────────────────────────
+    # GOOGLE VI
+    # ──────────────────────────────────────────────────────────────
+    def _decide_google_vi(
+        self,
+        tmdb_matched: bool,
+        resolution: str,
+        ocr_lines: list,
+        segment_duration_min: float,
+        cast_count: int = 0,
+    ):
+        """GoogleVITextEngine.decide_after_tmdb() çağrısını lazy import ile sarmala."""
+        try:
+            from core.google_video_intelligence import GoogleVITextEngine, GVIDecision
+        except ImportError:
+            from dataclasses import dataclass, field
+
+            @dataclass
+            class GVIDecision:
+                should_run: bool
+                reason: str
+                triggers: list = field(default_factory=list)
+
+            return GVIDecision(False, "google_vi modülü yok — VI atlanıyor")
+
+        try:
+            vi_engine = GoogleVITextEngine(self.config, log_cb=self._log)
+
+            # Font tipini bbox geometrisinden tahmin et
+            font_type = "unknown"
+            try:
+                from core.ocr_engine import OCREngine
+                frame_bboxes = []
+                for line in ocr_lines:
+                    fp = (line.get("frame_path", "") if isinstance(line, dict)
+                          else getattr(line, "frame_path", ""))
+                    bbox = (line.get("bbox", []) if isinstance(line, dict)
+                            else getattr(line, "bbox", []))
+                    if fp and bbox:
+                        frame_bboxes.append((fp, [bbox]))
+                if frame_bboxes:
+                    font_type = OCREngine.estimate_font_type(frame_bboxes)
+            except Exception as fe:
+                self._log(f"  [GOOGLE_VI] Font tahmin hatası: {fe}")
+
+            # Conf ortalaması
+            ocr_avg_conf = 0.0
+            if ocr_lines:
+                confs = []
+                for line in ocr_lines:
+                    c = (line.get("avg_confidence", line.get("confidence", 0.0))
+                         if isinstance(line, dict)
+                         else getattr(line, "avg_confidence",
+                                      getattr(line, "confidence", 0.0)))
+                    confs.append(float(c))
+                if confs:
+                    ocr_avg_conf = sum(confs) / len(confs)
+
+            return vi_engine.decide_after_tmdb(
+                tmdb_matched=tmdb_matched,
+                resolution=resolution,
+                font_type=font_type,
+                segment_duration_min=segment_duration_min,
+                ocr_avg_conf=ocr_avg_conf,
+                total_ocr_lines=len(ocr_lines),
+                cast_count=cast_count,
+            )
+        except Exception as e:
+            self._log(f"  [GOOGLE_VI] Karar hatası: {e}")
+            try:
+                from core.google_video_intelligence import GVIDecision
+                return GVIDecision(False, f"VI karar hatası: {e}")
+            except ImportError:
+                pass
+            from dataclasses import dataclass, field
+
+            @dataclass
+            class _GVIDecision:
+                should_run: bool
+                reason: str
+                triggers: list = field(default_factory=list)
+
+            return _GVIDecision(False, f"VI karar hatası: {e}")
+
+    def _run_google_vi(
+        self,
+        video_path: str,
+        info: dict,
+        first_min: float,
+        last_min: float,
+    ) -> list:
+        """Google VI'yı entry + exit segmentleriyle çalıştır."""
+        try:
+            from core.google_video_intelligence import GoogleVITextEngine
+        except ImportError:
+            self._log("  [GOOGLE_VI] google_video_intelligence modülü yok — atlanıyor")
+            return []
+
+        try:
+            vi_engine = GoogleVITextEngine(self.config, log_cb=self._log)
+            duration = float(info.get("duration_seconds", 0))
+            entry_start = 0.0
+            entry_end = min(first_min * 60.0, duration)
+            exit_end = duration
+            exit_start = max(0.0, duration - last_min * 60.0)
+            return vi_engine.process_segments(
+                video_path, entry_start, entry_end, exit_start, exit_end
+            )
+        except Exception as e:
+            self._log(f"  [GOOGLE_VI] İşlem hatası: {e}")
+            return []
 
     # ──────────────────────────────────────────────────────────────
     # YARDIMCI
