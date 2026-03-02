@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "video-analiz-sistemi",
+  "private_key_id": "a59996f047885c6937fbd08491d6968853a5ad18",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDTxpYXSm+gzpSO\nkwthRJgqNY6nUb5DdNWju4negPIcUm/CfVelJm8ChKoFpI01met9qEcIXGkjo9GE\nTLjEyve5cM6xa5lE8lc2AVFefbOQWH7Yj4j/G6vghzolVHgHjz+C1SYmjoWJwypL\nREOW15I18WYoykNpobJT7Sl8tJzD19olMIudd35QjrliUTnr/VW3elF57hJswz6E\nDje0OHB2mRmpTm7sgCgGDYA5KiG+HxnnrrhG1s3tNiHUoIIzqv/iroc6ixnFaU1r\neIOY+7+ByGIrh124xR3Xy8gf6Xs9RATqCSZv8Hq7NXj7VEV+15XvswlADK2/tGIa\ngXLV1tNhAgMBAAECggEAB/BzYDBR8thzxiGPRRL+KmJDdL8yL74MTqer9uu6HTje\nSDoMjwbbwAorA+xOlUJt4JIuXDWiBRbx4UYYDNv4FrC64E4NRayue3o9VkUboM8f\nLZgPSyhlfz91PQDc7BmhHahHK8he4L0wk3hIbrn/rlExuC3sV47bNt1sAf5qZxwZ\nwE3cs9+we0vC5xAnq3cIbNCgNYqHmg+HqvGIfC7Fst6qx056OG4SlBtB/AMz55sQ\nSq3N3lTYI8fD7lyh+lgiDGNynp010EcD8kFQmlC3W8jKib5i1B3/fhH98PHqXpjU\nFigy/nEG01KrwJd6Bs8GutWyECs2sX21bHXZFVTEMQKBgQD4GBMSpfeqF2jgXDPy\n6Gcheo0T4W3tfAZLDdULfbYuPdzEf2NQWByLipYLms7D/Cz6M8umbKcnW6T58TxH\nNvcfRS9WYthN878eq0XZsLtx7qKDyDAYJohiw4APWw2LUzkqrG5OD7pM5SP7R7is\n/DLmPBcsAUrVtKlPbAEhIDr8OQKBgQDahjsScszRjyCZlA68NoIzhkQ3JOw3Cyw1\nSkiwHF0XLsXeVNQ8rQA3Zw16prC+7moiF13Q4YBGaLtyJiydhhuW3B5rEqOHxZiM\n3QP5Cff5H8mqVrTXMWfLqlJfKJtNl+7W6GvUHX1TVhTr8HOZLNvWJ9RZUlEwJTBv\nnX9rl5BgaQKBgQDOzCJ51OYQXdsJyVF0FMyCV4jpHWtoHY2RWkJPhcYp3V78W8MI\n4alJl4divPPE4ZsMI8iJPOBIKlfmD3NTWTm8UwsWUuZCc/7HLbTXtD1KxsOoXWHZ\nf6UHzjYclqU/kWuBaqG3Z9y+4/GOL0Z8yuwShdw6zgj3AdRvY3O9jQQd4QKBgAif\nZ1FRClfyh9zHhNVUaUrTL3nlkRSS8kmgBsI8PEgf5lrhigZi5TFKdbOzRCIkkjeK\nKH+HhmJA27SjYPtOQWRwhxq+f4lp+J0GU5POGuTPpkt8ZGJhZrEYpWtv1MD5D8mX\nHjoed8WEDgtJT6ZpqLsIk056+w0lSoX89vwt3NqRAoGBAMQj6oo3ovDUelshRhUE\njhwNbyja58CnEO4J+SIfYD4sBeqXTTDGqxhRstRr3gdv73X9bqp0Md4VXT5T9aQ9\nQ3ah2b6YGxgr0WaOJZ4WTzi47MYkfZpiulnahPzvG67sJLVzt0giTqVMaRqWQtCo\n2e7vrWF/vaSV2L8CSZp2IzWb\n-----END PRIVATE KEY-----\n",
+  "client_email": "cagbot@video-analiz-sistemi.iam.gserviceaccount.com",
+  "client_id": "118412141844074924662",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/cagbot%40video-analiz-sistemi.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
