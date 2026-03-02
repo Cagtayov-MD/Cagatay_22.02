@@ -3,6 +3,13 @@
 import os, sys
 from pathlib import Path
 
+# .env must be loaded BEFORE any config imports (runtime_paths reads env vars at import time)
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv()
+except Exception:
+    pass
+
 if os.environ.get("HEADLESS", "0") == "1":
     # UTF-8 safe console (best-effort)
     try:
@@ -49,13 +56,7 @@ if os.environ.get("HEADLESS", "0") == "1":
 main.py — Arsiv Decode giris noktasi.
 Her zaman PySide6 UI ile baslar. Lite mod yok.
 """
-try:
-    from dotenv import load_dotenv
-except Exception:
-    def load_dotenv(*_args, **_kwargs):
-        return False
-
-load_dotenv()  # .env dosyasını yükle — diğer her şeyden önce
+# .env already loaded at module top (before HEADLESS block)
 
 import sys
 import os
