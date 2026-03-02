@@ -125,7 +125,6 @@ class AudioBridge:
                 encoding="utf-8",
                 errors="replace",
                 timeout=self._timeout,
-                cwd=str(Path(self._worker_script).parent.parent),
             )
 
             # stdout'u logla (pipeline progress mesajları)
