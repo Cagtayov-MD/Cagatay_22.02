@@ -748,8 +748,13 @@ class PipelineRunner:
         db_dir = Path(db_root) / (content_profile_name or "FilmDizi") / stem
         db_dir.mkdir(parents=True, exist_ok=True)
 
-        # 1. TXT raporu kopyala
-        src_txt = Path(work_dir) / f"{stem}.txt"
+        # 1. TXT raporu kopyala (timestamped filename önce, fallback düz isim)
+        _txt_candidates = [
+            p for p in Path(work_dir).glob(f"{stem}_[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9].txt")
+            if "_transcript" not in p.name
+        ]
+        src_txt = (max(_txt_candidates, key=lambda p: p.stat().st_mtime)
+                   if _txt_candidates else Path(work_dir) / f"{stem}.txt")
         if src_txt.is_file():
             shutil.copy2(src_txt, db_dir / f"{stem}_{ts}.txt")
 

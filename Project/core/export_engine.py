@@ -620,9 +620,10 @@ class ExportEngine:
         }
 
         stem = Path(video_info.get("filename", "out")).stem
+        ts = datetime.now().strftime("%d%m%y-%H%M")
         jp = self.out / f"{stem}_report.json"
-        tp = self.out / f"{stem}.txt"
-        tr_p = self.out / f"{stem}-transcript.txt"
+        tp = self.out / f"{stem}_{ts}.txt"
+        tr_p = self.out / f"{stem}_{ts}_transcript.txt"
 
         with open(jp, "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
