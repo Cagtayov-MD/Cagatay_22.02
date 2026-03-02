@@ -696,7 +696,7 @@ class ExportEngine:
                 ac = c.get("actor_name") or ""
                 score = c.get("confidence")
                 score_str = f"[{score:.2f}]" if score is not None else ""
-                icon = "✓" if (c.get("is_verified_name") or c.get("is_llm_verified")) else "?"
+                icon = self._verification_icon(c)
                 if ch:
                     L.append(f"  {icon} {ch:22s}  --  {ac:<22s}  {score_str}")
                 else:
@@ -803,6 +803,22 @@ class ExportEngine:
     # Keep _write_txt as an alias for backward compatibility
     def _write_txt(self, r, path):
         self._write_report(r, path)
+
+    @staticmethod
+    def _verification_icon(cast_entry: dict) -> str:
+        """Doğrulama kaynağına göre ikon döndür."""
+        if cast_entry.get("frame") == "tmdb":
+            return "◆"  # TMDB doğrulanmış
+        method = cast_entry.get("match_method", "")
+        if method == "exact_db":
+            return "✓"
+        if method in ("fuzzy", "phonetic", "parts", "hardcoded"):
+            return "~"
+        if cast_entry.get("is_llm_verified"):
+            return "L"  # LLM onaylı
+        if cast_entry.get("is_verified_name"):
+            return "✓"
+        return "?"
 
     @staticmethod
     def _director_names(credits: dict) -> list[str]:

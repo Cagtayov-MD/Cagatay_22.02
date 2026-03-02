@@ -37,6 +37,7 @@ Kullanım:
 
 from __future__ import annotations
 
+import itertools
 import re
 import sqlite3
 import unicodedata
@@ -55,6 +56,15 @@ except ImportError:
 # Büyük öncelik: hardcoded > DB > fuzzy
 # Özellikle OCR'ın sistematik hataları buraya girer (V→U, M→N vb.)
 # ─────────────────────────────────────────────────────────────────────────────
+# OCR'a özel fonetik karakter dönüşüm tablosu
+# Bu tablo OCR'ın sistematik karıştırmalarını (w↔n, q↔ğ) fonetik anahtar üretiminde kullanır.
+_OCR_PHONETIC_MAP: dict[str, str] = {
+    'w': 'n',   # OCR w↔n karışması (Camaw → Caman)
+    'W': 'N',
+    'q': 'g',   # OCR q↔ğ karışması
+    'Q': 'G',
+}
+
 _HARDCODED_FIXES: dict[str, str] = {
     'SEBNEM': 'Şebnem',
     'SONMEZ': 'Sönmez',
@@ -138,6 +148,29 @@ def _normalize_key(text: str) -> str:
     return ''.join(c for c in text if not unicodedata.combining(c))
 
 
+def _phonetic_key(text: str) -> str:
+    """
+    OCR fonetik anahtar üret.
+    _normalize_key'in genişletilmiş versiyonu:
+    - Önce OCR karıştırma tablosunu uygula (w→n, q→g)
+    - Türkçe→ASCII normalize et
+    - Tekrarlanan harfleri tek yap (CAMAAN→CAMAN)
+    """
+    # OCR-spesifik karakter dönüşümleri
+    result = []
+    for ch in text:
+        result.append(_OCR_PHONETIC_MAP.get(ch, ch))
+    text = ''.join(result)
+    # Standart normalizasyon
+    key = _normalize_key(text)
+    # Tekrarlanan harfleri tek yap (CAMAAN → CAMAN)
+    deduped = []
+    for ch in key:
+        if not deduped or ch != deduped[-1]:
+            deduped.append(ch)
+    return ''.join(deduped)
+
+
 def _normalize_spaced(text: str) -> str:
     """Boşlukları koruyarak normalize et. Çok kelimeli isimler için."""
     parts = text.strip().split()
@@ -201,6 +234,8 @@ class TurkishNameDB:
         self._hardcoded: dict[str, str] = {
             _normalize_key(k): v for k, v in _HARDCODED_FIXES.items()
         }
+        # Fonetik index: phonetic_key → canonical_name
+        self._phonetic_index: dict[str, str] = {}
 
 
         # Backward-compatible alias: some callers use sql_path instead of db_path
@@ -236,6 +271,11 @@ class TurkishNameDB:
         self._first_names = [e.name for e in self._db_first.values()]
         self._surnames = [e.name for e in self._db_surname.values()]
         self._all_keys = set(self._db_first) | set(self._db_surname)
+        # Fonetik index'i oluştur: phonetic_key → canonical_name
+        for key, entry in itertools.chain(self._db_first.items(), self._db_surname.items()):
+            pkey = _phonetic_key(entry.name)
+            if pkey not in self._phonetic_index:
+                self._phonetic_index[pkey] = entry.name
 
 
     def _materialize_sqlite_from_sql(self, sql_path: Path, db_path: Path) -> None:
@@ -475,8 +515,48 @@ class TurkishNameDB:
             if changed:
                 return ' '.join(fixed), 0.9
 
-        # 4. Fuzzy
+        # 4. Fonetik match — OCR bozulma tablosu ile fonetik anahtar üret
+        pkey = _phonetic_key(ocr_text.replace(' ', ''))
+        if pkey in self._phonetic_index:
+            return self._phonetic_index[pkey], 0.88
+
+        # 5. Fuzzy
         return self._fuzzy_find(ocr_text, fuzzy_threshold)
+
+    def find_with_method(
+        self, ocr_text: str, fuzzy_threshold: int = 85
+    ) -> tuple[Optional[str], float, str]:
+        """
+        find() ile aynı ama eşleşme yöntemini de döndürür.
+
+        Returns:
+            (canonical_name, score, method)
+            method: "hardcoded" | "exact_db" | "parts" | "phonetic" | "fuzzy" | ""
+        """
+        if not ocr_text or not ocr_text.strip():
+            return None, 0.0, ""
+
+        key = _normalize_key(ocr_text.replace(' ', ''))
+
+        if key in self._hardcoded:
+            return self._hardcoded[key], 1.0, "hardcoded"
+
+        entry = self._db_first.get(key) or self._db_surname.get(key)
+        if entry:
+            return entry.name, 1.0, "exact_db"
+
+        parts = ocr_text.strip().split()
+        if len(parts) > 1:
+            fixed, changed = self._fix_parts(parts, fuzzy_threshold)
+            if changed:
+                return ' '.join(fixed), 0.9, "parts"
+
+        pkey = _phonetic_key(ocr_text.replace(' ', ''))
+        if pkey in self._phonetic_index:
+            return self._phonetic_index[pkey], 0.88, "phonetic"
+
+        canonical, score = self._fuzzy_find(ocr_text, fuzzy_threshold)
+        return canonical, score, "fuzzy" if canonical else ""
 
     def _fix_parts(
         self, parts: list[str], threshold: int
