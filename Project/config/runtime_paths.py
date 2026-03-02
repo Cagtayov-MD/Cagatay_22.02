@@ -15,7 +15,7 @@ from typing import Any
 # Cross-platform paths with environment variable fallbacks
 # If not set, use home directory based defaults
 _project_root = Path(__file__).resolve().parents[1]
-_home_source = Path.home() / "Source"
+_home_source = Path(os.environ.get("SOURCE_ROOT", r"F:\Source"))
 
 NAME_DB_DIR = Path(os.environ.get("NAME_DB_DIR", str(_home_source / "name_db")))
 NAME_DB_ROLE_ALIAS_TR = NAME_DB_DIR / "credits_role_alias_tr.json"
@@ -25,7 +25,7 @@ API_KEYS_JSON = Path(os.environ.get("API_KEYS_JSON", str(_project_root / "config
 GOOGLE_KEYS_JSON = Path(
     os.environ.get(
         "GOOGLE_KEYS_JSON",
-        str(_project_root / "config" / "video-analiz-sistemi-a59996f04788.json"),
+        str(_project_root / "config" / "google_api.json"),
     )
 )
 LOGOLAR_DIR = Path(os.environ.get("LOGOLAR_DIR", str(_home_source / "Logo")))
