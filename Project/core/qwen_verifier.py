@@ -65,6 +65,16 @@ PROMPT_TEMPLATE_CROP = (
     "Türkçe karakterleri (Ş,ş,Ğ,ğ,Ü,ü,Ö,ö,Ç,ç,İ,ı) doğru kullan."
 )
 
+BATCH_PROMPT_TEMPLATE = (
+    "Görüntüdeki Türkçe metinleri oku ve OCR hatalarını düzelt.\n"
+    "OCR şu satırları okudu:\n"
+    "{numbered_list}\n"
+    "Her satır için: doğruysa aynısını, yanlışsa düzeltilmişini yaz.\n"
+    "Sadece '1. metin', '2. metin', ... formatında cevap ver. "
+    "Başka açıklama ekleme.\n"
+    "Türkçe karakterleri (Ş,ş,Ğ,ğ,Ü,ü,Ö,ö,Ç,ç,İ,ı) doğru kullan."
+)
+
 # Yanıt temizleme: <think> blokları ve diğer kontrol token'ları
 _STRIP_PATTERNS = re.compile(
     r"<think>.*?</think>"          # Qwen3 / GLM thinking blocks
@@ -183,7 +193,8 @@ class QwenVerifier:
 
         log(f"  [VLM] {len(suspicious)}/{len(ocr_lines)} satır doğrulanıyor...")
 
-        fixed_count = 0
+        # Frame bazlı gruplama: aynı frame'den gelen satırlar → tek HTTP çağrısı
+        groups = {}
         for i in suspicious:
             line = ocr_lines[i]
             text = self._get_text(line)
@@ -194,14 +205,29 @@ class QwenVerifier:
             if not text or not frame_path or not Path(frame_path).exists():
                 continue
 
-            result = self._verify_single(text, frame_path, bbox=bbox,
-                                         confidence_before=conf)
-            if result and result.was_fixed:
-                self._set_text(ocr_lines[i], result.corrected)
-                # Orijinal metni sakla
-                self._set_original(ocr_lines[i], result.original)
-                fixed_count += 1
-                log(f"  [VLM] ✓ '{result.original}' → '{result.corrected}'")
+            if frame_path not in groups:
+                groups[frame_path] = []
+            groups[frame_path].append((i, text, conf, bbox))
+
+        log(f"  [VLM] {len(groups)} frame grubunda batch doğrulama")
+
+        fixed_count = 0
+        for frame_path, group in groups.items():
+            batch_results = self._verify_batch(group, frame_path)
+
+            for grp_idx, (i, text, conf, bbox) in enumerate(group):
+                result = batch_results.get(grp_idx)
+                if result is None:
+                    # Batch parse başarısız → tek tek doğrula
+                    result = self._verify_single(text, frame_path, bbox=bbox,
+                                                 confidence_before=conf)
+
+                if result and result.was_fixed:
+                    self._set_text(ocr_lines[i], result.corrected)
+                    # Orijinal metni sakla
+                    self._set_original(ocr_lines[i], result.original)
+                    fixed_count += 1
+                    log(f"  [VLM] ✓ '{result.original}' → '{result.corrected}'")
 
         log(f"  [VLM] {fixed_count} satır düzeltildi")
         return ocr_lines
@@ -276,6 +302,89 @@ class QwenVerifier:
             return False
 
         return True
+
+    def _verify_batch(self, group: list, frame_path: str) -> dict:
+        """
+        Aynı frame'deki satırları tek HTTP çağrısıyla doğrula.
+
+        group: [(i, text, conf, bbox), ...]  — grup öğeleri (grp_idx = enumerate index'i)
+        frame_path: frame dosya yolu (tüm grup için ortak)
+
+        Döndürür: {grp_idx: VerifyResult} — parse edilemeyen satırlar eksik kalır
+        (eksik satırlar için caller _verify_single fallback yapar).
+        Herhangi bir hata veya HTTP başarısızlığında boş dict döner.
+        """
+        try:
+            img_b64 = self._encode_image(frame_path)
+            if not img_b64:
+                return {}
+
+            numbered_list = "\n".join(
+                f'{idx + 1}. "{item[1]}"'
+                for idx, item in enumerate(group)
+            )
+            prompt = BATCH_PROMPT_TEMPLATE.format(numbered_list=numbered_list)
+
+            payload = {
+                "model": self.model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": prompt,
+                        "images": [img_b64],
+                    }
+                ],
+                "stream": False,
+                "options": {
+                    "temperature": 0.0,
+                    "num_predict": max(200, len(group) * 30),
+                },
+            }
+
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(
+                self.url,
+                data=data,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+
+            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
+                response = json.loads(resp.read())
+
+            content = (
+                response.get("message", {}).get("content", "").strip()
+            )
+            content = _STRIP_PATTERNS.sub("", content).strip()
+
+            if not content:
+                return {}
+
+            results = {}
+            for line in content.splitlines():
+                m = re.match(r"^\s*(\d+)[.)]\s*(.+)$", line.strip())
+                if not m:
+                    continue
+                grp_idx = int(m.group(1)) - 1
+                corrected = m.group(2).strip().strip("\"'")
+                corrected = _STRIP_PATTERNS.sub("", corrected).strip()
+                if not (0 <= grp_idx < len(group)):
+                    continue
+                _, original, conf, _ = group[grp_idx]
+                if not corrected or len(corrected) > len(original) * 3:
+                    continue
+                was_fixed = corrected.lower().strip() != original.lower().strip()
+                results[grp_idx] = VerifyResult(
+                    original=original,
+                    corrected=corrected,
+                    was_fixed=was_fixed,
+                    confidence_before=conf,
+                )
+
+            return results
+
+        except (urllib.error.URLError, Exception):
+            return {}
 
     def _verify_single(self, ocr_text: str, frame_path: str,
                        bbox: list = None,
