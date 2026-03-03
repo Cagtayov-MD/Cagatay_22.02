@@ -20,6 +20,7 @@ Gereksinim:
 """
 
 import base64
+import concurrent.futures
 import json
 import re
 import urllib.request
@@ -104,12 +105,14 @@ class QwenVerifier:
                  confidence_threshold: float = DEFAULT_THRESHOLD,
                  ollama_url: str = OLLAMA_API_URL,
                  enabled: bool = True,
-                 name_checker=None):
+                 name_checker=None,
+                 max_workers: int = 4):
         self.model = model
         self.threshold = confidence_threshold
         self.url = ollama_url
         self.enabled = enabled
         self.name_checker = name_checker
+        self.max_workers = max(1, int(max_workers))
         self._available = None  # lazy check
 
     def is_available(self) -> bool:
@@ -212,16 +215,26 @@ class QwenVerifier:
         log(f"  [VLM] {len(groups)} frame grubunda batch doğrulama")
 
         fixed_count = 0
-        for frame_path, group in groups.items():
-            batch_results = self._verify_batch(group, frame_path)
 
-            for grp_idx, (i, text, conf, bbox) in enumerate(group):
-                result = batch_results.get(grp_idx)
+        def _run_group(item):
+            fp, grp = item
+            br = self._verify_batch(grp, fp)
+            fixes = []
+            for gidx, (i, text, conf, bbox) in enumerate(grp):
+                result = br.get(gidx)
                 if result is None:
                     # Batch parse başarısız → tek tek doğrula
-                    result = self._verify_single(text, frame_path, bbox=bbox,
+                    result = self._verify_single(text, fp, bbox=bbox,
                                                  confidence_before=conf)
+                fixes.append((i, result))
+            return fixes
 
+        workers = min(self.max_workers, len(groups))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+            all_fixes = list(executor.map(_run_group, groups.items()))
+
+        for group_fixes in all_fixes:
+            for i, result in group_fixes:
                 if result and result.was_fixed:
                     self._set_text(ocr_lines[i], result.corrected)
                     # Orijinal metni sakla

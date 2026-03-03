@@ -124,11 +124,21 @@ class PipelineRunner:
         except (ValueError, TypeError) as e:
             self._log(f"  [INIT] Geçersiz vlm_threshold değeri, varsayılan 0.80 kullanılıyor: {e}")
             vlm_thresh = 0.80
+        # max_workers: vlm_max_workers (config) → VLM_MAX_WORKERS (env) → default 4
+        try:
+            vlm_max_workers = int(
+                self.config.get("vlm_max_workers") or
+                os.environ.get("VLM_MAX_WORKERS") or
+                4
+            )
+        except (ValueError, TypeError):
+            vlm_max_workers = 4
         self._qwen = QwenVerifier(
             model=vlm_model,
             confidence_threshold=vlm_thresh,
             enabled=vlm_enabled,
             name_checker=self._name_db.is_name,
+            max_workers=vlm_max_workers,
         )
 
         # LLMCastFilter config

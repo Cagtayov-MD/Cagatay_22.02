@@ -6,6 +6,8 @@ BATCH-02: Batch parse başarısız olunca _verify_single fallback çalışmalı
 BATCH-03: Şüpheli satır yoksa batch çağrısı yapılmamalı
 BATCH-04: Tek satırlık batch sonucu metin güncellenmeli
 BATCH-05: Batch düzeltmesi sonrası text_qwen_original kaydedilmeli
+BATCH-06: Çoklu frame grubu paralel işlenmeli (max_workers > 1)
+BATCH-07: max_workers=1 ile seri çalışma geri uyumluluk
 """
 
 import os
@@ -188,3 +190,91 @@ def test_batch_saves_text_qwen_original(monkeypatch):
     assert out[0].get("text_qwen_original") == "DYAYUCE", (
         "text_qwen_original orijinal metin olarak kaydedilmeli"
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# BATCH-06: Paralel işleme — max_workers > 1
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def test_parallel_groups_all_called(monkeypatch):
+    """BATCH-06: max_workers=4 ile tüm frame grupları eş zamanlı işlenmeli."""
+    import threading
+
+    verifier = QwenVerifier(enabled=True, confidence_threshold=0.80, max_workers=4)
+    monkeypatch.setattr(verifier, "is_available", lambda: True)
+
+    frame1 = __file__
+    frame2 = os.__file__
+    frame3 = os.path.__file__
+
+    # Barrier: 3 worker aynı anda bu noktaya ulaşmazsa BrokenBarrierError fırlatır.
+    # Bu, ThreadPoolExecutor'ın gerçekten 3 thread paralel başlattığını kanıtlar.
+    barrier = threading.Barrier(3, timeout=2)
+    called_frames = []
+    lock = threading.Lock()
+
+    def fake_batch(group, frame_path):
+        barrier.wait()  # Tüm 3 thread burada buluşmalı (concurrent kanıtı)
+        with lock:
+            called_frames.append(frame_path)
+        results = {}
+        for gidx, (i, text, conf, bbox) in enumerate(group):
+            corrected = text.title()
+            results[gidx] = VerifyResult(
+                original=text,
+                corrected=corrected,
+                was_fixed=(corrected != text),
+                confidence_before=conf,
+            )
+        return results
+
+    monkeypatch.setattr(verifier, "_verify_batch", fake_batch)
+
+    lines = [
+        _line("DYAYUCE", frame_path=frame1),
+        _line("HALUKK",  frame_path=frame2),
+        _line("VELII",   frame_path=frame3),
+    ]
+    out = verifier.verify(lines)
+
+    # Tüm gruplar çağrılmış olmalı
+    assert set(called_frames) == {frame1, frame2, frame3}, (
+        f"Tüm 3 frame grubu çağrılmalı, çağrılanlar: {called_frames}"
+    )
+    # Her satır düzeltilmiş olmalı
+    assert out[0]["text"] == "Dyayuce"
+    assert out[1]["text"] == "Halukk"
+    assert out[2]["text"] == "Velii"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# BATCH-07: max_workers=1 geri uyumluluk
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def test_max_workers_one_serial_compat(monkeypatch):
+    """BATCH-07: max_workers=1 ile sonuçlar seri çalışmayla aynı olmalı."""
+    verifier = QwenVerifier(enabled=True, confidence_threshold=0.80, max_workers=1)
+    monkeypatch.setattr(verifier, "is_available", lambda: True)
+
+    def fake_batch(group, frame_path):
+        results = {}
+        for gidx, (i, text, conf, bbox) in enumerate(group):
+            results[gidx] = VerifyResult(
+                original=text,
+                corrected="Fixed",
+                was_fixed=True,
+                confidence_before=conf,
+            )
+        return results
+
+    monkeypatch.setattr(verifier, "_verify_batch", fake_batch)
+
+    lines = [
+        _line("AABB", frame_path=__file__),
+        _line("CCDD", frame_path=os.__file__),
+    ]
+    out = verifier.verify(lines)
+
+    assert out[0]["text"] == "Fixed"
+    assert out[1]["text"] == "Fixed"
+    assert verifier.max_workers == 1
