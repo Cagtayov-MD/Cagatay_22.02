@@ -174,12 +174,12 @@ class LLMCastFilter:
         return approved
 
     def _is_namedb_verified(self, entry: dict) -> bool:
-        """actor_name'in NameDB korumasına uygun olup olmadığını güçlü kriterlerle kontrol et.
+        """actor_name'in NameDB korumasına alınıp alınmayacağını kontrol et.
 
-        Kurallar:
-        - En az 2 kelime olmalı (tek kelime isimleri koruma kapsamı dışı).
-        - Rol/görev anahtar kelimeleri içeriyorsa NameDB koruması devre dışı.
-        - Kelimelerin en az %80'i NameDB'de bulunmalı.
+        Kriterler (hepsi sağlanmalı):
+        - En az 2 kelimeli isim olmalı (tek kelimeler korunmaz)
+        - Kelimelerin en az %80'i NameDB'de bulunmalı
+        - Rol/görev kelimesi içeren girişler korunmaz
         """
         if not self.name_checker:
             return False
@@ -187,14 +187,15 @@ class LLMCastFilter:
         if not name:
             return False
         words = name.split()
-        # Tek kelimeli isimler korunmaz (örn. sadece "Ali")
+        # Tek kelimelik isimler korunmaz (örn. "Ali")
         if len(words) < 2:
             return False
-        # Rol/görev anahtar kelimesi içeriyorsa NameDB koruması devre dışı
+        # Rol/görev kelimesi içeriyorsa NameDB koruması devre dışı
         name_lower = name.lower()
         for role_kw in _ROLE_KEYWORDS:
             if role_kw in name_lower:
                 return False
+        # Kelimelerin en az %80'i NameDB'de olmalı
         # En az %80 kelime NameDB'de bulunmalı
         matched = sum(1 for w in words if self.name_checker(w))
         return matched / len(words) >= 0.8
@@ -249,8 +250,12 @@ class LLMCastFilter:
 
             response = self._query_ollama(prompt)
             if response is None:
-                # Ollama hatası → fail-safe: hiçbir satırı onaylama
-                self._log("  [LLM] Ollama yanıtı None — batch onaylanmadı (fail-safe).")
+                # Ollama hatası → fail-safe: hiçbir girişi onaylama;
+                # bu batch'teki tüm girişler is_llm_verified=False olarak işaretlenir.
+                self._log(
+                    "  [LLM] Ollama yanıt vermedi (None) — batch atlandı, "
+                    "hiçbir giriş onaylanmadı (fail-safe)."
+                )
                 llm_approved: set[int] = set()
             else:
                 llm_approved = self._parse_response(response, len(llm_batch))
