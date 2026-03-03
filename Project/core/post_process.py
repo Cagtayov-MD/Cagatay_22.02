@@ -1,5 +1,5 @@
 """
-post_process.py — [E] Ollama llama3.1:8b ile transcript post-process.
+post_process.py — [E] LLM (Gemini veya Ollama) ile transcript post-process.
 
 Girdi:  ham transcript segments
 Çıktı:  düzeltilmiş transcript segments
@@ -10,10 +10,10 @@ Girdi:  ham transcript segments
   - Düşük confidence → [anlaşılamadı] işaretle
   - Konuşmacı adlandırma: SPEAKER_00 → TMDB cast'tan isim (varsa)
 
-Ollama harici süreç olarak çalışır — VRAM yönetimi kendine ait.
+Varsayılan sağlayıcı: Gemini (LLM_PROVIDER=gemini).
+Geri dönüş: Ollama (LLM_PROVIDER=ollama).
 """
 
-import json
 import re
 import time
 import urllib.error
@@ -21,10 +21,11 @@ import urllib.parse
 import urllib.request
 
 from core._ollama_url import normalize_ollama_url
+import core.llm_provider as _llm
 
 
 class PostProcessStage:
-    """Ollama ile Türkçe transcript düzeltme + özet."""
+    """LLM (Gemini/Ollama) ile Türkçe transcript düzeltme + özet."""
 
     # Confidence eşikleri
     LOW_CONF_THRESHOLD = 0.40      # altında → [anlaşılamadı]
@@ -43,8 +44,9 @@ class PostProcessStage:
         Args:
             segments: TranscribeStage çıktısı (segments listesi)
             opts:
-                ollama_url: "http://localhost:11434" (default)
-                ollama_model: "llama3.1:8b" (default)
+                llm_provider: "gemini" veya "ollama" (default: LLM_PROVIDER env veya "gemini")
+                ollama_url: "http://localhost:11434" (default, Ollama sağlayıcı için)
+                ollama_model: "llama3.1:8b" (default, Ollama sağlayıcı için)
                 tmdb_cast: TMDB cast listesi (konuşmacı eşleştirme)
 
         Returns:
@@ -57,22 +59,36 @@ class PostProcessStage:
             }
         """
         t0 = time.time()
+        provider = opts.get("llm_provider") or _llm.get_provider()
         base_url = normalize_ollama_url(opts.get("ollama_url", "http://localhost:11434"))
-        model = opts.get("ollama_model", "llama3.1:8b")
+        model = opts.get("ollama_model") or None  # None → provider default
         tmdb_cast = opts.get("tmdb_cast", [])
 
-        # Validate URL format before any network call
-        if not self._validate_ollama_url(base_url):
-            self._log(f"  [PostProcess] Geçersiz ollama_url={base_url!r} — post-process atlanıyor")
-            processed = self._mark_low_confidence(segments) if segments else []
-            return {
-                "status": "skipped",
-                "segments": processed,
-                "corrections": 0,
-                "summary_tr": "",
-                "stage_time_sec": round(time.time() - t0, 2),
-                "error": "invalid_ollama_url",
-            }
+        # For Ollama provider: validate URL and check availability
+        if provider == "ollama":
+            if not self._validate_ollama_url(base_url):
+                self._log(f"  [PostProcess] Geçersiz ollama_url={base_url!r} — post-process atlanıyor")
+                processed = self._mark_low_confidence(segments) if segments else []
+                return {
+                    "status": "skipped",
+                    "segments": processed,
+                    "corrections": 0,
+                    "summary_tr": "",
+                    "stage_time_sec": round(time.time() - t0, 2),
+                    "error": "invalid_ollama_url",
+                }
+
+            if not self._check_ollama(base_url):
+                self._log("  [PostProcess] Ollama bağlantısı yok — düzeltme atlanıyor")
+                processed = self._mark_low_confidence(segments) if segments else []
+                return {
+                    "status": "partial",
+                    "segments": processed,
+                    "corrections": 0,
+                    "summary_tr": "",
+                    "stage_time_sec": round(time.time() - t0, 2),
+                    "error": "ollama_unavailable",
+                }
 
         if not segments:
             return {
@@ -81,20 +97,6 @@ class PostProcessStage:
                 "corrections": 0,
                 "summary_tr": "",
                 "stage_time_sec": 0.0,
-            }
-
-        # Ollama erişilebilir mi?
-        if not self._check_ollama(base_url):
-            self._log("  [PostProcess] Ollama bağlantısı yok — düzeltme atlanıyor")
-            # Düzeltme yapamıyoruz ama düşük confidence işaretleme yapabiliriz
-            processed = self._mark_low_confidence(segments)
-            return {
-                "status": "partial",
-                "segments": processed,
-                "corrections": 0,
-                "summary_tr": "",
-                "stage_time_sec": round(time.time() - t0, 2),
-                "error": "ollama_unavailable",
             }
 
         # ── Aşama 1: Düşük confidence işaretleme ──
@@ -110,13 +112,13 @@ class PostProcessStage:
         ]
 
         if to_fix:
-            self._log(f"  [PostProcess] {len(to_fix)} segment Ollama düzeltmesine gidiyor...")
+            self._log(f"  [PostProcess] {len(to_fix)} segment LLM düzeltmesine gidiyor...")
 
             for batch_start in range(0, len(to_fix), self.BATCH_SIZE):
                 batch = to_fix[batch_start:batch_start + self.BATCH_SIZE]
                 batch_texts = [s["text"] for _, s in batch]
                 fixed_texts = self._batch_fix_turkish(
-                    batch_texts, base_url, model
+                    batch_texts, provider, base_url, model
                 )
 
                 for (idx, seg), fixed in zip(batch, fixed_texts):
@@ -137,7 +139,7 @@ class PostProcessStage:
         if summarize_enabled:
             full_text = " ".join(s.get("text", "") for s in segments if s.get("text"))
             if len(full_text) > 100:
-                summary = self._summarize(full_text, base_url, model)
+                summary = self._summarize(full_text, provider, base_url, model)
                 if summary:
                     self._log(f"  [PostProcess] Özet üretildi ({len(summary)} karakter)")
         else:
@@ -162,9 +164,9 @@ class PostProcessStage:
                 seg["low_confidence"] = True
         return segments
 
-    def _batch_fix_turkish(self, texts: list, base_url: str,
-                            model: str) -> list:
-        """Birden fazla metni tek Ollama çağrısında düzelt."""
+    def _batch_fix_turkish(self, texts: list, provider: str,
+                            base_url: str, model: str | None) -> list:
+        """Birden fazla metni tek LLM çağrısında düzelt."""
         if not texts:
             return texts
 
@@ -180,7 +182,7 @@ class PostProcessStage:
             "açıklama ekleme."
         )
 
-        response = self._chat(prompt, system, base_url, model)
+        response = self._chat(prompt, system, provider, base_url, model)
         if not response:
             return texts
 
@@ -200,8 +202,8 @@ class PostProcessStage:
 
         return result
 
-    def _summarize(self, transcript: str, base_url: str,
-                    model: str) -> str:
+    def _summarize(self, transcript: str, provider: str,
+                   base_url: str, model: str | None) -> str:
         """5-8 cümle Türkçe özet üret."""
         system = (
             "Sen bir film/dizi analistisın. "
@@ -211,7 +213,7 @@ class PostProcessStage:
         )
         return self._chat(
             f"Transcript:\n{transcript[:4000]}", system,
-            base_url, model
+            provider, base_url, model
         )
 
     def _resolve_speakers(self, segments: list, tmdb_cast: list):
@@ -309,47 +311,19 @@ class PostProcessStage:
             return False
 
     def _chat(self, prompt: str, system: str,
-              base_url: str, model: str) -> str:
-        """Ollama API çağrısı."""
-        payload = {
-            "model": model,
-            "messages": [],
-            "stream": False,
-            "options": {"temperature": 0.1},
-        }
-        if system:
-            payload["messages"].append({"role": "system", "content": system})
-        payload["messages"].append({"role": "user", "content": prompt})
-
-        data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            f"{base_url}/api/chat",
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
+              provider: str, base_url: str, model: str | None) -> str:
+        """LLM API çağrısı (Gemini veya Ollama)."""
+        kwargs = {}
+        if provider == "ollama":
+            kwargs["ollama_url"] = base_url
+        if model:
+            kwargs["model"] = model
+        result = _llm.generate(
+            prompt,
+            system=system or None,
+            provider=provider,
+            log_cb=self._log,
+            timeout=30,
+            **kwargs,
         )
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                result = json.loads(resp.read().decode("utf-8"))
-                content = result.get("message", {}).get("content", "").strip()
-                # Thinking mode temizliği
-                content = re.sub(
-                    r"<think>.*?</think>", "", content, flags=re.DOTALL
-                ).strip()
-                return content
-        except urllib.error.HTTPError as e:
-            self._log(f"  [Ollama] HTTP hatası: {e.code} {e.reason}")
-            return ""
-        except urllib.error.URLError as e:
-            reason = e.reason
-            if hasattr(reason, "errno"):
-                self._log(f"  [Ollama] Bağlantı reddedildi (errno={reason.errno}): {reason}")
-            else:
-                self._log(f"  [Ollama] Bağlantı hatası: {reason}")
-            return ""
-        except TimeoutError:
-            self._log("  [Ollama] İstek zaman aşımı (30s)")
-            return ""
-        except Exception as e:
-            self._log(f"  [Ollama] İstek hatası: {e}")
-            return ""
+        return result or ""
