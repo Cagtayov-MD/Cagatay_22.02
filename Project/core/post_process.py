@@ -129,13 +129,17 @@ class PostProcessStage:
         if tmdb_cast:
             self._resolve_speakers(segments, tmdb_cast)
 
-        # ── Aşama 4: Özet üret ──
+        # ── Aşama 4: Özet üret (sadece açıkça istenirse) ──
         summary = ""
-        full_text = " ".join(s.get("text", "") for s in segments if s.get("text"))
-        if len(full_text) > 100:
-            summary = self._summarize(full_text, base_url, model)
-            if summary:
-                self._log(f"  [PostProcess] Özet üretildi ({len(summary)} karakter)")
+        summarize_enabled = opts.get("summarize_enabled", False)
+        if summarize_enabled:
+            full_text = " ".join(s.get("text", "") for s in segments if s.get("text"))
+            if len(full_text) > 100:
+                summary = self._summarize(full_text, base_url, model)
+                if summary:
+                    self._log(f"  [PostProcess] Özet üretildi ({len(summary)} karakter)")
+        else:
+            self._log("  [PostProcess] Özet üretimi atlandı (summarize_enabled=False)")
 
         elapsed = round(time.time() - t0, 2)
         return {
@@ -323,7 +327,7 @@ class PostProcessStage:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
+            with urllib.request.urlopen(req, timeout=30) as resp:
                 result = json.loads(resp.read().decode("utf-8"))
                 content = result.get("message", {}).get("content", "").strip()
                 # Thinking mode temizliği
@@ -342,7 +346,7 @@ class PostProcessStage:
                 self._log(f"  [Ollama] Bağlantı hatası: {reason}")
             return ""
         except TimeoutError:
-            self._log("  [Ollama] İstek zaman aşımı (120s)")
+            self._log("  [Ollama] İstek zaman aşımı (30s)")
             return ""
         except Exception as e:
             self._log(f"  [Ollama] İstek hatası: {e}")

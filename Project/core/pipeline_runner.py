@@ -10,6 +10,7 @@ v2.0 Değişiklikler:
 - TMDB: ID girmeden çalışır. film_adı + 1 oyuncu = %100 güven.
 """
 
+import concurrent.futures
 import copy
 import json
 import shutil
@@ -221,10 +222,16 @@ class PipelineRunner:
             self._log(f"  OK: {info['duration_human']} | "
                       f"{info['resolution']} | {info['fps']} FPS")
 
-            # Audio'yu erkenden başlat (paralel değil; sadece sıra)
+            # Audio başlatma: audio_only → seri, video+audio → arka planda paralel
             audio_result = None
-            if scope in ("audio_only", "video+audio"):
+            audio_future = None
+            executor = None
+            if scope == "audio_only":
                 audio_result = self._run_audio(video_path, work_dir)
+            elif scope == "video+audio":
+                executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                audio_future = executor.submit(self._run_audio, video_path, work_dir)
+                self._log("  [AUDIO] Ses analizi arka planda başlatıldı (paralel mod)")
 
             # Varsayılanlar (audio_only için)
             ocr_lines = []
@@ -443,6 +450,20 @@ class PipelineRunner:
                     reason = (f"ocr_enabled=false in {profile_name}"
                               if not ocr_enabled else "scope=audio_only")
                     self._stage(stage_name, 0.0, status="skipped", reason=reason)
+
+            # ── Audio sonucunu topla (paralel mod tamamlanmış olmalı) ──
+            if audio_future is not None:
+                try:
+                    self._log("  [AUDIO] Ses sonucu bekleniyor...")
+                    audio_result = audio_future.result()
+                    executor.shutdown(wait=False)
+                    if audio_result and audio_result.get("status") != "error":
+                        self._log("  [AUDIO] Ses analizi tamamlandı (OK)")
+                    else:
+                        self._log(f"  [AUDIO] Ses analizi sonuç: HATA")
+                except Exception as ae:
+                    self._log(f"  [AUDIO] HATA: {ae}")
+                    audio_result = {"status": "error", "error": str(ae)}
 
             # ══ EXPORT ════════════════════════════════════════════
             self._log(f"\n[EXPORT]")
