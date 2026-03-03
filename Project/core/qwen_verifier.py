@@ -108,12 +108,14 @@ class QwenVerifier:
                  confidence_threshold: float = DEFAULT_THRESHOLD,
                  ollama_url: str = OLLAMA_API_URL,
                  enabled: bool = True,
-                 name_checker=None):
+                 name_checker=None,
+                 max_workers: int = MAX_VLM_WORKERS):
         self.model = model
         self.threshold = confidence_threshold
         self.url = ollama_url
         self.enabled = enabled
         self.name_checker = name_checker
+        self.max_workers = max(1, int(max_workers))
         self._available = None  # lazy check
 
     def is_available(self) -> bool:
@@ -230,7 +232,7 @@ class QwenVerifier:
                 log(f"  [VLM] Batch {idx+1} tamamlandı ({elapsed:.1f}s)")
             return idx, frame_path, group, result
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_VLM_WORKERS) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = {
                 executor.submit(_process_group, (idx, item)): idx
                 for idx, item in enumerate(groups_list)

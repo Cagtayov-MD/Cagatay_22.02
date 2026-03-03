@@ -285,6 +285,28 @@ def _best_variant(variants: list[str]) -> str:
         return td*3 + wc*0.6 + len(t)*0.05 - bad*1.0
     return max(variants, key=score)
 
+
+def _words_fuzzy_match(a: str, b: str, threshold: int = 65) -> bool:
+    """
+    Kelime bazlı fuzzy eşleşme: iki ismi sözcük sözcük karşılaştır.
+    Her kelime çifti >= threshold ise True (aynı kişi).
+    Kelime sayıları farklıysa WRatio >= 75 fallback kullanılır.
+    rapidfuzz yoksa exact key karşılaştırmasına döner.
+    """
+    if not _HAS_RAPIDFUZZ:
+        return _norm_key(a) == _norm_key(b)
+    words_a = a.strip().split()
+    words_b = b.strip().split()
+    if len(words_a) != len(words_b):
+        # Kelime sayısı farklı → WRatio fallback
+        return _fuzz.WRatio(a, b) >= 75
+    if not words_a:
+        return False
+    for wa, wb in zip(words_a, words_b):
+        if _fuzz.ratio(wa, wb) < threshold:
+            return False
+    return True
+
 def _fuzzy_char_key(char: str) -> str:
     """
     Karakter ismi icin fuzzy gruplama key'i.
@@ -400,9 +422,9 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
         matched = False
         if _HAS_RAPIDFUZZ:
             for cluster in clusters:
-                # Mevcut cluster'daki varyantlarla karşılaştır
+                # Mevcut cluster'daki varyantlarla kelime bazlı karşılaştır
                 for existing in cluster["actor_variants"]:
-                    if _fuzz.WRatio(a, existing) >= 75:
+                    if _words_fuzzy_match(a, existing):
                         cluster["actor_variants"].append(a)
                         cluster["confidences"].append(conf)
                         cluster["verified"].append(verified)
@@ -505,7 +527,7 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
                 char_j = final[j].get("character_name", "")
                 if char_i != char_j:
                     continue
-                if a_i and a_j and _fuzz.WRatio(a_i, a_j) >= 75:
+                if a_i and a_j and _words_fuzzy_match(a_i, a_j):
                     # En yüksek confidence'lı olanı tut
                     if final[j].get("confidence", 0) > row_i.get("confidence", 0):
                         final[i] = final[j]
@@ -522,6 +544,7 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
     return final
 
 def _canonicalize_crew(crew: list[dict]) -> list[dict]:
+    # Phase 1: Exact-key dedup (existing behaviour)
     buckets: dict[tuple[str,str], dict] = {}
     for row in crew or []:
         name = (row.get("name") or "").strip()
@@ -531,17 +554,50 @@ def _canonicalize_crew(crew: list[dict]) -> list[dict]:
         key = (_norm_key(name), _norm_key(role))
         b = buckets.get(key)
         if not b:
-            buckets[key] = {"name_variants":[name] if name else [], "role_variants":[role] if role else [], "seen":1}
+            buckets[key] = {"name_variants":[name] if name else [], "role_variants":[role] if role else [], "seen":1, "conf": row.get("confidence", 0.5)}
         else:
             if name: b["name_variants"].append(name)
             if role: b["role_variants"].append(role)
             b["seen"] += 1
-    out=[]
-    for b in buckets.values():
-        name=_best_variant([v for v in b["name_variants"] if v])
-        role=_best_variant([v for v in b["role_variants"] if v])
+            if row.get("confidence", 0) > b["conf"]:
+                b["conf"] = row.get("confidence", 0)
+
+    # Phase 2: Fuzzy name clustering within same role group
+    if _HAS_RAPIDFUZZ:
+        # Group buckets by role key, then fuzzy-merge names within each role
+        role_groups: dict[str, list] = {}
+        for key, b in buckets.items():
+            role_key = key[1]
+            role_groups.setdefault(role_key, []).append(b)
+
+        merged_buckets = []
+        for role_key, group in role_groups.items():
+            clusters: list[dict] = []
+            for b in group:
+                best_name = _best_variant([v for v in b["name_variants"] if v])
+                merged = False
+                for cluster in clusters:
+                    cluster_name = _best_variant([v for v in cluster["name_variants"] if v])
+                    if best_name and cluster_name and _words_fuzzy_match(best_name, cluster_name):
+                        cluster["name_variants"].extend(b["name_variants"])
+                        cluster["role_variants"].extend(b["role_variants"])
+                        cluster["seen"] += b["seen"]
+                        if b["conf"] > cluster["conf"]:
+                            cluster["conf"] = b["conf"]
+                        merged = True
+                        break
+                if not merged:
+                    clusters.append(dict(b))
+            merged_buckets.extend(clusters)
+    else:
+        merged_buckets = list(buckets.values())
+
+    out = []
+    for b in merged_buckets:
+        name = _best_variant([v for v in b["name_variants"] if v])
+        role = _best_variant([v for v in b["role_variants"] if v])
         if name or role:
-            out.append({"name":name,"role":role,"job":role})
+            out.append({"name": name, "role": role, "job": role})
     out.sort(key=lambda r: (_norm_key(r.get("role","")), _norm_key(r.get("name",""))))
     return out
 

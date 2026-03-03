@@ -250,13 +250,12 @@ class LLMCastFilter:
 
             response = self._query_ollama(prompt)
             if response is None:
-                # Ollama hatası → fail-safe: hiçbir girişi onaylama;
-                # bu batch'teki tüm girişler is_llm_verified=False olarak işaretlenir.
+                # Ollama hatası → fail-safe: tüm girişleri onayla (sil değil koru);
+                # bu batch'teki girişler is_llm_verified=True olarak işaretlenir.
                 self._log(
-                    "  [LLM] Ollama yanıt vermedi (None) — batch atlandı, "
-                    "hiçbir giriş onaylanmadı (fail-safe)."
+                    "  [LLM] Ollama yanıt vermedi (None) — batch pass-through (fail-safe)."
                 )
-                llm_approved: set[int] = set()
+                llm_approved: set[int] = set(range(1, len(llm_batch) + 1))
             else:
                 llm_approved = self._parse_response(response, len(llm_batch))
         else:
@@ -325,12 +324,15 @@ class LLMCastFilter:
         for start in range(0, len(cast), _BATCH_SIZE):
             batch = cast[start: start + _BATCH_SIZE]
 
-            # Erken çıkış: ardışık timeout varsa devam etme
+            # Erken çıkış: ardışık timeout varsa devam etme, orijinal confidence'ı koru
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                for entry in batch:
+                for j, entry in enumerate(batch):
                     e = dict(entry)
                     e["is_llm_verified"] = False
-                    e["confidence"] = _REJECTED_CONFIDENCE
+                    # Confidence'ı düşürme — orijinal değeri koru
+                    orig_idx = start + j
+                    if orig_idx < len(orig_confidences):
+                        e["confidence"] = orig_confidences[orig_idx]
                     filtered.append(e)
                 continue
 

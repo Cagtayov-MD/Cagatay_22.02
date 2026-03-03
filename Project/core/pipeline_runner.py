@@ -129,6 +129,7 @@ class PipelineRunner:
             confidence_threshold=vlm_thresh,
             enabled=vlm_enabled,
             name_checker=self._name_db.is_name,
+            max_workers=max(1, int(self.config.get("vlm_max_workers", 4))),
         )
 
         # LLMCastFilter config
@@ -381,7 +382,10 @@ class PipelineRunner:
 
                 # ══ BLOK2: TMDB eşleşmedi → VLM ile derin okuma ══
                 if not tmdb_matched:
-                    if self._vlm_reader.enabled and self._vlm_reader.is_available():
+                    # TMDB miss → VLM'i zorla dene (model varsa), enabled flag'i geç
+                    vlm_was_enabled = self._vlm_reader.enabled
+                    self._vlm_reader.enabled = True
+                    if self._vlm_reader.is_available():
                         self._log("\n[BLOK2] TMDB eşleşmedi — VLM ile derin okuma başlatılıyor...")
                         vlm_t = time.time()
                         vlm_ocr_lines = []
@@ -411,6 +415,10 @@ class PipelineRunner:
                                 f"  [BLOK2] VLM okuma: {len(vlm_ocr_lines)} satır, "
                                 f"toplam: {len(ocr_lines)} satır ({time.time()-vlm_t:.1f}s)"
                             )
+                    else:
+                        self._log("  [BLOK2] VLM modeli mevcut değil — atlanıyor")
+                    # Config'deki ayarı bozma — önceki duruma geri dön
+                    self._vlm_reader.enabled = vlm_was_enabled
 
                 # ══ [LLM] LLM_CAST_FILTER ══════════════════════════
                 # Sadece TMDB eşleşmezse LLM devreye girsin

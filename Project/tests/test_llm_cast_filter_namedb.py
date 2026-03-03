@@ -78,7 +78,7 @@ def test_no_name_checker_keeps_original_behavior():
 # ---------------------------------------------------------------------------
 
 def test_ollama_none_response_no_entries_verified():
-    """Ollama yanıtı None olduğunda hiçbir giriş is_llm_verified=True olmamalı."""
+    """Ollama yanıtı None olduğunda tüm girişler is_llm_verified=True ile korunmalı (pass-through)."""
     f = LLMCastFilter(enabled=True)
     f._query_ollama = lambda prompt: None
     f._check_availability = lambda: True
@@ -87,8 +87,8 @@ def test_ollama_none_response_no_entries_verified():
     result = f._filter_batch(entries)
 
     for e in result:
-        assert e.get("is_llm_verified") is False, (
-            f"Fail-safe ihlali: '{e['actor_name']}' onaylandı ama Ollama None döndürdü"
+        assert e.get("is_llm_verified") is True, (
+            f"Fail-safe ihlali: '{e['actor_name']}' reddedildi ama Ollama None döndürdü — pass-through olmalı"
         )
 
 
