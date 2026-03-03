@@ -109,10 +109,12 @@ QLabel#pathInfo { font-size: 11px; color: #5a8a5a; font-style: italic; }
 # SİNYAL KÖPRÜSÜ (thread → UI)
 # ═══════════════════════════════════════════════════════════════════
 class PipelineSignals(QObject):
-    log_message    = Signal(str)
-    stage_update   = Signal(str, int)
-    pipeline_done  = Signal(dict)
-    pipeline_error = Signal(str)
+    log_message       = Signal(str)
+    stage_update      = Signal(str, int)
+    pipeline_done     = Signal(dict)
+    pipeline_error    = Signal(str)
+    queue_item_status = Signal(str, object, object, str)  # path, status, duration, error_msg
+    queue_running     = Signal(bool)
 
 
 class _VideoSkipped(Exception):
@@ -181,19 +183,30 @@ class MainWindow(QMainWindow):
         # ── QTabWidget ──────────────────────────────────────────────
         tabs = QTabWidget()
 
-        # Sekme 1: Ana UI
+        # Sekme 1: Analiz
         tab1 = QWidget()
         tab1_lay = QVBoxLayout(tab1)
         tab1_lay.setContentsMargins(0, 4, 0, 0)
         tab1_lay.setSpacing(6)
 
-        # Ana splitter: sol (kontrol + DAG), sağ (canlı log — tam yükseklik)
+        # Ana splitter: sol (kontrol + kuyruk + DAG), sağ (canlı log — tam yükseklik)
         mid = QSplitter(Qt.Horizontal)
         left_widget = QWidget()
         left_lay = QVBoxLayout(left_widget)
         left_lay.setContentsMargins(0, 0, 0, 0)
         left_lay.setSpacing(4)
         left_lay.addWidget(self._build_control_panel())
+
+        # Kuyruk widget'ı sol panele gömülüyor
+        self.queue_tab = QueueTab()
+        self.queue_tab.start_queue.connect(self._on_queue_start)
+        self.queue_tab.stop_queue.connect(self._on_queue_stop)
+        self.queue_tab.force_stop_queue.connect(self._on_queue_force_stop)
+        self.queue_tab.skip_current.connect(self._on_queue_skip)
+        self.signals.queue_item_status.connect(self.queue_tab.update_item_status)
+        self.signals.queue_running.connect(self.queue_tab.set_running)
+        left_lay.addWidget(self.queue_tab)
+
         left_lay.addWidget(self._build_dag_panel())
         mid.addWidget(left_widget)
         mid.addWidget(self._build_log_panel())
@@ -202,12 +215,8 @@ class MainWindow(QMainWindow):
 
         tabs.addTab(tab1, "Analiz")
 
-        # Sekme 2: Kuyruk
-        self.queue_tab = QueueTab()
-        self.queue_tab.start_queue.connect(self._on_queue_start)
-        self.queue_tab.stop_queue.connect(self._on_queue_stop)
-        self.queue_tab.skip_current.connect(self._on_queue_skip)
-        tabs.addTab(self.queue_tab, "Kuyruk")
+        # Sekme 2: Boş (ileride doldurulacak)
+        tabs.addTab(QWidget(), "Kuyruk")
 
         root.addWidget(tabs)
 
@@ -227,28 +236,6 @@ class MainWindow(QMainWindow):
         lay.addLayout(icerik_row)
         lay.addWidget(self._sep())
 
-        # Başlat
-        self.start_btn = QPushButton("  BASLAT")
-        self.start_btn.setObjectName("startBtn")
-        self.start_btn.clicked.connect(self._on_start)
-        lay.addWidget(self.start_btn)
-
-        # Durdur
-        row = QHBoxLayout()
-        self.stop_safe_btn = QPushButton("  Guvenli Dur")
-        self.stop_safe_btn.setObjectName("stopSafeBtn")
-        self.stop_safe_btn.setEnabled(False)
-        self.stop_safe_btn.clicked.connect(self._on_stop_safe)
-        row.addWidget(self.stop_safe_btn)
-        self.stop_hard_btn = QPushButton("  Zorla Dur")
-        self.stop_hard_btn.setObjectName("stopHardBtn")
-        self.stop_hard_btn.setEnabled(False)
-        self.stop_hard_btn.clicked.connect(self._on_stop_hard)
-        row.addWidget(self.stop_hard_btn)
-        lay.addLayout(row)
-
-        lay.addWidget(self._sep())
-
         # Çıktı Dizini
         r2 = QHBoxLayout()
         lbl2 = QLabel("Cikti Dizini:")
@@ -262,7 +249,6 @@ class MainWindow(QMainWindow):
         r2.addWidget(lbl2); r2.addWidget(self.output_edit); r2.addWidget(btn2)
         lay.addLayout(r2)
 
-        lay.addStretch()
         return grp
 
     def _build_log_panel(self):
@@ -443,68 +429,7 @@ class MainWindow(QMainWindow):
             self.dag_widget.set_profile(profile_name)
 
     def _on_start(self):
-        if not self.video_path or not os.path.isfile(self.video_path):
-            QMessageBox.information(self, "Bilgi",
-                "Tek video modu için video seçilmedi.\nKuyruk sekmesinden video ekleyip başlatın.")
-            return
-
-        self.running = True
-        self.start_btn.setEnabled(False)
-        self.stop_safe_btn.setEnabled(True)
-        self.stop_hard_btn.setEnabled(True)
-        self.log_text.clear()
-        for bar in self.stage_bars.values():
-            bar.setValue(0)
-
-        # ── FIX: Tüm UI değerleri ANA THREAD'de okunup dict'e kopyalanır ──
-        # Worker thread ASLA widget'a dokunmaz.
-        profile_name = self.content_combo.currentText()
-
-        # Profil JSON'dan ayarları oku
-        try:
-            from config.profile_loader import load_profile
-            content_profile = load_profile(profile_name)
-            if content_profile:
-                content_profile["_name"] = profile_name
-            else:
-                content_profile = None
-        except Exception:
-            content_profile = None
-
-        # Profil ayarlarını config'e merge et
-        base_cfg = dict(self.config.get("WORKSTATION", {}))
-        if content_profile:
-            for key in ("text_filter_threshold", "text_filter_mser_min_boxes",
-                        "text_filter_max_per_segment"):
-                if key in content_profile:
-                    base_cfg[key] = content_profile[key]
-
-        params = {
-            "video_path":      self.video_path,
-            "output_dir":      self.output_dir or os.path.dirname(self.video_path),
-            "config":          base_cfg,
-            "content_profile": content_profile,
-        }
-
-        self._log(f"Pipeline baslatiliyor: {Path(self.video_path).name}")
-        self._log(f"  Profil: {profile_name}")
-        self.pipeline_thread = threading.Thread(
-            target=self._run_pipeline, args=(params,), daemon=True)
-        self.pipeline_thread.start()
-
-        self._start_time = time.time()
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._update_elapsed)
-        self._timer.start(1000)
-
-    def _on_stop_safe(self):
-        self._log("Guvenli durdurma istegi gonderildi...")
-        self.running = False
-
-    def _on_stop_hard(self):
-        self._log("Zorla durduruldu!")
-        self.running = False
-        self._reset_ui()
+        self._on_queue_start()
 
     def _on_queue_start(self):
         """Kuyruk Başlat butonuna basıldığında."""
@@ -530,9 +455,13 @@ class MainWindow(QMainWindow):
         """Aktif videoyu atla — işlenmekte olan videoyu ERROR olarak işaretle ve sonrakine geç."""
         self._queue_skip_requested = True
 
+    def _on_queue_force_stop(self):
+        """Kuyruğu zorla durdur — mevcut videoyu da atla."""
+        self._queue_stop_requested = True
+        self._queue_skip_requested = True
+
     def _run_queue(self):
         """Kuyruktaki videoları sırayla işle (arka plan thread)."""
-        from PySide6.QtCore import QMetaObject, Qt as QtConst
         from utils.path_resolver import PathResolver
         from config.profile_loader import load_profile
 
@@ -546,16 +475,9 @@ class MainWindow(QMainWindow):
 
             video_path = item.path
 
-            # UI güncelle: İşleniyor (ana thread'de çalıştır)
+            # UI güncelle: İşleniyor (sinyal ile ana thread'e gönder)
             self.signals.log_message.emit(f"\n[KUYRUK] İşleniyor: {video_path}")
-            QMetaObject.invokeMethod(
-                self.queue_tab, "update_item_status",
-                QtConst.QueuedConnection,
-                video_path,
-                VideoStatus.PROCESSING,
-                None,
-                "",
-            )
+            self.signals.queue_item_status.emit(video_path, VideoStatus.PROCESSING, None, "")
 
             t_start = time.time()
             try:
@@ -618,14 +540,7 @@ class MainWindow(QMainWindow):
                 )
 
                 elapsed = time.time() - t_start
-                QMetaObject.invokeMethod(
-                    self.queue_tab, "update_item_status",
-                    QtConst.QueuedConnection,
-                    video_path,
-                    VideoStatus.DONE,
-                    elapsed,
-                    "",
-                )
+                self.signals.queue_item_status.emit(video_path, VideoStatus.DONE, elapsed, "")
                 self.signals.log_message.emit(
                     f"  [KUYRUK] ✅ Bitti: {Path(video_path).name} ({elapsed:.0f}s)")
 
@@ -641,22 +556,11 @@ class MainWindow(QMainWindow):
                     self.signals.log_message.emit(
                         f"  [KUYRUK] ❌ Hata: {Path(video_path).name} — {error_msg}\n"
                         f"{traceback.format_exc()}")
-                QMetaObject.invokeMethod(
-                    self.queue_tab, "update_item_status",
-                    QtConst.QueuedConnection,
-                    video_path,
-                    VideoStatus.ERROR,
-                    None,
-                    error_msg,
-                )
+                self.signals.queue_item_status.emit(video_path, VideoStatus.ERROR, None, error_msg)
 
         # Kuyruk bitti veya durduruldu
         self._queue_running = False
-        QMetaObject.invokeMethod(
-            self.queue_tab, "set_running",
-            QtConst.QueuedConnection,
-            False,
-        )
+        self.signals.queue_running.emit(False)
         self.signals.log_message.emit("\n[KUYRUK] Tamamlandı.")
 
     def _run_pipeline(self, params: dict):
@@ -734,9 +638,6 @@ class MainWindow(QMainWindow):
 
     def _reset_ui(self):
         self.running = False
-        self.start_btn.setEnabled(True)
-        self.stop_safe_btn.setEnabled(False)
-        self.stop_hard_btn.setEnabled(False)
         if hasattr(self, "_timer"):
             self._timer.stop()
 
