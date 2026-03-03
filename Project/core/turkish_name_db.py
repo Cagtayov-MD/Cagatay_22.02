@@ -574,11 +574,12 @@ class TurkishNameDB:
                 continue
             # DB
             entry = self._db_first.get(pk) or self._db_surname.get(pk)
-            if entry and entry.name != part:
+            if entry:
                 fixed.append(entry.name)
-                changed = True
+                if entry.name != part:
+                    changed = True
             else:
-                # Fuzzy
+                # Fuzzy — only when no exact DB match found
                 candidate, score = self._fuzzy_find(part, threshold)
                 if candidate and score >= threshold / 100.0:
                     fixed.append(candidate)

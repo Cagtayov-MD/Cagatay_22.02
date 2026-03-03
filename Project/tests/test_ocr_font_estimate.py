@@ -63,6 +63,9 @@ def test_single_bbox_returns_unknown():
 
 def test_imread_failure_returns_unknown(monkeypatch):
     """FONT-03: cv2.imread hata verirse 'unknown' döner (güvenli taraf)."""
+    if not hasattr(cv2, "imread"):
+        pytest.skip("cv2.imread mevcut değil (stub cv2) — test atlanıyor")
+
     def fake_imread(*args, **kwargs):
         raise RuntimeError("Simulated imread failure")
 
