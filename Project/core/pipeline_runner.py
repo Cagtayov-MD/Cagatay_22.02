@@ -32,6 +32,9 @@ from core.vlm_reader import VLMReader
 from utils.stats_logger import StatsLogger
 
 
+_BLOK2_FUZZY_THRESHOLD = 85  # BLOK2 dedup: iki satır bu eşiğin üzerindeyse aynı kabul edilir
+
+
 def _safe_path(path: Path) -> Path:
     """Dosya çakışması varsa _2, _3 ... ekleyerek güvenli bir yol döndür."""
     if not path.exists():
@@ -229,7 +232,10 @@ class PipelineRunner:
             cdata_raw = None
             tmdb_result = None
 
-            if scope != "audio_only":
+            # Profil bazlı OCR kontrolü
+            ocr_enabled = bool(content_profile.get("ocr_enabled", True)) if content_profile else True
+
+            if scope != "audio_only" and ocr_enabled:
                 # ══ [2/6] FRAME_EXTRACT ════════════════════════════
                 self._log(f"\n[2/6] FRAME_EXTRACT")
                 t = time.time()
@@ -343,6 +349,37 @@ class PipelineRunner:
                     else:
                         self._log(f"  --: {tmdb_result.reason}")
 
+                # ══ BLOK2: TMDB eşleşmedi → VLM ile derin okuma ══
+                if not tmdb_matched:
+                    if self._vlm_reader.is_available():
+                        self._log("\n[BLOK2] TMDB eşleşmedi — VLM ile derin okuma başlatılıyor...")
+                        vlm_t = time.time()
+                        vlm_ocr_lines = []
+                        for frame_info in candidates:
+                            result = self._vlm_reader.read_text_from_frame(
+                                frame_info["path"], lang="tr")
+                            if result and result.get("text"):
+                                for line_text in result["text"].splitlines():
+                                    line_text = line_text.strip()
+                                    if line_text:
+                                        vlm_ocr_lines.append({
+                                            "text": line_text,
+                                            "avg_confidence": 0.85,
+                                            "bbox": [],
+                                            "frame_path": frame_info["path"],
+                                            "source": "vlm_blok2",
+                                        })
+                        if vlm_ocr_lines:
+                            # VLM sonuçlarına _repair_turkish() uygulanmaz
+                            ocr_lines = self._merge_blok2_results(ocr_lines, vlm_ocr_lines)
+                            parser = CreditsParser(turkish_name_db=self._name_db)
+                            parsed = parser.parse(ocr_lines, layout_pairs=layout_pairs)
+                            cdata = parser.to_report_dict(parsed)
+                            self._log(
+                                f"  [BLOK2] VLM okuma: {len(vlm_ocr_lines)} satır, "
+                                f"toplam: {len(ocr_lines)} satır ({time.time()-vlm_t:.1f}s)"
+                            )
+
                 # ══ [LLM] LLM_CAST_FILTER ══════════════════════════
                 # Sadece TMDB eşleşmezse LLM devreye girsin
                 if not tmdb_matched:
@@ -397,10 +434,13 @@ class PipelineRunner:
                     self._log(f"\n[GOOGLE_VI] {vi_decision.reason}")
 
             else:
+                if not ocr_enabled:
+                    self._log(f"  [OCR] Profil '{profile_name}' — OCR devre dışı")
                 for stage_name in ("FRAME_EXTRACT", "TEXT_FILTER", "OCR_CREDITS",
                                    "CREDITS_PARSE", "TMDB_VERIFY"):
-                    self._stage(stage_name, 0.0, status="skipped",
-                                reason="scope=audio_only")
+                    reason = (f"ocr_enabled=false in {profile_name}"
+                              if not ocr_enabled else "scope=audio_only")
+                    self._stage(stage_name, 0.0, status="skipped", reason=reason)
 
             # ══ EXPORT ════════════════════════════════════════════
             self._log(f"\n[EXPORT]")
@@ -922,3 +962,52 @@ class PipelineRunner:
         if repaired:
             self._log(f"  [NameDB] {repaired} layout pair ismi onarıldı")
         return layout_pairs
+
+    def _merge_blok2_results(self, paddle_lines: list, vlm_lines: list) -> list:
+        """PaddleOCR ve VLM (BLOK2) sonuçlarını fuzzy dedup ile birleştir.
+
+        VLM satırları için _repair_turkish() çağrılmaz (VLM zaten doğru okur).
+        PaddleOCR'da zaten bulunan satırlarla fuzzy benzerlik kontrolü yapılır;
+        yeterince benzer olanlar eklenmez (tekrar önleme).
+        """
+        if not vlm_lines:
+            return paddle_lines
+
+        try:
+            from rapidfuzz.fuzz import ratio as _fuzz_ratio
+            _has_rapidfuzz = True
+        except ImportError:
+            _has_rapidfuzz = False
+
+        paddle_texts = [
+            (line.get("text", "") if isinstance(line, dict)
+             else getattr(line, "text", "")).strip().lower()
+            for line in paddle_lines
+        ]
+
+        merged = list(paddle_lines)
+        added = 0
+        for vlm_line in vlm_lines:
+            vtext = (vlm_line.get("text", "")).strip()
+            if not vtext:
+                continue
+            vlow = vtext.lower()
+            # Exact match check
+            if vlow in paddle_texts:
+                continue
+            # Fuzzy dedup (rapidfuzz mevcutsa)
+            if _has_rapidfuzz:
+                is_dup = any(
+                    _fuzz_ratio(vlow, pt) >= _BLOK2_FUZZY_THRESHOLD
+                    for pt in paddle_texts
+                    if pt
+                )
+                if is_dup:
+                    continue
+            merged.append(vlm_line)
+            paddle_texts.append(vlow)
+            added += 1
+
+        if added:
+            self._log(f"  [BLOK2] {added} benzersiz VLM satırı eklendi")
+        return merged

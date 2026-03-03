@@ -15,11 +15,23 @@ Her satırda bir metin var. Bu metinlerden hangileri gerçek kişi isimleridir?
 KATÎ KURALLAR (bu kurallar kesindir, istisna yoktur):
 1. 1-3 harfli metinler ASLA isim değildir (Alt, Cp, Co, JC, CA, TA, Lp, L0 vb.)
 2. Tamamen küçük harfle yazılmış metinler isim değildir (oulon, nibeu, etiol, algw vb.)
-3. Türkçe jenerik rol başlıkları isim DEĞİLDİR:
+3. Aşağıdaki kelimeler/ifadeler bir ROL BAŞLIĞIDIR — kişi adı DEĞİLDİR:
+   Yönetmen, Director, Regie, Réalisation, Realisation, Regia, Regia di,
+   Dirección, Direccion, Dirigido por, Dirigé par, Film by, A film by, Directed by,
+   Ein Film von, Réalisé par,
+   Senaryo, Screenplay, Drehbuch, Scénario, Scenario, Sceneggiatura, Guión, Written by,
+   Yapımcı, Producer, Produzent, Producteur, Executive producer,
+   Görüntü Yönetmeni, Director of Photography, DOP, D.O.P., Kamera, Camera,
+   Müzik, Music, Musik, Musique, Musica, Original Score,
+   Kurgu, Montaj, Editor, Editing, Schnitt, Montage,
+   Sanat Yönetmeni, Art Director, Production Designer,
+   Kostüm, Costume, Kostümdesign, Ses, Sound, Efekt, Effects, VFX, SFX,
+   Makyaj, Makeup, Işık, Lighting, Gaffer,
+   Prodüksiyon, Production manager, Line producer,
    sahneye koyan, yazanlar, yazaniar, çeviren, ceviren, cevirtli, cevirla,
-   yönetmen, yonetmen, yapımcı, yapimci, senarist, müzik, muzik,
-   görüntü yönetmeni, goruntu yonetmeni, kurgu, montaj, oyuncular,
-   oynayanlar, oynayan, basroller, başroller
+   yonetmen, yapimci, senarist, muzik,
+   goruntu yonetmeni, oyuncular, oynayanlar, oynayan, basroller, başroller
+   Bu kelimeleri kişi adı olarak İŞARETLEME.
 4. Anlamsız harf dizileri isim değildir (COEACE, OCOCAOR, ocococ, matCwuda, Ozoquty vb.)
 5. Noktalı/özel karakterli metinler isim değildir (t..Hacti, Pierot.Fali vb.)
 
@@ -40,10 +52,34 @@ ISIM: 12
 Emin olmadığın metinleri EKLEME. Sadece kesin isim olanları yaz."""
 
 _ROLE_KEYWORDS = {
+    # Türkçe
     "sahneye koyan", "sahneyekoyan", "yazanlar", "yazaniar", "yazantar",
     "çeviren", "ceviren", "cevirtli", "cevirla", "cevirtln",
     "yönetmen", "yonetmen", "yapımcı", "yapimci",
     "oyuncular", "oynayanlar", "oynayan", "olayaniar",
+    "senaryo", "senarist", "müzik", "muzik", "kurgu", "montaj",
+    "görüntü yönetmeni", "goruntu yonetmeni",
+    # İngilizce
+    "director", "directed by", "a film by", "film by",
+    "screenplay", "written by", "story by",
+    "producer", "executive producer", "line producer",
+    "director of photography", "dop", "d.o.p.",
+    "music", "original score", "editor", "editing",
+    "art director", "production designer", "costume design",
+    "sound", "sound design", "visual effects", "vfx",
+    # Almanca
+    "regie", "drehbuch", "produzent", "kamera", "schnitt",
+    "musik", "ausstattung", "kostümdesign",
+    # Fransızca
+    "réalisation", "realisation", "scénario", "scenario",
+    "producteur", "directeur de la photographie",
+    "montage", "musique", "décorateur",
+    # İtalyanca
+    "regia", "sceneggiatura", "produttore",
+    "direttore della fotografia", "montaggio", "musica",
+    # İspanyolca / Portekizce
+    "dirección", "direccion", "guión", "guion",
+    "productor", "director de fotografía",
 }
 
 _BATCH_SIZE = 50
