@@ -107,8 +107,12 @@ class QwenVerifier:
         if self._available is not None:
             return self._available
         try:
+            # Derive the base URL from self.url ("/api/chat" → base)
+            import urllib.parse as _up
+            parsed = _up.urlparse(self.url)
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
             req = urllib.request.Request(
-                "http://localhost:11434/api/tags",
+                f"{base_url}/api/tags",
                 method="GET"
             )
             with urllib.request.urlopen(req, timeout=5) as resp:

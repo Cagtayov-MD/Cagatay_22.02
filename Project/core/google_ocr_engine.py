@@ -59,16 +59,17 @@ class GoogleOCREngine:
 
         if self.mode == "document_text_detection":
             resp = self.client.document_text_detection(image=img)
+            if resp.error.message:
+                raise RuntimeError(resp.error.message)
             ann = resp.full_text_annotation
             text = ann.text if ann else ""
         else:
             # default: text_detection
             resp = self.client.text_detection(image=img)
+            if resp.error.message:
+                raise RuntimeError(resp.error.message)
             # text_annotations[0].description full text
             text = resp.text_annotations[0].description if resp.text_annotations else ""
-
-        if resp.error.message:
-            raise RuntimeError(resp.error.message)
 
         lines = []
         for ln in (text or "").splitlines():
