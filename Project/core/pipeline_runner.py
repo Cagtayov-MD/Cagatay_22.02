@@ -31,6 +31,7 @@ from core.qwen_verifier import QwenVerifier
 from core.llm_cast_filter import LLMCastFilter
 from core.vlm_reader import VLMReader
 from utils.stats_logger import StatsLogger
+import core.llm_provider as _llm_prov
 
 
 _BLOK2_FUZZY_THRESHOLD = 85  # BLOK2 dedup: iki satır bu eşiğin üzerindeyse aynı kabul edilir
@@ -134,14 +135,15 @@ class PipelineRunner:
         # LLMCastFilter config
         self._llm_filter_enabled = bool(self.config.get("llm_cast_filter", True))
 
-        # VLMReader (VLM-as-OCR) — off by default
-        vlm_ocr_enabled = bool(
+        # VLMReader — BLOK2 deep read uses the same vlm_enabled flag as QwenVerifier.
+        # Separate flag for optional BLOK1 VLM-as-OCR augmentation (off by default).
+        self._vlm_ocr_augment_enabled = bool(
             self.config.get("vlm_ocr_enabled",
             self.config.get("use_vlm_for_ocr", False))
         )
         self._vlm_reader = VLMReader(
             model=vlm_model,
-            enabled=vlm_ocr_enabled,
+            enabled=vlm_enabled,
         )
 
     def set_log_callback(self, cb):
@@ -293,8 +295,8 @@ class PipelineRunner:
                 ocr_lines = self._repair_turkish(ocr_lines)
                 layout_pairs = self._repair_layout_pairs(layout_pairs)
 
-                # Optional VLM-as-OCR fallback (off by default)
-                if self._vlm_reader.enabled and self._vlm_reader.is_available():
+                # Optional VLM-as-OCR augmentation (off by default, controlled separately)
+                if self._vlm_ocr_augment_enabled and self._vlm_reader.is_available():
                     vlm_r_t = time.time()
                     ocr_lines = self._vlm_reader.augment_ocr_lines(
                         ocr_lines, candidates, log_cb=self._log)
@@ -417,9 +419,15 @@ class PipelineRunner:
                 if not tmdb_matched:
                     self._log(f"\n[LLM] Cast Filtreleme (TMDB eşleşmedi)")
                     t = time.time()
+                    _active_provider = _llm_prov.get_provider()
+                    if _active_provider == "gemini":
+                        _llm_model = self.config.get("llm_filter_model") or None
+                    else:
+                        _llm_model = (self.config.get("llm_filter_model") or
+                                      self.config.get("ollama_model", "qwen2.5vl:7b"))
                     llm_filter = LLMCastFilter(
                         ollama_url=self.config.get("ollama_url", "http://localhost:11434"),
-                        model=self.config.get("llm_filter_model") or self.config.get("ollama_model", "qwen2.5vl:7b"),
+                        model=_llm_model,
                         enabled=self._llm_filter_enabled,
                         log_cb=self._log,
                         name_checker=self._name_db.is_name,

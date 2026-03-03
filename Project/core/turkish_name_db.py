@@ -327,6 +327,20 @@ class TurkishNameDB:
             con.close()
         except Exception as e:
             self._log(f"  [NameDB] SQLite yükleme hatası: {e}")
+            # Recovery: if the names table is missing, try rebuilding from a sibling .sql seed
+            if "no such table" in str(e).lower():
+                sql_seed = Path(db_path).with_suffix(".sql")
+                if sql_seed.is_file():
+                    self._log(f"  [NameDB] Eksik tablo — SQL seed'den yeniden oluşturuluyor: {sql_seed}")
+                    try:
+                        db_file = Path(db_path)
+                        if db_file.exists():
+                            db_file.unlink()
+                        self._materialize_sqlite_from_sql(sql_seed, db_file)
+                        # Retry the load after rebuilding
+                        return self._load_sqlite(db_path)
+                    except Exception as rebuild_err:
+                        self._log(f"  [NameDB] Yeniden oluşturma başarısız: {rebuild_err}")
         return n_first, n_sur
 
     # ─────────────────────────────────────────────────────────────────────

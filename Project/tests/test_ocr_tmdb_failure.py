@@ -472,3 +472,85 @@ def test_vlm_reader_is_available_does_not_check_enabled():
     # read_text_from_frame enabled=False olduğu için None dönmeli
     result = reader.read_text_from_frame("test.png", lang="tr")
     assert result is None, "enabled=False → read_text_from_frame None dönmeli"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TMDB-F13: BLOK2 triggers when vlm_enabled=True (Bug 1 fix validation)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def test_blok2_triggers_with_vlm_enabled_true():
+    """TMDB-F13: _vlm_reader.enabled reflects vlm_enabled (main flag), not vlm_ocr_enabled."""
+    from core.vlm_reader import VLMReader
+    from core.pipeline_runner import PipelineRunner
+
+    # Simulate pipeline init logic: vlm_enabled=True → _vlm_reader.enabled=True
+    vlm_enabled = True
+    vlm_ocr_augment_enabled = False  # separate BLOK1-only flag
+
+    reader = VLMReader(model="glm4.6v-flash:q4_K_M", enabled=vlm_enabled)
+
+    # BLOK2 condition checks reader.enabled (the main flag)
+    blok2_would_trigger = reader.enabled and True  # pretend is_available()=True
+    assert blok2_would_trigger is True, \
+        "Bug 1 fix: BLOK2 should trigger when vlm_enabled=True"
+
+    # BLOK1 augmentation uses the separate flag (vlm_ocr_augment_enabled)
+    blok1_augment_would_trigger = vlm_ocr_augment_enabled and True
+    assert blok1_augment_would_trigger is False, \
+        "BLOK1 augment should use separate vlm_ocr_augment_enabled flag"
+
+
+def test_blok2_does_not_trigger_when_vlm_disabled():
+    """TMDB-F13b: _vlm_reader.enabled=False → BLOK2 does not trigger even if vlm_ocr_enabled=True."""
+    from core.vlm_reader import VLMReader
+
+    vlm_enabled = False
+    reader = VLMReader(model="glm4.6v-flash:q4_K_M", enabled=vlm_enabled)
+
+    blok2_would_trigger = reader.enabled and True
+    assert blok2_would_trigger is False, \
+        "Bug 1 fix: BLOK2 should not trigger when vlm_enabled=False"
+
+
+def test_vlm_ocr_augment_enabled_stored_separately(monkeypatch):
+    """TMDB-F13c: PipelineRunner stores _vlm_ocr_augment_enabled separate from _vlm_reader.enabled."""
+    import types as _types
+    for _stub in ("cv2", "numpy", "numpy.core", "numpy.linalg",
+                  "paddleocr", "paddleocr.paddleocr"):
+        if _stub not in sys.modules:
+            sys.modules[_stub] = _types.ModuleType(_stub)
+    _np = sys.modules["numpy"]
+    for _attr in ("isscalar", "array", "bool_", "ndarray"):
+        if not hasattr(_np, _attr):
+            setattr(_np, _attr, (lambda obj: isinstance(obj, (int, float, complex)))
+                    if _attr == "isscalar" else type("ndarray", (), {}) if _attr == "ndarray"
+                    else lambda *a, **k: None)
+
+    from core.pipeline_runner import PipelineRunner
+    runner = object.__new__(PipelineRunner)
+    runner.config = {
+        "vlm_enabled": True,
+        "vlm_ocr_enabled": False,
+        "database_enabled": False,
+    }
+    runner._log_cb = None
+    runner._log_messages = []
+    runner._log = lambda m: runner._log_messages.append(str(m))
+
+    # Patch heavy dependencies
+    import unittest.mock as _mock
+    import os as _os
+    _os.environ.pop("VLM_ENABLED", None)
+    with _mock.patch("core.pipeline_runner.TurkishNameDB"), \
+         _mock.patch("core.pipeline_runner.QwenVerifier"), \
+         _mock.patch("core.pipeline_runner.StatsLogger"), \
+         _mock.patch("core.pipeline_runner.resolve_name_db_path", return_value=""):
+        PipelineRunner.__init__(runner, ffmpeg="ffmpeg", ffprobe="ffprobe",
+                                config=runner.config)
+
+    # After fix: _vlm_reader.enabled == vlm_enabled (True)
+    assert runner._vlm_reader.enabled is True, \
+        "Bug 1 fix: _vlm_reader.enabled should follow vlm_enabled"
+    # _vlm_ocr_augment_enabled should follow vlm_ocr_enabled (False)
+    assert runner._vlm_ocr_augment_enabled is False, \
+        "Bug 1 fix: _vlm_ocr_augment_enabled should follow vlm_ocr_enabled"

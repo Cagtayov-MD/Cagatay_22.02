@@ -390,3 +390,64 @@ def test_pipeline_runner_invalid_last_min_uses_default(capsys):
     assert last_min == 8.0
     captured = capsys.readouterr()
     assert "Geçersiz last_segment_minutes" in captured.out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NAMEDB-01 / NAMEDB-02: TurkishNameDB recovery from missing names table (Bug 2 fix)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_namedb_recovers_from_missing_table(tmp_path):
+    """NAMEDB-01: When names table is missing, _load_sqlite recovers via sibling .sql seed."""
+    import sqlite3
+    _project_dir = os.path.dirname(os.path.dirname(__file__))
+    if _project_dir not in sys.path:
+        sys.path.insert(0, _project_dir)
+    from core.turkish_name_db import TurkishNameDB
+
+    # Create an empty (no tables) .db file
+    db_file = tmp_path / "names.db"
+    con = sqlite3.connect(str(db_file))
+    con.close()
+
+    # Create a sibling .sql seed with the names table (use correct type values)
+    sql_file = tmp_path / "names.sql"
+    sql_file.write_text(
+        "CREATE TABLE IF NOT EXISTS names ("
+        "name TEXT, normalized TEXT, type TEXT, "
+        "is_also_surname INTEGER, is_also_firstname INTEGER, "
+        "source TEXT, score INTEGER"
+        ");\n"
+        "INSERT INTO names VALUES ('Nisa', '', 'first_female', 0, 0, 'test', 90);\n"
+        "INSERT INTO names VALUES ('Serezli', '', 'surname', 0, 0, 'test', 85);\n",
+        encoding="utf-8",
+    )
+
+    logs = []
+    db = TurkishNameDB(db_path=str(db_file), log_cb=logs.append)
+
+    # Recovery should have happened: names should be loaded
+    assert db.is_name("Nisa"), "Recovery: 'Nisa' should be loaded from rebuilt DB"
+    assert db.is_name("Serezli"), "Recovery: 'Serezli' should be loaded from rebuilt DB"
+    assert any("yeniden oluşturuluyor" in m or "recovery" in m.lower() or "Eksik tablo" in m
+               for m in logs), f"Recovery log message expected, got: {logs}"
+
+
+def test_namedb_silent_failure_without_sql_seed(tmp_path):
+    """NAMEDB-02: When names table is missing and no .sql seed exists, loads 0 names gracefully."""
+    import sqlite3
+    _project_dir = os.path.dirname(os.path.dirname(__file__))
+    if _project_dir not in sys.path:
+        sys.path.insert(0, _project_dir)
+    from core.turkish_name_db import TurkishNameDB
+
+    # Empty .db, no sibling .sql
+    db_file = tmp_path / "names.db"
+    con = sqlite3.connect(str(db_file))
+    con.close()
+
+    logs = []
+    db = TurkishNameDB(db_path=str(db_file), log_cb=logs.append)
+
+    # Should log the error but not crash; 0 names loaded
+    assert any("SQLite yükleme hatası" in m or "hatası" in m for m in logs)
+    assert db.is_name("Nisa") is False

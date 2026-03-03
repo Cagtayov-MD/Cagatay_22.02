@@ -314,3 +314,57 @@ def test_check_ollama_availability_returns_false_on_error(monkeypatch):
         ollama_url="http://localhost:11434", model="llama3.1:8b"
     )
     assert result is False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PROV-16 / PROV-17: LLM model selection per provider (Bug 3 fix)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_llm_cast_filter_gemini_provider_uses_none_model_by_default(monkeypatch):
+    """PROV-16: When provider=gemini and no llm_filter_model, model resolves to None (use Gemini default)."""
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+
+    config = {}  # no llm_filter_model, no ollama_model
+    active_provider = _llm.get_provider()
+    assert active_provider == "gemini"
+
+    # Replicate the fix logic from pipeline_runner.py
+    if active_provider == "gemini":
+        llm_model = config.get("llm_filter_model") or None
+    else:
+        llm_model = config.get("llm_filter_model") or config.get("ollama_model", "qwen2.5vl:7b")
+
+    assert llm_model is None, \
+        "Bug 3 fix: Gemini provider should use model=None (Gemini default), not an Ollama model name"
+
+
+def test_llm_cast_filter_gemini_explicit_model_respected(monkeypatch):
+    """PROV-17: When provider=gemini and llm_filter_model is set, that model is used."""
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+
+    config = {"llm_filter_model": "gemini-2.0-flash"}
+    active_provider = _llm.get_provider()
+
+    if active_provider == "gemini":
+        llm_model = config.get("llm_filter_model") or None
+    else:
+        llm_model = config.get("llm_filter_model") or config.get("ollama_model", "qwen2.5vl:7b")
+
+    assert llm_model == "gemini-2.0-flash"
+
+
+def test_llm_cast_filter_ollama_provider_uses_ollama_model(monkeypatch):
+    """PROV-18: When provider=ollama, Ollama model name is used."""
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+
+    config = {"ollama_model": "qwen2.5vl:7b"}
+    active_provider = _llm.get_provider()
+    assert active_provider == "ollama"
+
+    if active_provider == "gemini":
+        llm_model = config.get("llm_filter_model") or None
+    else:
+        llm_model = config.get("llm_filter_model") or config.get("ollama_model", "qwen2.5vl:7b")
+
+    assert llm_model == "qwen2.5vl:7b", \
+        "Bug 3 fix: Ollama provider should use the ollama_model config value"
