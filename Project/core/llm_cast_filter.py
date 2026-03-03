@@ -250,13 +250,17 @@ class LLMCastFilter:
 
             response = self._query_ollama(prompt)
             if response is None:
-                # Ollama hatası → fail-safe: tüm girişleri onayla (pass-through).
-                # "hepsini sil" yerine "hiçbirine dokunma" politikası.
                 self._log(
-                    "  [LLM] Ollama yanıt vermedi (None) — batch pass-through, "
-                    "tüm girişler onaylandı (fail-safe)."
+                    "  [LLM] Ollama yanıt vermedi (None) — akıllı fail-safe: "
+                    "sadece NameDB eşleşmeleri ve yüksek güvenli girişler korunuyor."
                 )
-                llm_approved: set[int] = set(range(1, len(llm_batch) + 1))
+                llm_approved: set[int] = set()
+                for idx, entry in enumerate(llm_batch, 1):
+                    name = (entry.get("actor_name") or "").strip()
+                    conf = float(entry.get("confidence", 0))
+                    # NameDB'de bilinen isim VEYA yüksek OCR confidence → koru
+                    if (self.name_checker and self.name_checker(name)) or conf >= 0.85:
+                        llm_approved.add(idx)
             else:
                 llm_approved = self._parse_response(response, len(llm_batch))
         else:

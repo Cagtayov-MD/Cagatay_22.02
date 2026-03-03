@@ -111,10 +111,11 @@ def test_cast_word_level_separates_different_surnames():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_ollama_none_preserves_entries():
-    """OLLAMA-PASS-01: Ollama None döndürünce girişler korunmalı (silinmemeli)."""
+    """OLLAMA-PASS-01: Ollama None → NameDB eşleşmeleri korunmalı, bilinmeyenler reddedilmeli."""
     from core.llm_cast_filter import LLMCastFilter
 
-    f = LLMCastFilter(enabled=True)
+    known = {"Nisa Serezli", "Cihat Tamer"}
+    f = LLMCastFilter(enabled=True, name_checker=lambda text: text in known)
     f._query_ollama = lambda prompt: None
     f._check_availability = lambda: True
 
@@ -124,8 +125,8 @@ def test_ollama_none_preserves_entries():
     ]
     result = f.filter_cast(cast)
     assert len(result) == 2, (
-        f"Expected 2 entries preserved, got {len(result)}"
+        f"Expected 2 NameDB-known entries preserved, got {len(result)}"
     )
     assert all(e.get("is_llm_verified") for e in result), (
-        "All entries should be marked as verified via pass-through"
+        "NameDB-known entries should be marked as verified via smart fail-safe"
     )

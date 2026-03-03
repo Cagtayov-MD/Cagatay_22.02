@@ -57,12 +57,19 @@ class TMDBVerifyResult:
     matched_id: int = 0
     cast: List[Dict[str, Any]] = None  # TMDB kanonik cast listesi (ASR speaker matching için)
     crew: List[Dict[str, Any]] = None  # TMDB kanonik crew listesi
+    year: int = 0
+    keywords: List[str] = None
+    genres: List[str] = None
 
     def __post_init__(self):
         if self.cast is None:
             self.cast = []
         if self.crew is None:
             self.crew = []
+        if self.keywords is None:
+            self.keywords = []
+        if self.genres is None:
+            self.genres = []
 
 
 class TMDBClient:
@@ -122,6 +129,40 @@ class TMDBClient:
                          timeout=self.timeout)
         r.raise_for_status()
         return r.json().get("results") or []
+
+    def get_tv_details(self, tv_id: int) -> Dict[str, Any]:
+        r = requests.get(f"{self.BASE}/tv/{tv_id}",
+                         headers=self._headers(),
+                         params=self._params(),
+                         timeout=self.timeout)
+        r.raise_for_status()
+        return r.json()
+
+    def get_movie_details(self, movie_id: int) -> Dict[str, Any]:
+        r = requests.get(f"{self.BASE}/movie/{movie_id}",
+                         headers=self._headers(),
+                         params=self._params(),
+                         timeout=self.timeout)
+        r.raise_for_status()
+        return r.json()
+
+    def get_tv_keywords(self, tv_id: int) -> List[str]:
+        r = requests.get(f"{self.BASE}/tv/{tv_id}/keywords",
+                         headers=self._headers(),
+                         params=self._params(),
+                         timeout=self.timeout)
+        r.raise_for_status()
+        results = r.json().get("results") or []
+        return [kw.get("name", "") for kw in results if kw.get("name")]
+
+    def get_movie_keywords(self, movie_id: int) -> List[str]:
+        r = requests.get(f"{self.BASE}/movie/{movie_id}/keywords",
+                         headers=self._headers(),
+                         params=self._params(),
+                         timeout=self.timeout)
+        r.raise_for_status()
+        kws = r.json().get("keywords") or []
+        return [kw.get("name", "") for kw in kws if kw.get("name")]
 
 
 class TMDBVerify:
@@ -249,6 +290,15 @@ class TMDBVerify:
         tmdb_title = (tmdb_entry.get("name") or tmdb_entry.get("title") or "").strip()
         self._log(f"  [TMDB] ✓ '{tmdb_title}' (id:{tmdb_id}, tür:{kind})")
 
+        # tmdb_entry'den yıl çek
+        date_str = (tmdb_entry.get("first_air_date") or tmdb_entry.get("release_date") or "")
+        tmdb_year = 0
+        if date_str and len(date_str) >= 4:
+            try:
+                tmdb_year = int(date_str[:4])
+            except ValueError:
+                pass
+
         # Credits çek
         credits_data = self._fetch_credits(kind, tmdb_id)
         if not credits_data:
@@ -281,6 +331,21 @@ class TMDBVerify:
             cdata["tmdb_title"]    = tmdb_title
             cdata["tmdb_id"]       = tmdb_id
             cdata["tmdb_type"]     = kind
+            cdata["film_title"]    = tmdb_title
+
+        # TMDB keywords ve genres çek
+        tmdb_keywords: List[str] = []
+        tmdb_genres: List[str] = []
+        try:
+            if kind == "tv":
+                details = self.client.get_tv_details(int(tmdb_id))
+                tmdb_keywords = self.client.get_tv_keywords(int(tmdb_id))
+            else:
+                details = self.client.get_movie_details(int(tmdb_id))
+                tmdb_keywords = self.client.get_movie_keywords(int(tmdb_id))
+            tmdb_genres = [g.get("name", "") for g in (details.get("genres") or []) if g.get("name")]
+        except Exception as e:
+            self._log(f"  [TMDB] Keywords/genres çekme hatası: {e}")
 
         return TMDBVerifyResult(
             updated=updated, reason="ok",
@@ -288,6 +353,9 @@ class TMDBVerify:
             confidence="high",
             matched_title=tmdb_title, matched_id=tmdb_id,
             cast=tmdb_cast, crew=tmdb_crew,
+            year=tmdb_year,
+            keywords=tmdb_keywords,
+            genres=tmdb_genres,
         )
 
     # ── TMDB'de eşleşme bul ─────────────────────────────────────────
@@ -427,6 +495,8 @@ class TMDBVerify:
                 if canonical != actor:
                     row["actor_name"] = canonical
                     updated = True
+                row["is_verified_name"] = True
+                row["is_tmdb_verified"] = True
                 hits += 1
             else:
                 misses += 1
