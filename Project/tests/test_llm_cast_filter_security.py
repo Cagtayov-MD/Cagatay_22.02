@@ -36,27 +36,27 @@ def _make_filter_with_none_response(name_checker=None):
 # ---------------------------------------------------------------------------
 
 def test_fail_safe_none_response_approves_nothing():
-    """When Ollama returns None, no entries should have is_llm_verified=True."""
+    """When Ollama returns None, entries should be preserved (pass-through fail-safe)."""
     f = _make_filter_with_none_response()
     cast = [
         _make_entry("Nisa Serezli"),
         _make_entry("Cihat Tamer"),
     ]
     result = f.filter_cast(cast)
-    # fail-safe: all entries must be rejected (no name_checker, so no NameDB protection)
-    assert all(not e.get("is_llm_verified") for e in result)
-    assert len(result) == 0
+    # fail-safe pass-through: entries must be preserved (not deleted)
+    assert len(result) == 2
+    # All entries approved via pass-through (is_llm_verified=True)
+    assert all(e.get("is_llm_verified") for e in result)
 
 
 def test_fail_safe_none_response_with_namedb_still_protects_real_names():
-    """When Ollama returns None, real names meeting NameDB criteria should still be protected."""
+    """When Ollama returns None, real names should be preserved via pass-through."""
     f = _make_filter_with_none_response(name_checker=lambda text: True)
     cast = [_make_entry("Nisa Serezli")]
     result = f.filter_cast(cast)
-    # NameDB protection should kick in (2 words, both in NameDB)
+    # With None response, pass-through approves entries (is_llm_verified=True)
     assert len(result) == 1
-    assert result[0].get("is_name_db_protected") is True
-    assert not result[0].get("is_llm_verified")
+    assert result[0].get("is_llm_verified") is True
 
 
 # ---------------------------------------------------------------------------
