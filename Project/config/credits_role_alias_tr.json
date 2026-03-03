@@ -159,7 +159,8 @@
       "aliases": [
         "efekt", "effects", "special effects", "visual effects",
         "vfx", "sfx", "effekte", "effets spéciaux",
-        "effetti speciali", "efectos especiales"
+        "effetti speciali", "efectos especiales",
+        "efectos especiales digitales", "efectos especiales mocuillaje"
       ],
       "patterns": [
         "\\befekt\\b", "\\beffects\\b", "\\bvfx\\b", "\\bsfx\\b"
@@ -194,7 +195,8 @@
       "aliases": [
         "prodüksiyon", "produksiyon", "line producer",
         "production manager", "production coordinator",
-        "produksiyons yöneticisi", "set yöneticisi"
+        "produksiyons yöneticisi", "set yöneticisi",
+        "figuracion", "especialistas"
       ],
       "patterns": [
         "\\bprodüksiyon\\b", "\\bproduksiyon\\b",

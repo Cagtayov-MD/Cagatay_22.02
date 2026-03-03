@@ -28,6 +28,10 @@ try:
 except ImportError:
     _HAS_RAPIDFUZZ = False
 
+# Fuzzy matching thresholds
+_WORD_FUZZY_THRESHOLD = 70   # fuzz.ratio per-word minimum similarity
+_WRATIO_FALLBACK_THRESHOLD = 75  # WRatio fallback when word counts differ
+
 # ═══════════════════════════════════════════════════════════════════
 # İSİM VERİTABANI — TurkishNameDB (350K+) > ALL_NAMES (9K) fallback
 # ═══════════════════════════════════════════════════════════════════
@@ -317,6 +321,22 @@ def _fuzzy_char_key(char: str) -> str:
     return _norm_key(clean)
 
 
+def _words_fuzzy_match(a: str, b: str) -> bool:
+    """İki ismi kelime bazlı karşılaştır.
+
+    Tüm kelime çiftlerinin benzerliği >= _WORD_FUZZY_THRESHOLD ise True döner.
+    Kelime sayıları farklıysa WRatio >= _WRATIO_FALLBACK_THRESHOLD fallback kullanılır.
+    rapidfuzz yoksa her zaman False döner.
+    """
+    if not _HAS_RAPIDFUZZ:
+        return False
+    words_a = a.split()
+    words_b = b.split()
+    if len(words_a) != len(words_b):
+        return _fuzz.WRatio(a, b) >= _WRATIO_FALLBACK_THRESHOLD
+    return all(_fuzz.ratio(wa, wb) >= _WORD_FUZZY_THRESHOLD for wa, wb in zip(words_a, words_b))
+
+
 def _canonicalize_cast(cast: list[dict]) -> list[dict]:
     """
     Cast listesini temizle ve tekilleştir.
@@ -400,9 +420,9 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
         matched = False
         if _HAS_RAPIDFUZZ:
             for cluster in clusters:
-                # Mevcut cluster'daki varyantlarla karşılaştır
+                # Mevcut cluster'daki varyantlarla kelime bazlı karşılaştır
                 for existing in cluster["actor_variants"]:
-                    if _fuzz.WRatio(a, existing) >= 75:
+                    if _words_fuzzy_match(a, existing):
                         cluster["actor_variants"].append(a)
                         cluster["confidences"].append(conf)
                         cluster["verified"].append(verified)
@@ -505,7 +525,7 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
                 char_j = final[j].get("character_name", "")
                 if char_i != char_j:
                     continue
-                if a_i and a_j and _fuzz.WRatio(a_i, a_j) >= 75:
+                if a_i and a_j and _words_fuzzy_match(a_i, a_j):
                     # En yüksek confidence'lı olanı tut
                     if final[j].get("confidence", 0) > row_i.get("confidence", 0):
                         final[i] = final[j]
@@ -522,27 +542,61 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
     return final
 
 def _canonicalize_crew(crew: list[dict]) -> list[dict]:
-    buckets: dict[tuple[str,str], dict] = {}
+    # Rol bazlı grupla, sonra her rol grubu içinde isim fuzzy clustering yap
+    role_groups: dict[str, list[dict]] = {}  # norm_role_key → entries
     for row in crew or []:
         name = (row.get("name") or "").strip()
         role = (row.get("role") or row.get("job") or "").strip()
         if not name and not role:
             continue
-        key = (_norm_key(name), _norm_key(role))
-        b = buckets.get(key)
-        if not b:
-            buckets[key] = {"name_variants":[name] if name else [], "role_variants":[role] if role else [], "seen":1}
-        else:
-            if name: b["name_variants"].append(name)
-            if role: b["role_variants"].append(role)
-            b["seen"] += 1
-    out=[]
-    for b in buckets.values():
-        name=_best_variant([v for v in b["name_variants"] if v])
-        role=_best_variant([v for v in b["role_variants"] if v])
-        if name or role:
-            out.append({"name":name,"role":role,"job":role})
-    out.sort(key=lambda r: (_norm_key(r.get("role","")), _norm_key(r.get("name",""))))
+        role_key = _norm_key(role)
+        if role_key not in role_groups:
+            role_groups[role_key] = []
+        role_groups[role_key].append({"name": name, "role": role})
+
+    out = []
+    for entries in role_groups.values():
+        # Her rol grubunda isimleri fuzzy cluster'la
+        clusters: list[dict] = []  # {"name_variants": [...], "role_variants": [...]}
+        for entry in entries:
+            name = entry["name"]
+            role = entry["role"]
+            matched = False
+            if _HAS_RAPIDFUZZ and name:
+                for cluster in clusters:
+                    for existing in cluster["name_variants"]:
+                        if existing and _words_fuzzy_match(name, existing):
+                            cluster["name_variants"].append(name)
+                            if role:
+                                cluster["role_variants"].append(role)
+                            matched = True
+                            break
+                    if matched:
+                        break
+            if not matched:
+                # Exact key fallback
+                name_key = _norm_key(name)
+                for cluster in clusters:
+                    if cluster.get("exact_key") == name_key:
+                        cluster["name_variants"].append(name)
+                        if role:
+                            cluster["role_variants"].append(role)
+                        matched = True
+                        break
+                if not matched:
+                    clusters.append({
+                        "exact_key": name_key,
+                        "name_variants": [name] if name else [],
+                        "role_variants": [role] if role else [],
+                    })
+
+        for cluster in clusters:
+            name = _best_variant([v for v in cluster["name_variants"] if v])
+            role = _best_variant([v for v in cluster["role_variants"] if v])
+            if name or role:
+                out.append({"name": name, "role": role, "job": role})
+
+    out.sort(key=lambda r: (_norm_key(r.get("role", "")), _norm_key(r.get("name", ""))))
     return out
 
 class ExportEngine:
