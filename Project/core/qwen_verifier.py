@@ -22,12 +22,15 @@ Gereksinim:
 import base64
 import concurrent.futures
 import json
+import os
 import re
 import time
 import urllib.request
 import urllib.error
 from dataclasses import dataclass
 from pathlib import Path
+
+from core._ollama_url import normalize_ollama_url
 
 try:
     import cv2
@@ -51,6 +54,7 @@ DEFAULT_THRESHOLD = 0.80   # Bu değerin altı şüpheli
 REQUEST_TIMEOUT = 30        # saniye
 MAX_VLM_WORKERS = 4         # Paralel batch HTTP iş parçacığı sayısı
 MAX_SINGLE_FALLBACKS = 10   # Batch parse başarısız olunca max tek-tek fallback
+VLM_MAX_TOTAL_SEC = int(os.environ.get("VLM_MAX_TOTAL_SEC", "180"))  # Toplam zaman bütçesi
 
 PROMPT_TEMPLATE = (
     "Görüntüdeki Türkçe metni — özellikle kişi adlarını — oku. "
@@ -111,7 +115,9 @@ class QwenVerifier:
                  name_checker=None):
         self.model = model
         self.threshold = confidence_threshold
-        self.url = ollama_url
+        _base = normalize_ollama_url(ollama_url)
+        self.url = f"{_base}/api/chat"
+        self._base_url = _base
         self.enabled = enabled
         self.name_checker = name_checker
         self._available = None  # lazy check
@@ -121,12 +127,8 @@ class QwenVerifier:
         if self._available is not None:
             return self._available
         try:
-            # Derive the base URL from self.url ("/api/chat" → base)
-            import urllib.parse as _up
-            parsed = _up.urlparse(self.url)
-            base_url = f"{parsed.scheme}://{parsed.netloc}"
             req = urllib.request.Request(
-                f"{base_url}/api/tags",
+                f"{self._base_url}/api/tags",
                 method="GET"
             )
             with urllib.request.urlopen(req, timeout=5) as resp:
@@ -220,6 +222,9 @@ class QwenVerifier:
         fallback_limit_logged = False
         groups_list = list(groups.items())
 
+        _max_total_sec = int(os.environ.get("VLM_MAX_TOTAL_SEC", str(VLM_MAX_TOTAL_SEC)))
+        _t_verify_start = time.time()
+
         def _process_group(idx_frame_group):
             idx, (frame_path, group) = idx_frame_group
             t0 = time.time()
@@ -242,6 +247,15 @@ class QwenVerifier:
                     batch_outputs[idx] = (frame_path, group, batch_results)
                 except Exception:
                     pass
+                if time.time() - _t_verify_start > _max_total_sec:
+                    log(
+                        f"  [VLM] ⏱ Zaman bütçesi aşıldı ({_max_total_sec}s) — "
+                        "kalan batch'ler iptal ediliyor, kısmi sonuçlar döndürülüyor"
+                    )
+                    for f in futures:
+                        if not f.done():
+                            f.cancel()
+                    break
 
         for entry in batch_outputs:
             if entry is None:

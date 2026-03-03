@@ -5,10 +5,12 @@ import re
 import urllib.request
 import urllib.error
 
+from core._ollama_url import normalize_ollama_url
+
 
 class MatchParser:
     def __init__(self, ollama_url="http://localhost:11434", model="llama3.1:8b", log_cb=None):
-        self.ollama_url = ollama_url
+        self.ollama_url = normalize_ollama_url(ollama_url)
         self.model = model
         self._log = log_cb or print
 
