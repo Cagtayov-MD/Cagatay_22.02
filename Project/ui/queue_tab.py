@@ -22,12 +22,13 @@ STATUS_DISPLAY = {
 
 
 class QueueTab(QWidget):
-    """Sayfa 2 — Video Kuyruk Yönetimi."""
+    """Kuyruk Yönetimi widget'ı — Analiz sekmesine gömülü."""
 
     # Sinyaller
-    start_queue = Signal()    # Başlat butonuna basıldığında
-    stop_queue = Signal()     # Durdur butonuna basıldığında
-    skip_current = Signal()   # Aktif videoyu atla
+    start_queue       = Signal()  # Başlat butonuna basıldığında
+    stop_queue        = Signal()  # Güvenli durdur butonuna basıldığında
+    force_stop_queue  = Signal()  # Zorla durdur butonuna basıldığında
+    skip_current      = Signal()  # Aktif videoyu atla
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -100,10 +101,17 @@ class QueueTab(QWidget):
         self.start_btn.clicked.connect(self.start_queue.emit)
         bottom_row.addWidget(self.start_btn)
 
-        self.stop_btn = QPushButton("⏸ Durdur")
+        self.stop_btn = QPushButton("⏸ Güvenli Dur")
+        self.stop_btn.setObjectName("stopSafeBtn")
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self.stop_queue.emit)
         bottom_row.addWidget(self.stop_btn)
+
+        self.force_stop_btn = QPushButton("⛔ Zorla Dur")
+        self.force_stop_btn.setObjectName("stopHardBtn")
+        self.force_stop_btn.setEnabled(False)
+        self.force_stop_btn.clicked.connect(self.force_stop_queue.emit)
+        bottom_row.addWidget(self.force_stop_btn)
 
         self.skip_btn = QPushButton("⏭ Geç")
         self.skip_btn.setEnabled(False)
@@ -210,6 +218,7 @@ class QueueTab(QWidget):
         """Kuyruk çalışma durumunu UI'a yansıt."""
         self.start_btn.setEnabled(not running)
         self.stop_btn.setEnabled(running)
+        self.force_stop_btn.setEnabled(running)
         self.skip_btn.setEnabled(running)
         self.folder_btn.setEnabled(not running)
         self.file_btn.setEnabled(not running)
