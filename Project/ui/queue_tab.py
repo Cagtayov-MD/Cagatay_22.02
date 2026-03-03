@@ -27,6 +27,7 @@ class QueueTab(QWidget):
     # Sinyaller
     start_queue = Signal()    # Başlat butonuna basıldığında
     stop_queue = Signal()     # Durdur butonuna basıldığında
+    skip_current = Signal()   # Aktif videoyu atla
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -103,6 +104,11 @@ class QueueTab(QWidget):
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self.stop_queue.emit)
         bottom_row.addWidget(self.stop_btn)
+
+        self.skip_btn = QPushButton("⏭ Geç")
+        self.skip_btn.setEnabled(False)
+        self.skip_btn.clicked.connect(self.skip_current.emit)
+        bottom_row.addWidget(self.skip_btn)
 
         bottom_row.addStretch()
 
@@ -204,6 +210,7 @@ class QueueTab(QWidget):
         """Kuyruk çalışma durumunu UI'a yansıt."""
         self.start_btn.setEnabled(not running)
         self.stop_btn.setEnabled(running)
+        self.skip_btn.setEnabled(running)
         self.folder_btn.setEnabled(not running)
         self.file_btn.setEnabled(not running)
         self.remove_btn.setEnabled(not running)

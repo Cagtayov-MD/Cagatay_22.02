@@ -115,6 +115,10 @@ class PipelineSignals(QObject):
     pipeline_error = Signal(str)
 
 
+class _VideoSkipped(Exception):
+    """Kullanıcı tarafından atlanan video için kontrol akışı istisnası."""
+
+
 # ═══════════════════════════════════════════════════════════════════
 # ANA PENCERE
 # ═══════════════════════════════════════════════════════════════════
@@ -133,8 +137,10 @@ class MainWindow(QMainWindow):
         self.stage_bars = {}
         self._queue_running = False
         self._queue_stop_requested = False
+        self._queue_skip_requested = False
         self._queue_thread = None
         self._queue_profile_name = "FilmDizi"
+        self._path_info_labels = {}
 
         self.signals = PipelineSignals()
         self.signals.log_message.connect(self._append_log)
@@ -168,6 +174,7 @@ class MainWindow(QMainWindow):
         title_col.addWidget(sub)
         header.addLayout(title_col)
         header.addStretch()
+        header.addWidget(self._build_status_dots())
         header.addWidget(self._build_system_info())
         root.addLayout(header)
 
@@ -199,6 +206,7 @@ class MainWindow(QMainWindow):
         self.queue_tab = QueueTab()
         self.queue_tab.start_queue.connect(self._on_queue_start)
         self.queue_tab.stop_queue.connect(self._on_queue_stop)
+        self.queue_tab.skip_current.connect(self._on_queue_skip)
         tabs.addTab(self.queue_tab, "Kuyruk")
 
         root.addWidget(tabs)
@@ -241,20 +249,6 @@ class MainWindow(QMainWindow):
 
         lay.addWidget(self._sep())
 
-        # ── Sadece kullanıcının seçeceği yollar ─────────────────
-        # Kaynak Video
-        r1 = QHBoxLayout()
-        lbl1 = QLabel("Kaynak Video:")
-        lbl1.setMinimumWidth(110)
-        self.video_edit = QLineEdit()
-        self.video_edit.setReadOnly(True)
-        self.video_edit.setPlaceholderText("Video dosyası seç...")
-        btn1 = QPushButton("...")
-        btn1.setMaximumWidth(36)
-        btn1.clicked.connect(self._pick_video)
-        r1.addWidget(lbl1); r1.addWidget(self.video_edit); r1.addWidget(btn1)
-        lay.addLayout(r1)
-
         # Çıktı Dizini
         r2 = QHBoxLayout()
         lbl2 = QLabel("Cikti Dizini:")
@@ -267,43 +261,6 @@ class MainWindow(QMainWindow):
         btn2.clicked.connect(self._pick_output)
         r2.addWidget(lbl2); r2.addWidget(self.output_edit); r2.addWidget(btn2)
         lay.addLayout(r2)
-
-        lay.addWidget(self._sep())
-
-        # ── Sabit yol bilgileri (okunur, düzenlenemez) ──────────
-        info_lbl = QLabel("Sabit Sistem Yollari:")
-        info_lbl.setObjectName("pathInfo")
-        lay.addWidget(info_lbl)
-
-        self._path_info_labels = {}
-        for key, default in [
-            ("FFmpeg",      str(Path(FFMPEG_BIN_DIR) / "ffmpeg.exe")),
-            ("FFprobe",     str(Path(FFMPEG_BIN_DIR) / "ffprobe.exe")),
-            ("LOGOLAR",     str(LOGOLAR_DIR)),
-            ("Google JSON", str(GOOGLE_KEYS_JSON)),
-            ("TMDB Keys",  str(API_KEYS_JSON)),
-        ]:
-            ri = QHBoxLayout()
-            k = QLabel(f"{key}:")
-            k.setMinimumWidth(90)
-            k.setObjectName("pathInfo")
-            v = QLineEdit(default)
-            v.setReadOnly(True)
-            v.setStyleSheet("color: #5a8a5a; font-size: 11px;")
-            self._path_info_labels[key] = v
-            ri.addWidget(k); ri.addWidget(v)
-            lay.addLayout(ri)
-
-        lay.addWidget(self._sep())
-
-        # TMDB key
-        tr = QHBoxLayout()
-        tr.addWidget(QLabel("TMDB Key:"))
-        self.tmdb_edit = QLineEdit()
-        self.tmdb_edit.setReadOnly(True)
-        self.tmdb_edit.setPlaceholderText("Otomatik: api_keys.json")
-        tr.addWidget(self.tmdb_edit)
-        lay.addLayout(tr)
 
         lay.addStretch()
         return grp
@@ -362,6 +319,25 @@ class MainWindow(QMainWindow):
             lay.addLayout(r)
         lay.addStretch()
         return grp
+
+    def _build_status_dots(self):
+        """FFmpeg, Google, TMDB durum topları."""
+        widget = QWidget()
+        lay = QHBoxLayout(widget)
+        lay.setContentsMargins(8, 0, 8, 0)
+        lay.setSpacing(12)
+        for attr, label in [("_dot_ffmpeg", "FFmpeg"), ("_dot_google", "Google"), ("_dot_tmdb", "TMDB")]:
+            dot = QLabel("●")
+            dot.setStyleSheet("font-size: 18px; color: #555555;")
+            lbl = QLabel(label)
+            lbl.setStyleSheet("font-size: 11px; color: #888;")
+            setattr(self, attr, dot)
+            row = QHBoxLayout()
+            row.setSpacing(4)
+            row.addWidget(dot)
+            row.addWidget(lbl)
+            lay.addLayout(row)
+        return widget
 
     def _build_system_info(self):
         """Tarih, Saat ve CPU/GPU/RAM — 3 satır dikey, sağa yaslanmış."""
@@ -468,7 +444,8 @@ class MainWindow(QMainWindow):
 
     def _on_start(self):
         if not self.video_path or not os.path.isfile(self.video_path):
-            QMessageBox.warning(self, "Hata", "Lutfen gecerli bir video dosyasi secin!")
+            QMessageBox.information(self, "Bilgi",
+                "Tek video modu için video seçilmedi.\nKuyruk sekmesinden video ekleyip başlatın.")
             return
 
         self.running = True
@@ -549,6 +526,10 @@ class MainWindow(QMainWindow):
         """Kuyruk Durdur butonuna basıldığında."""
         self._queue_stop_requested = True
 
+    def _on_queue_skip(self):
+        """Aktif videoyu atla — işlenmekte olan videoyu ERROR olarak işaretle ve sonrakine geç."""
+        self._queue_skip_requested = True
+
     def _run_queue(self):
         """Kuyruktaki videoları sırayla işle (arka plan thread)."""
         from PySide6.QtCore import QMetaObject, Qt as QtConst
@@ -558,6 +539,7 @@ class MainWindow(QMainWindow):
         qm = self.queue_tab.queue_manager
 
         while not self._queue_stop_requested:
+            self._queue_skip_requested = False
             item = qm.get_next()
             if item is None:
                 break  # kuyruk bitti
@@ -599,7 +581,7 @@ class MainWindow(QMainWindow):
                         if key in content_profile:
                             base_cfg[key] = content_profile[key]
 
-                out_dir = str(Path(video_path).parent)
+                out_dir = self.output_dir if self.output_dir else str(Path(video_path).parent)
 
                 from core.pipeline_runner import PipelineRunner
                 scope = "video_only"
@@ -621,8 +603,11 @@ class MainWindow(QMainWindow):
                     google_json=resolver.google_json,
                     logolar_dir=resolver.logolar,
                 )
-                runner.set_log_callback(
-                    lambda msg: self.signals.log_message.emit(msg))
+                def _skip_log(msg, _self=self):
+                    if _self._queue_skip_requested:
+                        raise _VideoSkipped()
+                    _self.signals.log_message.emit(msg)
+                runner.set_log_callback(_skip_log)
 
                 runner.run(
                     video_path=video_path,
@@ -647,10 +632,15 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 import traceback
                 elapsed = time.time() - t_start
-                error_msg = str(e)
-                self.signals.log_message.emit(
-                    f"  [KUYRUK] ❌ Hata: {Path(video_path).name} — {error_msg}\n"
-                    f"{traceback.format_exc()}")
+                if isinstance(e, _VideoSkipped) or self._queue_skip_requested:
+                    error_msg = "Atlandı"
+                    self.signals.log_message.emit(
+                        f"  [KUYRUK] ⏭ Atlandı: {Path(video_path).name}")
+                else:
+                    error_msg = str(e)
+                    self.signals.log_message.emit(
+                        f"  [KUYRUK] ❌ Hata: {Path(video_path).name} — {error_msg}\n"
+                        f"{traceback.format_exc()}")
                 QMetaObject.invokeMethod(
                     self.queue_tab, "update_item_status",
                     QtConst.QueuedConnection,
@@ -765,7 +755,8 @@ class MainWindow(QMainWindow):
             self, "Video Sec", "",
             "Video (*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.ts);;Tum dosyalar (*)")
         if path:
-            self.video_edit.setText(path)
+            if hasattr(self, 'video_edit'):
+                self.video_edit.setText(path)
             self.video_path = path
             if hasattr(self, 'stat_video'):
                 self.stat_video.setText(Path(path).name)
@@ -816,29 +807,20 @@ class MainWindow(QMainWindow):
         return {}
 
     def _resolve_and_show_paths(self):
-        """Sabit yolları PathResolver ile doğrula, bilgi etiketlerine yaz."""
+        """Sabit yolları PathResolver ile doğrula, durum toplarını güncelle."""
         try:
             from utils.path_resolver import PathResolver
             r = PathResolver()
             r.resolve_all()
 
-            def _show(key, val, ok):
-                lbl = self._path_info_labels.get(key)
-                if lbl:
-                    lbl.setText(val or "— bulunamadi")
-                    color = "#5a8a5a" if ok else "#e94560"
-                    lbl.setStyleSheet(f"color: {color}; font-size: 11px;")
+            def _set_dot(attr, ok):
+                dot = getattr(self, attr, None)
+                if dot:
+                    dot.setStyleSheet(f"font-size: 18px; color: {'#22b33a' if ok else '#e94560'};")
 
-            _show("FFmpeg",      r.ffmpeg,      bool(r.ffmpeg))
-            _show("FFprobe",     r.ffprobe,     bool(r.ffprobe))
-            _show("LOGOLAR",     r.logolar,     bool(r.logolar))
-            _show("Google JSON", r.google_json, bool(r.google_json))
-            _show("TMDB Keys",  str(API_KEYS_JSON), API_KEYS_JSON.is_file())
-
-            if API_KEYS_JSON.is_file():
-                self.tmdb_edit.setText("api_keys.json (otomatik)")
-            else:
-                self.tmdb_edit.setText("api_keys.json bulunamadi")
+            _set_dot("_dot_ffmpeg", bool(r.ffmpeg))
+            _set_dot("_dot_google", bool(r.google_json))
+            _set_dot("_dot_tmdb", API_KEYS_JSON.is_file())
 
             if r.errors:
                 self._log("⚠️  Eksik araçlar:")
