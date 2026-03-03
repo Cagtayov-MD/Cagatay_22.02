@@ -419,7 +419,7 @@ class PipelineRunner:
                     t = time.time()
                     llm_filter = LLMCastFilter(
                         ollama_url=self.config.get("ollama_url", "http://localhost:11434"),
-                        model=self.config.get("llm_filter_model") or self.config.get("ollama_model", "qwen2.5:7b"),
+                        model=self.config.get("llm_filter_model") or self.config.get("ollama_model", "qwen2.5vl:7b"),
                         enabled=self._llm_filter_enabled,
                         log_cb=self._log,
                         name_checker=self._name_db.is_name,
