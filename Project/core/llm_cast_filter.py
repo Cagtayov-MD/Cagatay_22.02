@@ -1,15 +1,16 @@
-"""llm_cast_filter.py — Ollama LLM ile cast listesini filtrele.
+"""llm_cast_filter.py — LLM ile cast listesini filtrele.
 
 OCR çöpünü at, gerçek kişi isimlerini (tüm diller) koru.
 Görsel gerektirmez — sadece metin bazlı.
+
+Varsayılan sağlayıcı: Gemini (LLM_PROVIDER=gemini).
+Geri dönüş: Ollama (LLM_PROVIDER=ollama).
 """
 
 import re
-import urllib.request
-import urllib.error
-import json
 
 from core._ollama_url import normalize_ollama_url
+import core.llm_provider as _llm
 
 CAST_FILTER_PROMPT = """Aşağıdaki liste bir film/dizi jenerik ekranından OCR ile okunmuştur.
 Her satırda bir metin var. Bu metinlerden hangileri gerçek kişi isimleridir?
@@ -96,75 +97,59 @@ _LINE_NUM_RE = re.compile(r'^(?:ISIM\s*:\s*)?(\d+)\s*$', re.IGNORECASE)
 
 class LLMCastFilter:
     """
-    Ollama LLM ile cast listesini filtrele.
+    LLM ile cast listesini filtrele (Gemini veya Ollama).
     OCR çöpünü at, gerçek kişi isimlerini (tüm diller) koru.
     Görsel gerektirmez — sadece metin bazlı.
     """
 
     def __init__(self, ollama_url="http://localhost:11434",
-                 model="qwen2.5:7b", enabled=True, log_cb=None,
-                 name_checker=None):
+                 model=None, enabled=True, log_cb=None,
+                 name_checker=None, provider=None):
         self.ollama_url = normalize_ollama_url(ollama_url)
-        self.model = model
+        self.model = model  # None → provider default
         self.enabled = enabled
         self._log_cb = log_cb
         self.name_checker = name_checker  # callable(text) -> bool, optional
+        self._provider = provider  # None → read from env
 
     def _log(self, msg, log_cb=None):
         cb = log_cb or self._log_cb
         if cb:
             cb(msg)
 
-    def _check_availability(self) -> bool:
-        """Ollama erişilebilir mi kontrol et."""
-        try:
-            req = urllib.request.Request(
-                f"{self.ollama_url}/api/tags",
-                headers={"Content-Type": "application/json"},
-            )
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                data = json.loads(resp.read().decode())
-                models = [m.get("name", "") for m in data.get("models", [])]
-                # model prefix eşleşmesi (örn. "llama3.1:8b" veya "llama3.1")
-                model_base = self.model.split(":")[0]
-                for m in models:
-                    if m.startswith(model_base):
-                        return True
-                if models:
-                    self._log(
-                        f"  [LLM] Uyarı: '{self.model}' bulunamadı. "
-                        f"Mevcut modeller: {', '.join(models[:3])}"
-                    )
-                return False
-        except Exception as e:
-            self._log(f"  [LLM] Ollama erişilemiyor: {e}")
-            return False
+    def _active_provider(self) -> str:
+        return (self._provider or _llm.get_provider()).lower()
 
-    def _query_ollama(self, prompt: str) -> str | None:
-        """Ollama'ya prompt gönder, yanıt al."""
-        payload = json.dumps({
-            "model": self.model,
-            "prompt": prompt,
-            "stream": False,
-        }).encode("utf-8")
-        endpoint = f"{self.ollama_url}/api/generate"
-        self._log(f"  [LLM] İstek gönderiliyor: {endpoint}")
-        try:
-            req = urllib.request.Request(
-                endpoint,
-                data=payload,
-                headers={"Content-Type": "application/json"},
-                method="POST",
+    def _check_availability(self) -> bool:
+        """Sağlayıcı erişilebilir mi kontrol et."""
+        if self._active_provider() == "ollama":
+            return _llm.check_ollama_availability(
+                ollama_url=self.ollama_url,
+                model=self.model,
+                log_cb=self._log_cb,
             )
-            with urllib.request.urlopen(req, timeout=_TIMEOUT_SEC) as resp:
-                data = json.loads(resp.read().decode())
-                return data.get("response", "")
-        except urllib.error.URLError as e:
-            self._log(f"  [LLM] Sorgu hatası: {e}")
-            return None
-        except Exception as e:
-            self._log(f"  [LLM] Beklenmedik hata: {e}")
-            return None
+        # Gemini — availability determined at request time (API key check)
+        return True
+
+    def _query_llm(self, prompt: str) -> str | None:
+        """Aktif sağlayıcıya prompt gönder, yanıt al."""
+        provider = self._active_provider()
+        kwargs = {}
+        if provider == "ollama":
+            kwargs["ollama_url"] = self.ollama_url
+        if self.model:
+            kwargs["model"] = self.model
+        return _llm.generate(
+            prompt,
+            provider=provider,
+            log_cb=self._log_cb,
+            timeout=_TIMEOUT_SEC,
+            **kwargs,
+        )
+
+    # Keep _query_ollama as alias for backward compatibility / monkey-patching in tests
+    def _query_ollama(self, prompt: str) -> str | None:
+        return self._query_llm(prompt)
 
     def _parse_response(self, response: str, total: int) -> set[int]:
         """LLM yanıtından 1-tabanlı satır numaralarını çıkar."""
@@ -252,10 +237,10 @@ class LLMCastFilter:
             numbered_list = "\n".join(f"{i + 1}. {n}" for i, n in enumerate(names))
             prompt = CAST_FILTER_PROMPT.format(numbered_list=numbered_list)
 
-            response = self._query_ollama(prompt)
+            response = self._query_llm(prompt)
             if response is None:
                 self._log(
-                    "  [LLM] Ollama yanıt vermedi (None) — akıllı fail-safe: "
+                    "  [LLM] Sağlayıcı yanıt vermedi (None) — akıllı fail-safe: "
                     "sadece NameDB eşleşmeleri ve yüksek güvenli girişler korunuyor."
                 )
                 llm_approved: set[int] = set()
@@ -312,14 +297,14 @@ class LLMCastFilter:
 
         if not self._check_availability():
             self._log(
-                "  [LLM] Ollama erişilemiyor — cast listesi değiştirilmeden döndürülüyor.",
+                "  [LLM] Sağlayıcı erişilemiyor — cast listesi değiştirilmeden döndürülüyor.",
                 log_cb,
             )
             return cast
 
         self._log(
-            f"  [LLM] {len(cast)} giriş, model={self.model}, "
-            f"batch_size={_BATCH_SIZE}",
+            f"  [LLM] {len(cast)} giriş, provider={self._active_provider()}, "
+            f"model={self.model or '(default)'}, batch_size={_BATCH_SIZE}",
             log_cb,
         )
 
@@ -356,7 +341,7 @@ class LLMCastFilter:
         if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
             self._log(
                 f"  [LLM] ⚠️ {consecutive_failures} ardışık batch başarısız — "
-                f"kalan batch'ler atlandı (Ollama muhtemelen yanıt vermiyor)",
+                f"kalan batch'ler atlandı (LLM muhtemelen yanıt vermiyor)",
                 log_cb,
             )
 

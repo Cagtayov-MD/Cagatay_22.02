@@ -1,18 +1,22 @@
-"""match_parser.py — Spor maçı transcript analizi (Ollama)."""
+"""match_parser.py — Spor maçı transcript analizi (LLM: Gemini veya Ollama)."""
 
 import json
 import re
-import urllib.request
-import urllib.error
 
 from core._ollama_url import normalize_ollama_url
+import core.llm_provider as _llm
 
 
 class MatchParser:
-    def __init__(self, ollama_url="http://localhost:11434", model="llama3.1:8b", log_cb=None):
+    def __init__(self, ollama_url="http://localhost:11434", model=None,
+                 log_cb=None, provider=None):
         self.ollama_url = normalize_ollama_url(ollama_url)
-        self.model = model
+        self.model = model  # None → provider default
         self._log = log_cb or print
+        self._provider = provider  # None → read from env
+
+    def _active_provider(self) -> str:
+        return (self._provider or _llm.get_provider()).lower()
 
     def parse(self, transcript_segments, video_duration_sec):
         """İlk 10 + Son 10 dakika transcript'ini parse et."""
@@ -23,13 +27,13 @@ class MatchParser:
         if not combined_text.strip():
             return self._empty_result()
 
-        return self._ollama_parse(combined_text)
+        return self._llm_parse(combined_text)
 
     def _segments_to_text(self, segments):
         return "\n".join(s.get("text", "") for s in segments)
 
-    def _ollama_parse(self, text):
-        """Ollama'ya transcript gönder, maç bilgilerini JSON olarak al."""
+    def _llm_parse(self, text):
+        """LLM'e transcript gönder, maç bilgilerini JSON olarak al."""
         prompt = f"""Aşağıdaki spor maçı yayını transkriptini analiz et ve JSON formatında yanıtla:
 
 Transcript:
@@ -52,37 +56,39 @@ JSON formatı:
 
 Sadece JSON döndür, başka açıklama yapma."""
 
-        payload = json.dumps({
-            "model": self.model,
-            "prompt": prompt,
-            "stream": False,
-        }).encode("utf-8")
+        provider = self._active_provider()
+        kwargs = {}
+        if provider == "ollama":
+            kwargs["ollama_url"] = self.ollama_url
+        if self.model:
+            kwargs["model"] = self.model
 
-        req = urllib.request.Request(
-            f"{self.ollama_url}/api/generate",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
+        raw = _llm.generate(
+            prompt,
+            provider=provider,
+            log_cb=self._log,
+            timeout=120,
+            **kwargs,
         )
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                result = json.loads(resp.read().decode("utf-8"))
-                raw = result.get("response", "")
 
-                # Thinking mode temizliği
-                raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+        if not raw:
+            return self._empty_result()
 
-                # JSON bloğunu regex ile çıkar
-                match = re.search(r'\{.*\}', raw, re.DOTALL)
-                if match:
-                    return json.loads(match.group())
-        except urllib.error.HTTPError as e:
-            self._log(f"  [MatchParser] Ollama HTTP hatası: {e.code} {e.reason}")
-        except json.JSONDecodeError:
-            self._log("  [MatchParser] Ollama JSON parse edilemedi")
-        except Exception as e:
-            self._log(f"  [MatchParser] Ollama hatası: {e}")
+        # Thinking mode temizliği
+        raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+
+        # JSON bloğunu regex ile çıkar
+        match = re.search(r'\{.*\}', raw, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group())
+            except json.JSONDecodeError:
+                self._log("  [MatchParser] JSON parse edilemedi")
         return self._empty_result()
+
+    # Keep _ollama_parse as alias for backward compatibility
+    def _ollama_parse(self, text):
+        return self._llm_parse(text)
 
     @staticmethod
     def _empty_result():
