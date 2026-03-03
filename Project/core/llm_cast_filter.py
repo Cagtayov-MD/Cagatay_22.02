@@ -88,8 +88,9 @@ _TIMEOUT_SEC = 60
 _LLM_CONFIDENCE_BOOST = 0.3   # approved entries get +0.3 confidence
 _REJECTED_CONFIDENCE  = 0.2   # rejected entries get confidence set to 0.2
 
-# Parse: "ISIM: 5", "5", "5. Ali" gibi çeşitli formatları kabul et
-_LINE_NUM_RE = re.compile(r'(?:ISIM\s*:\s*)?(\d+)', re.IGNORECASE)
+# Parse: yalnızca "ISIM: 5" veya "5" gibi saf satırları kabul et.
+# Satır başı/sonu ile sınırlandırılmış — "5. Yönetmen" gibi içerikler false-positive üretmez.
+_LINE_NUM_RE = re.compile(r'^(?:ISIM\s*:\s*)?(\d+)\s*$', re.IGNORECASE)
 
 
 class LLMCastFilter:
@@ -166,7 +167,7 @@ class LLMCastFilter:
         """LLM yanıtından 1-tabanlı satır numaralarını çıkar."""
         approved: set[int] = set()
         for line in response.splitlines():
-            m = _LINE_NUM_RE.search(line.strip())
+            m = _LINE_NUM_RE.match(line.strip())
             if m:
                 n = int(m.group(1))
                 if 1 <= n <= total:
@@ -174,16 +175,30 @@ class LLMCastFilter:
         return approved
 
     def _is_namedb_verified(self, entry: dict) -> bool:
-        """actor_name'in herhangi bir kelimesi NameDB'de bulunuyor mu?"""
+        """actor_name'in NameDB korumasına alınıp alınmayacağını kontrol et.
+
+        Kriterler (hepsi sağlanmalı):
+        - En az 2 kelimeli isim olmalı (tek kelimeler korunmaz)
+        - Kelimelerin en az %80'i NameDB'de bulunmalı
+        - Rol/görev kelimesi içeren girişler korunmaz
+        """
         if not self.name_checker:
             return False
         name = (entry.get("actor_name") or "").strip()
         if not name:
             return False
-        for word in name.split():
-            if self.name_checker(word):
-                return True
-        return False
+        words = name.split()
+        # Tek kelimelik isimler korunmaz (örn. "Ali")
+        if len(words) < 2:
+            return False
+        # Rol/görev kelimesi içeriyorsa NameDB koruması devre dışı
+        name_lower = name.lower()
+        for role_kw in _ROLE_KEYWORDS:
+            if role_kw in name_lower:
+                return False
+        # Kelimelerin en az %80'i NameDB'de olmalı
+        matched = sum(1 for w in words if self.name_checker(w))
+        return matched / len(words) >= 0.8
 
     def _pre_filter_obvious_junk(self, entry: dict) -> bool:
         """LLM'e göndermeden önce kesin çöpleri ele. True = çöp, atılmalı."""
@@ -235,8 +250,13 @@ class LLMCastFilter:
 
             response = self._query_ollama(prompt)
             if response is None:
-                # Ollama hatası → pre-filter'dan geçenleri olduğu gibi döndür
-                llm_approved: set[int] = set(range(1, len(llm_batch) + 1))
+                # Ollama hatası → fail-safe: hiçbir girişi onaylama;
+                # bu batch'teki tüm girişler is_llm_verified=False olarak işaretlenir.
+                self._log(
+                    "  [LLM] Ollama yanıt vermedi (None) — batch atlandı, "
+                    "hiçbir giriş onaylanmadı (fail-safe)."
+                )
+                llm_approved: set[int] = set()
             else:
                 llm_approved = self._parse_response(response, len(llm_batch))
         else:
