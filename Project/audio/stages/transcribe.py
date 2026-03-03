@@ -1,9 +1,15 @@
-﻿# Compat TranscribeStage: supports BOTH calling conventions.
+# Compat TranscribeStage: supports BOTH calling conventions.
 # 1) run(context: dict, config: dict)
 # 2) run(audio_path: str, ..., diarization=..., **kwargs)
 
 import time
 from audio.utils.vram_manager import VRAMManager
+
+# Modul seviyesi model cache.
+# UYARI: Bu dict thread-safe degildir. Cok-thread ortaminda race condition
+# olusabilir. Simdilik tek worker calistigi icin sorun yok.
+_model_cache = {"key": None, "model": None}
+
 
 class TranscribeStage:
     def __init__(self, log_cb=None):
@@ -86,11 +92,30 @@ class TranscribeStage:
             }
 
         fw_model = None
+        cached = False
+        cache_key = f"{model_name}|{device}|{compute_type}"
+        use_cache = opts.get("cache_model", True)
         try:
             from faster_whisper import WhisperModel
 
-            self._log(f"  [Whisper] {model_name} yukleniyor ({device}, {compute_type})...")
-            fw_model = WhisperModel(model_name, device=device, compute_type=compute_type)
+            if use_cache and _model_cache["key"] == cache_key and _model_cache["model"] is not None:
+                fw_model = _model_cache["model"]
+                self._log(f"  [Whisper] Model cache'den kullaniliyor: {model_name}")
+                cached = True
+            else:
+                # Eski model varsa temizle
+                if _model_cache["model"] is not None:
+                    del _model_cache["model"]
+                    _model_cache["model"] = None
+                    _model_cache["key"] = None
+                    VRAMManager.release()
+
+                self._log(f"  [Whisper] {model_name} yukleniyor ({device}, {compute_type})...")
+                fw_model = WhisperModel(model_name, device=device, compute_type=compute_type)
+
+                if use_cache:
+                    _model_cache["key"] = cache_key
+                    _model_cache["model"] = fw_model
 
             raw_segments, info = fw_model.transcribe(
                 audio_path,
@@ -100,6 +125,8 @@ class TranscribeStage:
                 vad_filter=True,
                 vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=200),
             )
+
+            self._log(f"  [Whisper] Dil: {info.language} (olasilik: {info.language_probability:.2f})")
 
             segments = []
             for seg in raw_segments:
@@ -136,6 +163,18 @@ class TranscribeStage:
                 "segments": segments,
                 "total_segments": len(segments),
                 "stage_time_sec": elapsed,
+                "detected_language": info.language,
+                "language_probability": round(info.language_probability, 3),
+            }
+
+        except ImportError:
+            self._log("  [Whisper] Kurulu degil - pip install faster-whisper")
+            return {
+                "status": "error",
+                "segments": [],
+                "total_segments": 0,
+                "stage_time_sec": round(time.time() - t0, 2),
+                "error": "faster-whisper not installed",
             }
 
         except Exception as e:
@@ -150,9 +189,11 @@ class TranscribeStage:
             }
 
         finally:
-            if fw_model is not None:
+            # Cache'deyse modeli silme; cache disindaysa sil ve VRAM'i serbest birak
+            if not cached and fw_model is not None and not use_cache:
                 del fw_model
-            VRAMManager.release()
+            if not cached and not use_cache:
+                VRAMManager.release()
 
     def _resolve_compute_type(self, raw_compute_type, device):
         default_type = "float16" if device == "cuda" else "int8"
