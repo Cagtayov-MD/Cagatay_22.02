@@ -174,7 +174,7 @@ def _best_actor(actors: list) -> str:
     except Exception as e:
         # Log the error for debugging but return best effort result
         import logging
-        logging.debug(f"_ocr_correct_name exception for '{actor}': {e}")
+        logging.debug(f"_ocr_correct_name exception for '{best}': {e}")
     return best
 
 def _ocr_correct_name_legacy(name: str) -> str:

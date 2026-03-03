@@ -270,6 +270,7 @@ class TurkishNameDB:
 
         self._first_names = [e.name for e in self._db_first.values()]
         self._surnames = [e.name for e in self._db_surname.values()]
+        self._all_names = self._first_names + self._surnames  # cached; avoids O(n) alloc on every _fuzzy_find call
         self._all_keys = set(self._db_first) | set(self._db_surname)
         # Fonetik index'i oluştur: phonetic_key → canonical_name
         for key, entry in itertools.chain(self._db_first.items(), self._db_surname.items()):
@@ -592,11 +593,10 @@ class TurkishNameDB:
         """RapidFuzz ile en yakın canonical ismi bul."""
         if not HAS_RAPIDFUZZ:
             return None, 0.0
-        all_names = self._first_names + self._surnames
-        if not all_names:
+        if not self._all_names:
             return None, 0.0
         result = rf_process.extractOne(
-            text, all_names,
+            text, self._all_names,
             scorer=fuzz.WRatio,
             score_cutoff=threshold
         )
