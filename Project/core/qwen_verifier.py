@@ -183,13 +183,15 @@ class QwenVerifier:
         for i in suspicious:
             line = ocr_lines[i]
             text = self._get_text(line)
+            conf = self._get_conf(line)
             frame_path = self._get_frame_path(line)
             bbox = self._get_bbox(line)
 
             if not text or not frame_path or not Path(frame_path).exists():
                 continue
 
-            result = self._verify_single(text, frame_path, bbox=bbox)
+            result = self._verify_single(text, frame_path, bbox=bbox,
+                                         confidence_before=conf)
             if result and result.was_fixed:
                 self._set_text(ocr_lines[i], result.corrected)
                 # Orijinal metni sakla
@@ -272,7 +274,8 @@ class QwenVerifier:
         return True
 
     def _verify_single(self, ocr_text: str, frame_path: str,
-                       bbox: list = None) -> VerifyResult | None:
+                       bbox: list = None,
+                       confidence_before: float = 0.0) -> VerifyResult | None:
         """
         Tek satırı Qwen'e gönder, cevabı al.
         bbox varsa → frame'den ilgili bölgeyi kırp, sadece crop gönder.
@@ -337,7 +340,7 @@ class QwenVerifier:
                 original=ocr_text,
                 corrected=corrected,
                 was_fixed=was_fixed,
-                confidence_before=0.0
+                confidence_before=confidence_before,
             )
 
         except urllib.error.URLError:
@@ -382,10 +385,10 @@ class QwenVerifier:
                     if (cx2 - cx1) > 10 and (cy2 - cy1) > 5:
                         crop = img[cy1:cy2, cx1:cx2]
 
-                        # Crop çok küçükse 2x upscale (Qwen daha iyi okur)
+                        # Crop çok küçükse 2x-8x upscale (Qwen daha iyi okur)
                         crop_h, crop_w = crop.shape[:2]
                         if crop_h < 40:
-                            scale = max(2, 80 // crop_h)
+                            scale = min(max(2, 80 // crop_h), 8)
                             crop = cv2.resize(
                                 crop, (crop_w * scale, crop_h * scale),
                                 interpolation=cv2.INTER_CUBIC
