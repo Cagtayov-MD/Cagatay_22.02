@@ -302,12 +302,31 @@ class TurkishNameDB:
             con = sqlite3.connect(db_path)
             con.row_factory = sqlite3.Row
             cur = con.cursor()
-            cur.execute("""
-                SELECT name, normalized, type, is_also_surname,
-                       is_also_firstname, source, score
-                FROM names
-                ORDER BY score DESC
-            """)
+            try:
+                cur.execute("""
+                    SELECT name, normalized, type, is_also_surname,
+                           is_also_firstname, source, score
+                    FROM names
+                    ORDER BY score DESC
+                """)
+            except sqlite3.OperationalError as e:
+                if "no such table" in str(e).lower():
+                    con.close()
+                    # Sibling .sql seed dosyası ara ve rebuild et
+                    db_file = Path(db_path)
+                    sql_seed = db_file.with_suffix(".sql")
+                    if sql_seed.is_file():
+                        self._log(f"  [NameDB] '{e}' — .sql seed ile yeniden oluşturuluyor: {sql_seed}")
+                        try:
+                            db_file.unlink(missing_ok=True)
+                        except Exception:
+                            pass
+                        self._materialize_sqlite_from_sql(sql_seed, db_file)
+                        return self._load_sqlite(db_path)
+                    else:
+                        self._log(f"  [NameDB] SQLite yükleme hatası: {e} (seed .sql bulunamadı)")
+                        return n_first, n_sur
+                raise
             for row in cur.fetchall():
                 entry = NameEntry(
                     row['name'], row['normalized'], row['type'],
