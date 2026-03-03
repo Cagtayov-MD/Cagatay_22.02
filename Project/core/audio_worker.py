@@ -51,6 +51,8 @@ import traceback
 import uuid
 from pathlib import Path
 
+from utils.time_utils import fmt_hms as _fmt_hms_shared
+
 
 # ---- CRITICAL: proje kökünü sys.path'e ekle (import audio fix) ----
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -225,11 +227,7 @@ def _write_transcript_txt_atomic(path: str, result: dict):
 
 
 def _fmt_hms(seconds: float) -> str:
-    total_ms = int(round(max(0.0, seconds) * 1000))
-    h, rem = divmod(total_ms, 3600 * 1000)
-    m, rem = divmod(rem, 60 * 1000)
-    s, ms = divmod(rem, 1000)
-    return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
+    return _fmt_hms_shared(seconds, with_ms=True)
 
 
 def _safe_float(value, default: float = 0.0) -> float:

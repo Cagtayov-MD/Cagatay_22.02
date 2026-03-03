@@ -1,8 +1,12 @@
 """
 asr_pipeline.py — Ortak veri yapıları ve Confidence Engine.
 
-Profil bazlı pipeline'lar (film_dizi, müzik, maç, haber) gelecekte
-bu yapıları kullanacak. Şu an aktif pipeline: audio_pipeline.py
+NOT: ConfidenceEngine ve ASRResult dataclass'ları şu an aktif pipeline'da
+(audio_pipeline.py) kullanılmamaktadır. Gelecekteki profil bazlı pipeline'lar
+(film_dizi, müzik, maç, haber) bu yapıları kullanacaktır.
+Mevcut aktif pipeline: audio_pipeline.py → audio/stages/ modülleri.
+
+Status: RESERVED — silmeyin, gelecekte entegre edilecek.
 
 Dataclass'lar:
     AudioSegment, SpeakerIdentity, ConfidenceResult, ASRResult
