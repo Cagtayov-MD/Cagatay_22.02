@@ -292,12 +292,19 @@ class PipelineRunner:
                         ocr_lines, candidates, log_cb=self._log)
                     self._log(f"  [VLM-OCR] Tamamlandı ({time.time()-vlm_r_t:.1f}s)")
 
-                qwen_t = time.time()
-                ocr_lines = self._qwen.verify(ocr_lines, log_cb=self._log,
-                                              resolution=info.get("resolution", ""))
-                qwen_elapsed = time.time() - qwen_t
-                if qwen_elapsed > 0.5:
-                    self._log(f"  [VLM] Doğrulama süresi: {qwen_elapsed:.1f}s")
+                # ── BLOK1 VLM Skip ──
+                # TMDB araması için NameDB onarımı yeterli isim sağlıyor.
+                # TMDB miss olursa BLOK2'de Qwen 2.5 (GPU) derin okuma yapacak.
+                # VLM'i tekrar aktif etmek için aşağıdaki bloğu uncomment edin.
+                self._log("  [VLM] BLOK1'de atlanıyor (TMDB arama için NameDB yeterli)")
+                qwen_elapsed = 0.0
+                # ── VLM'i geri açmak için bu bloğu uncomment edin: ──
+                # qwen_t = time.time()
+                # ocr_lines = self._qwen.verify(ocr_lines, log_cb=self._log,
+                #                               resolution=info.get("resolution", ""))
+                # qwen_elapsed = time.time() - qwen_t
+                # if qwen_elapsed > 0.5:
+                #     self._log(f"  [VLM] Doğrulama süresi: {qwen_elapsed:.1f}s")
 
                 ocr_total = ocr_time + qwen_elapsed
                 self._stage("OCR_CREDITS", ocr_total,

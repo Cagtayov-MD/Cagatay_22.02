@@ -20,8 +20,10 @@ Gereksinim:
 """
 
 import base64
+import concurrent.futures
 import json
 import re
+import time
 import urllib.request
 import urllib.error
 from dataclasses import dataclass
@@ -47,6 +49,8 @@ OLLAMA_API_URL  = "http://localhost:11434/api/chat"
 DEFAULT_MODEL   = "glm4.6v-flash:q4_K_M"
 DEFAULT_THRESHOLD = 0.80   # Bu değerin altı şüpheli
 REQUEST_TIMEOUT = 30        # saniye
+MAX_VLM_WORKERS = 4         # Paralel batch HTTP iş parçacığı sayısı
+MAX_SINGLE_FALLBACKS = 10   # Batch parse başarısız olunca max tek-tek fallback
 
 PROMPT_TEMPLATE = (
     "Görüntüdeki Türkçe metni — özellikle kişi adlarını — oku. "
@@ -156,7 +160,7 @@ class QwenVerifier:
                 # "384x288" veya "1920x1080" formatında
                 height = int(resolution.split("x")[-1])
                 if height <= 360:
-                    noise_threshold = 0.40
+                    noise_threshold = 0.50
                     log(f"  [Qwen] Düşük çözünürlük ({resolution}) — gürültü eşiği: {noise_threshold}")
                 elif height <= 480:
                     noise_threshold = 0.50
@@ -212,15 +216,48 @@ class QwenVerifier:
         log(f"  [VLM] {len(groups)} frame grubunda batch doğrulama")
 
         fixed_count = 0
-        for frame_path, group in groups.items():
-            batch_results = self._verify_batch(group, frame_path)
+        fallback_count = 0
+        fallback_limit_logged = False
+        groups_list = list(groups.items())
 
+        def _process_group(idx_frame_group):
+            idx, (frame_path, group) = idx_frame_group
+            t0 = time.time()
+            log(f"  [VLM] Batch {idx+1}/{len(groups_list)} ({len(group)} satır)...")
+            result = self._verify_batch(group, frame_path)
+            elapsed = time.time() - t0
+            if elapsed > 2:
+                log(f"  [VLM] Batch {idx+1} tamamlandı ({elapsed:.1f}s)")
+            return idx, frame_path, group, result
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_VLM_WORKERS) as executor:
+            futures = {
+                executor.submit(_process_group, (idx, item)): idx
+                for idx, item in enumerate(groups_list)
+            }
+            batch_outputs = [None] * len(groups_list)
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    idx, frame_path, group, batch_results = future.result()
+                    batch_outputs[idx] = (frame_path, group, batch_results)
+                except Exception:
+                    pass
+
+        for entry in batch_outputs:
+            if entry is None:
+                continue
+            frame_path, group, batch_results = entry
             for grp_idx, (i, text, conf, bbox) in enumerate(group):
                 result = batch_results.get(grp_idx)
                 if result is None:
-                    # Batch parse başarısız → tek tek doğrula
-                    result = self._verify_single(text, frame_path, bbox=bbox,
-                                                 confidence_before=conf)
+                    # Batch parse başarısız → tek tek doğrula (limitli)
+                    if fallback_count < MAX_SINGLE_FALLBACKS:
+                        result = self._verify_single(text, frame_path, bbox=bbox,
+                                                     confidence_before=conf)
+                        fallback_count += 1
+                    elif not fallback_limit_logged:
+                        log(f"  [VLM] Fallback limiti aşıldı (max {MAX_SINGLE_FALLBACKS}), kalan satırlar atlanıyor")
+                        fallback_limit_logged = True
 
                 if result and result.was_fixed:
                     self._set_text(ocr_lines[i], result.corrected)
