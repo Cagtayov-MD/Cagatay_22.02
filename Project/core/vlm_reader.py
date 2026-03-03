@@ -21,6 +21,8 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
+from core._ollama_url import normalize_ollama_url
+
 try:
     import cv2
     HAS_CV2 = True
@@ -77,7 +79,9 @@ class VLMReader:
                  ollama_url: str = OLLAMA_API_URL,
                  enabled: bool = False):
         self.model   = model
-        self.url     = ollama_url
+        _base        = normalize_ollama_url(ollama_url)
+        self.url     = f"{_base}/api/chat"
+        self._base_url = _base
         self.enabled = enabled
         self._available = None  # lazy check
 
@@ -87,7 +91,7 @@ class VLMReader:
             return self._available
         try:
             req = urllib.request.Request(
-                "http://localhost:11434/api/tags",
+                f"{self._base_url}/api/tags",
                 method="GET"
             )
             with urllib.request.urlopen(req, timeout=5) as resp:

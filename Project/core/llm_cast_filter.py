@@ -9,6 +9,8 @@ import urllib.request
 import urllib.error
 import json
 
+from core._ollama_url import normalize_ollama_url
+
 CAST_FILTER_PROMPT = """Aşağıdaki liste bir film/dizi jenerik ekranından OCR ile okunmuştur.
 Her satırda bir metin var. Bu metinlerden hangileri gerçek kişi isimleridir?
 
@@ -102,7 +104,7 @@ class LLMCastFilter:
     def __init__(self, ollama_url="http://localhost:11434",
                  model="qwen2.5:7b", enabled=True, log_cb=None,
                  name_checker=None):
-        self.ollama_url = ollama_url.rstrip("/")
+        self.ollama_url = normalize_ollama_url(ollama_url)
         self.model = model
         self.enabled = enabled
         self._log_cb = log_cb
@@ -145,9 +147,11 @@ class LLMCastFilter:
             "prompt": prompt,
             "stream": False,
         }).encode("utf-8")
+        endpoint = f"{self.ollama_url}/api/generate"
+        self._log(f"  [LLM] İstek gönderiliyor: {endpoint}")
         try:
             req = urllib.request.Request(
-                f"{self.ollama_url}/api/generate",
+                endpoint,
                 data=payload,
                 headers={"Content-Type": "application/json"},
                 method="POST",

@@ -20,6 +20,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from core._ollama_url import normalize_ollama_url
+
 
 class PostProcessStage:
     """Ollama ile Türkçe transcript düzeltme + özet."""
@@ -55,7 +57,7 @@ class PostProcessStage:
             }
         """
         t0 = time.time()
-        base_url = opts.get("ollama_url", "http://localhost:11434")
+        base_url = normalize_ollama_url(opts.get("ollama_url", "http://localhost:11434"))
         model = opts.get("ollama_model", "llama3.1:8b")
         tmdb_cast = opts.get("tmdb_cast", [])
 
