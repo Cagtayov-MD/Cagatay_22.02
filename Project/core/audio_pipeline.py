@@ -170,7 +170,7 @@ class AudioPipeline:
                     "whisper_model": options.get("whisper_model", "large-v3"),
                     "whisper_language": options.get("whisper_language", "tr"),
                     "compute_type": options.get("compute_type"),
-                    "batch_size": options.get("batch_size", 16),
+                    "beam_size": options.get("beam_size", 5),  # eskiden batch_size idi
                 },
             )
             result["stages"]["transcribe"] = {
@@ -190,6 +190,11 @@ class AudioPipeline:
             if not post._check_ollama(ollama_url):
                 self._log(f"  [POST_PROCESS] Uyarı: Ollama erişilemiyor ({ollama_url}), stage atlanıyor")
                 result["transcript"] = transcribe_result.get("segments", [])
+                result["stages"]["post_process"] = {
+                    "status": "skipped",
+                    "reason": f"Ollama unreachable at {ollama_url}",
+                    "duration_sec": 0.0,
+                }
             else:
                 post_result = post.run(
                     transcribe_result["segments"],

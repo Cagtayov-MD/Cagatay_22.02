@@ -6,8 +6,20 @@ import time
 from audio.utils.vram_manager import VRAMManager
 
 class TranscribeStage:
+    _cached_model = None
+    _cached_model_key = None  # (model_name, device, compute_type)
+
     def __init__(self, log_cb=None):
         self._log = log_cb or print
+
+    @classmethod
+    def release_model(cls):
+        """Cached modeli manuel olarak temizle."""
+        if cls._cached_model is not None:
+            del cls._cached_model
+            cls._cached_model = None
+            cls._cached_model_key = None
+            VRAMManager.release()
 
     def run(self, *args, **kwargs) -> dict:
         # Dispatch by signature
@@ -86,11 +98,26 @@ class TranscribeStage:
             }
 
         fw_model = None
+        info = None
         try:
             from faster_whisper import WhisperModel
 
-            self._log(f"  [Whisper] {model_name} yukleniyor ({device}, {compute_type})...")
-            fw_model = WhisperModel(model_name, device=device, compute_type=compute_type)
+            cache_key = (model_name, device, compute_type)
+            if TranscribeStage._cached_model is not None and TranscribeStage._cached_model_key == cache_key:
+                fw_model = TranscribeStage._cached_model
+                self._log(f"  [Whisper] Cached model kullaniliyor ({model_name})")
+            else:
+                # Eski cached model varsa temizle
+                if TranscribeStage._cached_model is not None:
+                    del TranscribeStage._cached_model
+                    TranscribeStage._cached_model = None
+                    TranscribeStage._cached_model_key = None
+                    VRAMManager.release()
+
+                self._log(f"  [Whisper] {model_name} yukleniyor ({device}, {compute_type})...")
+                fw_model = WhisperModel(model_name, device=device, compute_type=compute_type)
+                TranscribeStage._cached_model = fw_model
+                TranscribeStage._cached_model_key = cache_key
 
             raw_segments, info = fw_model.transcribe(
                 audio_path,
@@ -131,11 +158,25 @@ class TranscribeStage:
             elapsed = round(time.time() - t0, 2)
             self._log(f"  [Whisper] {len(segments)} segment ({elapsed:.1f}s)")
 
-            return {
+            result_dict = {
                 "status": "ok",
                 "segments": segments,
                 "total_segments": len(segments),
                 "stage_time_sec": elapsed,
+            }
+            if info is not None:
+                result_dict["detected_language"] = info.language
+                result_dict["language_probability"] = round(info.language_probability, 3)
+            return result_dict
+
+        except ImportError:
+            self._log("  [Whisper] Kurulu degil - pip install faster-whisper")
+            return {
+                "status": "error",
+                "segments": [],
+                "total_segments": 0,
+                "stage_time_sec": round(time.time() - t0, 2),
+                "error": "faster-whisper not installed",
             }
 
         except Exception as e:
@@ -150,9 +191,10 @@ class TranscribeStage:
             }
 
         finally:
-            if fw_model is not None:
+            # Cached model'i silme, sadece hata durumunda temizle
+            if fw_model is not None and TranscribeStage._cached_model is not fw_model:
                 del fw_model
-            VRAMManager.release()
+                VRAMManager.release()
 
     def _resolve_compute_type(self, raw_compute_type, device):
         default_type = "float16" if device == "cuda" else "int8"

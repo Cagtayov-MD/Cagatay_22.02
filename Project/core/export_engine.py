@@ -3,6 +3,8 @@ import json, os, re
 from datetime import datetime
 from pathlib import Path
 
+from utils.time_format import fmt_hms as _fmt_hms
+
 
 def _safe_path(path: Path) -> Path:
     """Dosya çakışması varsa _2, _3 ... ekleyerek güvenli bir yol döndür."""
@@ -805,11 +807,12 @@ class ExportEngine:
             for seg in transcript:
                 start = seg.get("start", 0)
                 text  = seg.get("text", "").strip()
-                h  = int(start) // 3600
-                m  = (int(start) % 3600) // 60
-                s  = int(start) % 60
-                ts = f"{h:02d}:{m:02d}:{s:02d}"
-                L.append(f"[{ts}] {text}")
+                ts = _fmt_hms(start)
+                speaker = seg.get("speaker", "").strip()
+                if speaker:
+                    L.append(f"[{ts}] {speaker}: {text}")
+                else:
+                    L.append(f"[{ts}] {text}")
         else:
             L.append("  (Transcript verisi yok)")
 
