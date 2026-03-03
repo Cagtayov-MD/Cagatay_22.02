@@ -1,0 +1,205 @@
+{
+  "_comment": "Rol başlığı alias tablosu — çok dilli (TR/EN/DE/FR/IT/ES/PT).",
+  "roles": [
+    {
+      "canonical": "Oyuncular",
+      "category": "cast",
+      "aliases": [
+        "oynayanlar", "oyuncular", "cast", "başroller", "basroller",
+        "starring", "oynayan", "oyuncu",
+        "mit", "darsteller", "avec", "con", "com", "interpreti",
+        "acteurs", "actores", "atores"
+      ],
+      "patterns": [
+        "\\boyuncular\\b", "\\boynayanlar\\b", "\\bcast\\b", "\\bstarring\\b"
+      ]
+    },
+    {
+      "canonical": "Yönetmen",
+      "category": "director",
+      "aliases": [
+        "yönetmen", "yonetmen", "director", "yöneten", "yoneten",
+        "regie", "réalisation", "realisation", "regia", "regia di",
+        "dirección", "direccion", "dirigido por", "dirigé par",
+        "film by", "a film by", "directed by", "ein film von",
+        "regie:", "réalisé par", "realise par"
+      ],
+      "patterns": [
+        "\\byönetmen\\b", "\\byonetmen\\b", "\\bdirector\\b",
+        "\\bregie\\b", "\\bréalisation\\b", "\\bregia\\b",
+        "\\bdirected\\s+by\\b", "\\bfilm\\s+by\\b"
+      ]
+    },
+    {
+      "canonical": "Senaryo",
+      "category": "crew",
+      "aliases": [
+        "senaryo", "senarist", "screenplay", "drehbuch", "scénario",
+        "scenario", "sceneggiatura", "guión", "guion", "roteiro",
+        "written by", "écrit par", "ecrit par", "histoire de",
+        "story by", "script"
+      ],
+      "patterns": [
+        "\\bsenaryo\\b", "\\bscreenplay\\b", "\\bdrehbuch\\b",
+        "\\bscénario\\b", "\\bsceneggiatura\\b", "\\bguión\\b",
+        "\\bwritten\\s+by\\b"
+      ]
+    },
+    {
+      "canonical": "Görüntü Yönetmeni",
+      "category": "crew",
+      "aliases": [
+        "görüntü yönetmeni", "goruntu yonetmeni", "görüntü", "goruntu",
+        "director of photography", "director of photography:",
+        "dop", "d.o.p.", "kamera", "camera",
+        "bildgestaltung", "directeur de la photographie",
+        "direttore della fotografia", "director de fotografía"
+      ],
+      "patterns": [
+        "\\bgörüntü\\s+yönetmeni\\b", "\\bgoruntu\\s+yonetmeni\\b",
+        "\\bdirector\\s+of\\s+photography\\b", "\\bd\\.o\\.p\\.\\b"
+      ]
+    },
+    {
+      "canonical": "Müzik",
+      "category": "crew",
+      "aliases": [
+        "müzik", "muzik", "music", "musik", "musique", "musica",
+        "original score", "original music", "soundtrack",
+        "original soundtrack", "film müziği", "film muzigi",
+        "komponist", "compositeur", "compositore", "compositor"
+      ],
+      "patterns": [
+        "\\bmüzik\\b", "\\bmuzik\\b", "\\bmusic\\b", "\\bmusik\\b",
+        "\\bmusique\\b", "\\bmusica\\b"
+      ]
+    },
+    {
+      "canonical": "Kurgu",
+      "category": "crew",
+      "aliases": [
+        "kurgu", "montaj", "editing", "edited by", "editor",
+        "film editing", "schnitt", "montage", "montaggio",
+        "edición", "edicion", "edição", "edicao"
+      ],
+      "patterns": [
+        "\\bkurgu\\b", "\\bmontaj\\b", "\\beditor\\b",
+        "\\bediting\\b", "\\bschnitt\\b", "\\bmontage\\b"
+      ]
+    },
+    {
+      "canonical": "Yapımcı",
+      "category": "crew",
+      "aliases": [
+        "yapımcı", "yapimci", "producer", "produzent", "producteur",
+        "produttore", "productor", "produtor",
+        "executive producer", "yapım yönetmeni",
+        "koordinatör", "koordinator",
+        "yürütücü yapımcı", "yurtucu yapimci"
+      ],
+      "patterns": [
+        "\\byapımcı\\b", "\\byapimci\\b", "\\bproducer\\b",
+        "\\bproduzent\\b", "\\bproducteur\\b"
+      ]
+    },
+    {
+      "canonical": "Yapım",
+      "category": "production",
+      "aliases": [
+        "yapım", "yapim", "production", "yapımevi", "yapimevi",
+        "produced by", "eine produktion", "une production",
+        "una producción", "produção", "produktion"
+      ],
+      "patterns": [
+        "\\byapım\\b", "\\byapim\\b", "\\bproduction\\b",
+        "\\bproduced\\s+by\\b"
+      ]
+    },
+    {
+      "canonical": "Sanat Yönetmeni",
+      "category": "crew",
+      "aliases": [
+        "sanat yönetmeni", "sanat yonetmeni",
+        "production designer", "art director", "set designer",
+        "ausstattung", "décorateur", "scenografo",
+        "director de arte"
+      ],
+      "patterns": [
+        "\\bsanat\\s+yönetmeni\\b", "\\bsanat\\s+yonetmeni\\b",
+        "\\bart\\s+director\\b", "\\bproduction\\s+designer\\b"
+      ]
+    },
+    {
+      "canonical": "Kostüm",
+      "category": "crew",
+      "aliases": [
+        "kostüm", "kostum", "costume", "costumes", "costume design",
+        "kostümdesign", "création costumes", "costumi",
+        "diseño de vestuario"
+      ],
+      "patterns": [
+        "\\bkostüm\\b", "\\bkostum\\b", "\\bcostume\\b"
+      ]
+    },
+    {
+      "canonical": "Ses",
+      "category": "crew",
+      "aliases": [
+        "ses", "sound", "ton", "audio", "sound design",
+        "ses tasarımı", "ses tasarimi", "sound mixer",
+        "tonmeister", "ingénieur du son"
+      ],
+      "patterns": [
+        "\\bses\\b", "\\bsound\\b", "\\bton\\b"
+      ]
+    },
+    {
+      "canonical": "Efekt",
+      "category": "crew",
+      "aliases": [
+        "efekt", "effects", "special effects", "visual effects",
+        "vfx", "sfx", "effekte", "effets spéciaux",
+        "effetti speciali", "efectos especiales"
+      ],
+      "patterns": [
+        "\\befekt\\b", "\\beffects\\b", "\\bvfx\\b", "\\bsfx\\b"
+      ]
+    },
+    {
+      "canonical": "Makyaj",
+      "category": "crew",
+      "aliases": [
+        "makyaj", "makeup", "make-up", "make up",
+        "hair and makeup", "maske", "maquillage",
+        "trucco", "maquillaje"
+      ],
+      "patterns": [
+        "\\bmakyaj\\b", "\\bmakeup\\b", "\\bmake-up\\b"
+      ]
+    },
+    {
+      "canonical": "Işık",
+      "category": "crew",
+      "aliases": [
+        "ışık", "isik", "lighting", "gaffer", "lichtgestaltung",
+        "éclairage", "illuminazione", "iluminación"
+      ],
+      "patterns": [
+        "\\bışık\\b", "\\bisik\\b", "\\blighting\\b", "\\bgaffer\\b"
+      ]
+    },
+    {
+      "canonical": "Prodüksiyon",
+      "category": "crew",
+      "aliases": [
+        "prodüksiyon", "produksiyon", "line producer",
+        "production manager", "production coordinator",
+        "produksiyons yöneticisi", "set yöneticisi"
+      ],
+      "patterns": [
+        "\\bprodüksiyon\\b", "\\bproduksiyon\\b",
+        "\\bline\\s+producer\\b"
+      ]
+    }
+  ]
+}

@@ -1,7 +1,9 @@
 """credits_parser.py — OCR satırları ve layout pair'lerden jenerik verisi çıkarır."""
+import json
 import re
+from pathlib import Path
 
-# ── Türkçe rol anahtar kelimeleri (inline) ────────────────────────────────────
+# ── Türkçe rol anahtar kelimeleri (inline fallback) ───────────────────────────
 _CAST_KEYWORDS = frozenset({
     "oynayanlar", "oyuncular", "cast", "başroller", "basroller",
     "starring", "oynayan", "oyuncu",
@@ -24,6 +26,49 @@ _CREW_KEYWORDS = frozenset({
 _PRODUCTION_KEYWORDS = frozenset({
     "yapım", "yapim", "production", "yapımevi", "yapimevi",
 })
+
+# ── JSON alias tablosu (lazy yükleme) ─────────────────────────────────────────
+_ROLE_ALIASES = None  # {aliases: {low_str: (category, canonical)}, patterns: [...]}
+
+
+def _load_role_aliases() -> dict | None:
+    """credits_role_alias_tr.json'dan rol alias'larını yükle.
+
+    Returns:
+        dict with keys 'aliases' (str→(category,canonical)) and 'patterns'
+        (list of (compiled_re, category, canonical)), or None on failure.
+    """
+    json_path = Path(__file__).resolve().parent.parent / "config" / "credits_role_alias_tr.json"
+    if not json_path.exists():
+        return None
+    try:
+        with open(json_path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        alias_map: dict[str, tuple[str, str]] = {}
+        pattern_list: list[tuple] = []
+        for role in data.get("roles", []):
+            canonical = role.get("canonical", "")
+            category = role.get("category", "")
+            if not canonical or not category:
+                continue
+            for alias in role.get("aliases", []):
+                alias_map[alias.lower()] = (category, canonical)
+            for pat in role.get("patterns", []):
+                try:
+                    pattern_list.append((re.compile(pat, re.IGNORECASE), category, canonical))
+                except re.error:
+                    pass
+        return {"aliases": alias_map, "patterns": pattern_list}
+    except Exception:
+        return None
+
+
+def _get_role_aliases() -> dict | None:
+    """Alias tablosunu lazy olarak yükle ve döndür."""
+    global _ROLE_ALIASES
+    if _ROLE_ALIASES is None:
+        _ROLE_ALIASES = _load_role_aliases()
+    return _ROLE_ALIASES
 _COMPANY_SUFFIXES = (
     "film", "films", "filmcilik", "medya", "yapım", "yapimevi",
     "production", "productions", "stüdyo", "studyo", "studio",
@@ -66,8 +111,33 @@ def _is_noise(text: str) -> bool:
 
 
 def _detect_role_category(text: str):
-    """Metin bir rol başlığı mı? Kategori adını döndür, değilse None."""
+    """Metin bir rol başlığı mı? Kategori adını döndür, değilse None.
+
+    Önce credits_role_alias_tr.json'daki alias tablosu kullanılır;
+    JSON bulunamazsa hardcoded set'lere fallback yapılır.
+    """
     low = text.strip().lower()
+
+    # ── JSON alias tablosundan eşleştir (çok dilli) ───────────────────────
+    aliases = _get_role_aliases()
+    if aliases:
+        # Tam eşleşme veya "alias: " / "alias " ile başlayan
+        if low in aliases["aliases"]:
+            return aliases["aliases"][low][0]
+        for alias, (category, _canonical) in aliases["aliases"].items():
+            if low == alias or low.startswith(alias + " ") or low.startswith(alias + ":"):
+                return category
+        # Regex pattern eşleşmesi
+        for compiled, category, _canonical in aliases["patterns"]:
+            if compiled.search(low):
+                return category
+        # Şirket suffix kontrolü (JSON'dan bağımsız)
+        for suffix in _COMPANY_SUFFIXES:
+            if low.endswith(suffix) and len(low) > len(suffix) + 2:
+                return "company"
+        return None
+
+    # ── Fallback: hardcoded set'ler ───────────────────────────────────────
     for kw in _CAST_KEYWORDS:
         if kw in low:
             return "cast"
