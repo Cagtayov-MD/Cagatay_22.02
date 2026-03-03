@@ -88,8 +88,7 @@ _TIMEOUT_SEC = 60
 _LLM_CONFIDENCE_BOOST = 0.3   # approved entries get +0.3 confidence
 _REJECTED_CONFIDENCE  = 0.2   # rejected entries get confidence set to 0.2
 
-# Parse: yalnızca "ISIM: 5" veya "5" gibi saf satırları kabul et.
-# Satır başı/sonu ile sınırlandırılmış — "5. Yönetmen" gibi içerikler false-positive üretmez.
+# Parse: yalnızca "ISIM: 5" veya "5" gibi saf satırları kabul et (false-positive'leri önle)
 _LINE_NUM_RE = re.compile(r'^(?:ISIM\s*:\s*)?(\d+)\s*$', re.IGNORECASE)
 
 
@@ -197,6 +196,7 @@ class LLMCastFilter:
             if role_kw in name_lower:
                 return False
         # Kelimelerin en az %80'i NameDB'de olmalı
+        # En az %80 kelime NameDB'de bulunmalı
         matched = sum(1 for w in words if self.name_checker(w))
         return matched / len(words) >= 0.8
 
