@@ -351,7 +351,7 @@ class PipelineRunner:
 
                 # ══ BLOK2: TMDB eşleşmedi → VLM ile derin okuma ══
                 if not tmdb_matched:
-                    if self._vlm_reader.is_available():
+                    if self._vlm_reader.enabled and self._vlm_reader.is_available():
                         self._log("\n[BLOK2] TMDB eşleşmedi — VLM ile derin okuma başlatılıyor...")
                         vlm_t = time.time()
                         vlm_ocr_lines = []
@@ -375,6 +375,8 @@ class PipelineRunner:
                             parser = CreditsParser(turkish_name_db=self._name_db)
                             parsed = parser.parse(ocr_lines, layout_pairs=layout_pairs)
                             cdata = parser.to_report_dict(parsed)
+                            # BLOK2 sonrası cdata_raw güncelle — DATABASE ham verisi tutarlı olsun
+                            cdata_raw = copy.deepcopy(cdata)
                             self._log(
                                 f"  [BLOK2] VLM okuma: {len(vlm_ocr_lines)} satır, "
                                 f"toplam: {len(ocr_lines)} satır ({time.time()-vlm_t:.1f}s)"
