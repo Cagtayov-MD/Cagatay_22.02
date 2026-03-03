@@ -112,6 +112,39 @@ def _is_noise(text: str) -> bool:
     return False
 
 
+def _extract_inline_name(text: str) -> str:
+    """'role → NAME' veya 'role: NAME' formatından isim çıkar."""
+    for sep in ("→", "->", ":", " – ", " - "):
+        if sep in text:
+            parts = text.split(sep, 1)
+            if len(parts) == 2:
+                name = parts[1].strip()
+                if len(name) >= 3 and any(c.isalpha() for c in name):
+                    return name
+    return ""
+
+
+def _is_subtitle_like(text: str) -> bool:
+    """Altyazı benzeri metinleri tespit et."""
+    t = text.strip()
+    words = t.split()
+    # 6+ kelimeli metin → muhtemelen altyazı, jenerik ismi değil
+    if len(words) > 6:
+        return True
+    # Yoğun noktalama
+    punct_count = sum(1 for c in t if c in '!?;…"\'')
+    if punct_count >= 2:
+        return True
+    # Türkçe/İngilizce fiil ekleri (isim benzeyen son ekler çıkarıldı)
+    lower = t.lower()
+    verb_suffixes = ('yor', 'mak', 'mek', 'dır', 'dir', 'lar', 'ler', 'miş', 'muş',
+                     'ing')
+    for suffix in verb_suffixes:
+        if lower.endswith(suffix) and len(t) > 15:
+            return True
+    return False
+
+
 def _detect_role_category(text: str):
     """Metin bir rol başlığı mı? Kategori adını döndür, değilse None.
 
@@ -238,14 +271,38 @@ class CreditsParser:
                 continue
             if _is_noise(text):
                 continue
+            if _is_subtitle_like(text):
+                continue
 
             # Rol başlığı tespiti
             cat = _detect_role_category(text)
             if cat:
-                current_category = cat
-                current_role = text.strip()
-                if cat == "company" and len(text.strip()) > 3:
-                    production_companies.append(text.strip())
+                # İnline isim var mı kontrol et: "yonetmen → TULAY ERATALAY" gibi
+                inline_name = _extract_inline_name(text)
+                if inline_name and cat in ("crew", "director"):
+                    current_category = cat
+                    # Rol adını ayırıcıdan önce gelen kısımdan al
+                    for sep in ("→", "->", ":", " – ", " - "):
+                        if sep in text:
+                            current_role = text.split(sep, 1)[0].strip()
+                            break
+                    else:
+                        current_role = text.strip()
+                    if cat == "director":
+                        directors.append({"name": inline_name})
+                    crew.append({
+                        "name": inline_name,
+                        "job": current_role,
+                        "role": current_role,
+                        "role_category": "crew",
+                        "confidence": 0.7,
+                        "frame": "",
+                    })
+                else:
+                    current_category = cat
+                    current_role = text.strip()
+                    if cat == "company" and len(text.strip()) > 3:
+                        production_companies.append(text.strip())
                 continue
 
             # Layout pair'de zaten varsa atla

@@ -497,6 +497,7 @@ class PipelineRunner:
             jp, tp, tr_p = exp.generate(
                 info, cdata, ocr_lines, self.stage_stats,
                 "WORKSTATION", scope, first_min, last_min,
+                keywords=cdata.get("_tmdb_keywords") or None,
                 content_profile_name=profile_name,
                 audio_result=audio_result,
                 ts=export_ts)
@@ -635,6 +636,8 @@ class PipelineRunner:
                 "raw": "tmdb",
                 "confidence": 1.0,
                 "frame": "tmdb",
+                "is_verified_name": True,
+                "is_tmdb_verified": True,
             })
 
         crew = []
@@ -667,6 +670,29 @@ class PipelineRunner:
         cdata["total_crew"] = len(crew)
         cdata["verification_status"] = "tmdb_verified"
         cdata["keywords_source"] = "tmdb_only"
+
+        # Bug 1: film_title'ı TMDB başlığıyla güncelle
+        if tmdb_result.matched_title:
+            cdata["film_title"] = tmdb_result.matched_title
+
+        # Bug 2: year'ı TMDB'den güncelle
+        if tmdb_result.year:
+            cdata["year"] = tmdb_result.year
+
+        # Bug 5: TMDB keywords ve genres'ı topla
+        tmdb_keywords = []
+        if tmdb_result.matched_title:
+            tmdb_keywords.insert(0, tmdb_result.matched_title)
+        if tmdb_result.genres:
+            tmdb_keywords.extend(tmdb_result.genres)
+        if tmdb_result.keywords:
+            tmdb_keywords.extend(tmdb_result.keywords)
+        tmdb_keywords.extend([
+            c.get("name", "") for c in (tmdb_result.crew or [])
+            if (c.get("job") or "").lower() in ("director", "yönetmen", "yonetmen")
+        ])
+        cdata["_tmdb_keywords"] = [k for k in tmdb_keywords if k]
+
         return cdata
 
     # ──────────────────────────────────────────────────────────────

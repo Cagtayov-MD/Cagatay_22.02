@@ -36,25 +36,23 @@ def _make_filter_with_none_response(name_checker=None):
 # ---------------------------------------------------------------------------
 
 def test_fail_safe_none_response_approves_nothing():
-    """When Ollama returns None, entries should be preserved (pass-through fail-safe)."""
+    """When Ollama returns None and no name_checker/high-confidence, smart fail-safe approves nothing."""
     f = _make_filter_with_none_response()
     cast = [
         _make_entry("Nisa Serezli"),
         _make_entry("Cihat Tamer"),
     ]
     result = f.filter_cast(cast)
-    # fail-safe pass-through: entries must be preserved (not deleted)
-    assert len(result) == 2
-    # All entries approved via pass-through (is_llm_verified=True)
-    assert all(e.get("is_llm_verified") for e in result)
+    # smart fail-safe: no name_checker, low confidence → nothing approved
+    assert len(result) == 0
 
 
 def test_fail_safe_none_response_with_namedb_still_protects_real_names():
-    """When Ollama returns None, real names should be preserved via pass-through."""
+    """When Ollama returns None, real names known to name_checker are preserved via smart fail-safe."""
     f = _make_filter_with_none_response(name_checker=lambda text: True)
     cast = [_make_entry("Nisa Serezli")]
     result = f.filter_cast(cast)
-    # With None response, pass-through approves entries (is_llm_verified=True)
+    # With None response, smart fail-safe keeps NameDB-known names (is_llm_verified=True)
     assert len(result) == 1
     assert result[0].get("is_llm_verified") is True
 
