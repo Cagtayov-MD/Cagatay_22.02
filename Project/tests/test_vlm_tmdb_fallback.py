@@ -43,9 +43,15 @@ def test_vlm_activated_on_tmdb_miss_even_when_disabled():
     vlm_was_enabled = reader.enabled
     reader.enabled = True  # TMDB miss → force enable
     vlm_available = reader.is_available()
+
+    if vlm_available:
+        # VLM should execute — simulate read call
+        reader.read_text_from_frame("dummy_frame.jpg", lang="tr")
+
     reader.enabled = vlm_was_enabled  # restore
 
     assert vlm_available is True, "is_available() True ise VLM çalışabilir olmalı"
+    reader.read_text_from_frame.assert_called_once(), "VLM frame okuma çağrılmalı"
     assert reader.enabled is False, "VLM enabled flag orijinal değerine dönmeli"
 
 

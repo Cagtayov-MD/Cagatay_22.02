@@ -290,7 +290,14 @@ def _words_fuzzy_match(a: str, b: str, threshold: int = 65) -> bool:
     """
     Kelime bazlı fuzzy eşleşme: iki ismi sözcük sözcük karşılaştır.
     Her kelime çifti >= threshold ise True (aynı kişi).
-    Kelime sayıları farklıysa WRatio >= 75 fallback kullanılır.
+
+    Threshold 65: OCR gürültüsünü tolere eder (1-2 karakter farkı),
+    ama açıkça farklı kelimeleri (Nisa/Serezli gibi) ayırt eder.
+
+    Kelime sayıları farklıysa WRatio >= 75 fallback kullanılır:
+    bu durumda tam karakter uyumu yerine genel benzerlik skoru tercih edilir,
+    çünkü kelimeleri 1-1 eşleştirmek mümkün değildir.
+
     rapidfuzz yoksa exact key karşılaştırmasına döner.
     """
     if not _HAS_RAPIDFUZZ:

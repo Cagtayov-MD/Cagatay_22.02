@@ -160,7 +160,8 @@
         "efekt", "effects", "special effects", "visual effects",
         "vfx", "sfx", "effekte", "effets spéciaux",
         "effetti speciali", "efectos especiales",
-        "efectos especiales digitales", "efectos especiales mocuillaje"
+        "efectos especiales digitales",
+        "efectos especiales maquillaje", "efectos especiales mocuillaje"
       ],
       "patterns": [
         "\\befekt\\b", "\\beffects\\b", "\\bvfx\\b", "\\bsfx\\b"

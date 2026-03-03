@@ -104,14 +104,8 @@ def test_crew_different_names_same_role_kept_separate():
 
 def test_words_fuzzy_match_without_rapidfuzz(monkeypatch):
     """WFUZZ-06: rapidfuzz yoksa exact match fallback çalışmalı."""
-    import core.export_engine as ee
-    monkeypatch.setattr(ee, "_HAS_RAPIDFUZZ", False)
-
-    from core.export_engine import _words_fuzzy_match as wmatch
-    # Reload after monkeypatching
-    import importlib
-    ee_mod = importlib.import_module("core.export_engine")
-    ee_mod._HAS_RAPIDFUZZ = False
+    import core.export_engine as ee_mod
+    monkeypatch.setattr(ee_mod, "_HAS_RAPIDFUZZ", False)
 
     # exact match → True
     assert ee_mod._words_fuzzy_match("Nisa Serezli", "Nisa Serezli") is True
