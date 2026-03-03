@@ -354,13 +354,21 @@ class OCREngine:
 
         # ═══ 8-AŞAMALI FİLTRELEME ═══
         step1 = self._noise_filter(raw_results)
+        cb(f"  [OCR-Filter] 1.Noise: {len(raw_results)} → {len(step1)}")
         step2 = self._length_filter(step1)
+        cb(f"  [OCR-Filter] 2.Length: {len(step1)} → {len(step2)}")
         step3 = self._confidence_filter(step2)
+        cb(f"  [OCR-Filter] 3.Confidence: {len(step2)} → {len(step3)}")
         step4 = self._digit_noise_filter(step3)
+        cb(f"  [OCR-Filter] 4.Digit: {len(step3)} → {len(step4)}")
         step5 = self._blacklist_filter(step4)
+        cb(f"  [OCR-Filter] 5.Blacklist: {len(step4)} → {len(step5)}")
         step6 = self._name_split_pass(step5)
+        cb(f"  [OCR-Filter] 6.NameSplit: {len(step5)} → {len(step6)}")
         step7 = self._fuzzy_dedup(step6)
+        cb(f"  [OCR-Filter] 7.Dedup: {len(step6)} → {len(step7)}")
         step8 = self._persistence_and_watermark(step7)
+        cb(f"  [OCR-Filter] 8.Watermark: {len(step7)} → {len(step8)}")
 
         cb(f"  📝 OCR: {len(raw_results)} ham → {len(step8)} temiz satır")
         return step8, unique_pairs

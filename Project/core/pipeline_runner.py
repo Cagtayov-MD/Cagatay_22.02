@@ -152,7 +152,14 @@ class PipelineRunner:
         if self._log_cb:
             self._log_cb(msg)
         self._log_messages.append(str(msg))
-        print(msg)
+        print(msg, flush=True)
+        # Incremental log — her mesaj anında dosyaya
+        if hasattr(self, '_live_log_path') and self._live_log_path:
+            try:
+                with open(self._live_log_path, "a", encoding="utf-8") as f:
+                    f.write(str(msg) + "\n")
+            except Exception:
+                pass
 
     # ──────────────────────────────────────────────────────────────
     def run(self, video_path, scope="video_only",
@@ -180,6 +187,7 @@ class PipelineRunner:
             f"arsiv_{vname}_{ts}"
         )
         os.makedirs(work_dir, exist_ok=True)
+        self._live_log_path = os.path.join(work_dir, "_live_debug.log")
 
         self.stats.start_job(video_path, "WORKSTATION", scope, profile_name)
         self.stage_stats = {}
@@ -328,6 +336,14 @@ class PipelineRunner:
                           f"Ekip:{cdata['total_crew']} "
                           f"Şirket:{cdata['total_companies']}")
 
+                # Anomali uyarıları
+                total_actors = cdata.get("total_actors", 0)
+                total_crew = cdata.get("total_crew", 0)
+                if total_actors > 500:
+                    self._log(f"  ⚠️ Anormal cast sayısı: {total_actors} — OCR kalitesi düşük olabilir")
+                if total_crew > 2000:
+                    self._log(f"  ⚠️ Anormal crew sayısı: {total_crew} — OCR kalitesi düşük olabilir")
+
                 # Snapshot before filters (DATABASE credits_raw için)
                 cdata_raw = copy.deepcopy(cdata)
 
@@ -403,7 +419,7 @@ class PipelineRunner:
                     t = time.time()
                     llm_filter = LLMCastFilter(
                         ollama_url=self.config.get("ollama_url", "http://localhost:11434"),
-                        model=self.config.get("llm_filter_model") or self.config.get("ollama_model", "llama3.1:8b"),
+                        model=self.config.get("llm_filter_model") or self.config.get("ollama_model", "qwen2.5:7b"),
                         enabled=self._llm_filter_enabled,
                         log_cb=self._log,
                         name_checker=self._name_db.is_name,
@@ -953,6 +969,7 @@ class PipelineRunner:
                     line.text = fixed
                     line.text_original = original
                 repaired += 1
+                self._log(f"    [NameDB] '{original}' → '{fixed}'")
         if repaired:
             self._log(f"  [NameDB] {repaired} satır Türkçe onarımı yapıldı")
         return ocr_lines

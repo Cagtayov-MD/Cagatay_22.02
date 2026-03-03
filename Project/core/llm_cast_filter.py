@@ -100,7 +100,7 @@ class LLMCastFilter:
     """
 
     def __init__(self, ollama_url="http://localhost:11434",
-                 model="llama3.1:8b", enabled=True, log_cb=None,
+                 model="qwen2.5:7b", enabled=True, log_cb=None,
                  name_checker=None):
         self.ollama_url = ollama_url.rstrip("/")
         self.model = model
@@ -318,11 +318,39 @@ class LLMCastFilter:
         # Orijinal confidence değerlerini sıra ile sakla (NameDB koruması için)
         orig_confidences = [e.get("confidence", 0.5) for e in cast]
 
+        consecutive_failures = 0
+        MAX_CONSECUTIVE_FAILURES = 3  # 3 ardışık timeout → tüm LLM adımını atla
+
         filtered: list[dict] = []
         for start in range(0, len(cast), _BATCH_SIZE):
             batch = cast[start: start + _BATCH_SIZE]
+
+            # Erken çıkış: ardışık timeout varsa devam etme
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                for entry in batch:
+                    e = dict(entry)
+                    e["is_llm_verified"] = False
+                    e["confidence"] = _REJECTED_CONFIDENCE
+                    filtered.append(e)
+                continue
+
             batch_result = self._filter_batch(batch)
+
+            # Timeout tespiti: batch'teki hiçbir giriş onaylanmadıysa
+            all_rejected = all(not e.get("is_llm_verified") for e in batch_result)
+            if batch_result and all_rejected:
+                consecutive_failures += 1
+            else:
+                consecutive_failures = 0
+
             filtered.extend(batch_result)
+
+        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+            self._log(
+                f"  [LLM] ⚠️ {consecutive_failures} ardışık batch başarısız — "
+                f"kalan batch'ler atlandı (Ollama muhtemelen yanıt vermiyor)",
+                log_cb,
+            )
 
         approved = []
         for i, e in enumerate(filtered):

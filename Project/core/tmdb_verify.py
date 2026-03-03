@@ -190,6 +190,54 @@ class TMDBVerify:
         if not cast_names:
             return TMDBVerifyResult(False, "no cast to verify")
 
+        # ── Anomali tespiti: gerçek dışı yüksek cast sayısı ──
+        if len(cast_names) > 500:
+            self._log(f"  [TMDB] ⚠️ Anormal cast sayısı: {len(cast_names)} — muhtemelen OCR çöpü")
+            self._log(f"  [TMDB] Sadece en güvenilir ilk 50 isim kullanılıyor")
+            cast_with_conf = []
+            for row in (cdata.get("cast") or []):
+                if not isinstance(row, dict):
+                    continue
+                name = (row.get("actor_name") or row.get("actor") or "").strip()
+                conf = float(row.get("confidence", 0.5))
+                if len(name) >= 3:
+                    cast_with_conf.append((name, conf))
+            cast_with_conf.sort(key=lambda x: x[1], reverse=True)
+            cast_names = [n for n, c in cast_with_conf[:50]]
+
+        # ── İsim kalite filtresi: OCR çöpünü TMDB'ye göndermeden ele ──
+        def _is_plausible_name(name: str) -> bool:
+            """İsim olarak makul mü? Sesli harf, kelime yapısı kontrolü."""
+            alpha_chars = [c for c in name.lower() if c.isalpha()]
+            if not alpha_chars:
+                return False
+            vowels = sum(1 for c in alpha_chars if c in 'aeıioöuü')
+            vowel_ratio = vowels / len(alpha_chars)
+            if vowel_ratio < 0.15:
+                return False
+            if vowel_ratio > 0.80:
+                return False
+            if name.isupper() and ' ' not in name and len(name) > 12:
+                return False
+            noise_words = {'filme', 'filmer', 'cinema', 'telecinco', 'production', 'studio', 'channel'}
+            if name.lower().strip() in noise_words:
+                return False
+            return True
+
+        qualified_names = [n for n in cast_names if _is_plausible_name(n)]
+
+        if len(cast_names) != len(qualified_names):
+            self._log(f"  [TMDB] İsim kalite filtresi: {len(cast_names)} → {len(qualified_names)} isim")
+            qualified_set = set(qualified_names)
+            rejected = [n for n in cast_names if n not in qualified_set]
+            if rejected[:5]:
+                self._log(f"  [TMDB] Elenen örnekler: {rejected[:5]}")
+
+        cast_names = qualified_names
+
+        if not cast_names:
+            return TMDBVerifyResult(False, "no cast to verify")
+
         # TMDB'de eşleşme bul
         tmdb_entry, kind = self._find_tmdb_entry(film_title, cast_names)
 
