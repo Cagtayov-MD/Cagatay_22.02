@@ -450,15 +450,18 @@ class MainWindow(QMainWindow):
     def _on_queue_stop(self):
         """Kuyruk Durdur butonuna basıldığında."""
         self._queue_stop_requested = True
+        self.signals.log_message.emit("[KUYRUK] ⏸ Durdurma isteği alındı — mevcut video bitince durulacak.")
 
     def _on_queue_skip(self):
         """Aktif videoyu atla — işlenmekte olan videoyu ERROR olarak işaretle ve sonrakine geç."""
         self._queue_skip_requested = True
+        self.signals.log_message.emit("[KUYRUK] ⏭ Atlama isteği alındı...")
 
     def _on_queue_force_stop(self):
         """Kuyruğu zorla durdur — mevcut videoyu da atla."""
         self._queue_stop_requested = True
         self._queue_skip_requested = True
+        self.signals.log_message.emit("[KUYRUK] ⛔ Zorla durdurma isteği alındı...")
 
     def _run_queue(self):
         """Kuyruktaki videoları sırayla işle (arka plan thread)."""
@@ -526,7 +529,9 @@ class MainWindow(QMainWindow):
                     logolar_dir=resolver.logolar,
                 )
                 def _skip_log(msg, _self=self):
-                    if _self._queue_skip_requested:
+                    # Her iki durumda da mevcut video işlemini anında durdur:
+                    # skip → sadece bu videoyu atla, stop → videoyu atla ve döngüden çık
+                    if _self._queue_skip_requested or _self._queue_stop_requested:
                         raise _VideoSkipped()
                     _self.signals.log_message.emit(msg)
                 runner.set_log_callback(_skip_log)
@@ -543,6 +548,10 @@ class MainWindow(QMainWindow):
                 self.signals.queue_item_status.emit(video_path, VideoStatus.DONE, elapsed, "")
                 self.signals.log_message.emit(
                     f"  [KUYRUK] ✅ Bitti: {Path(video_path).name} ({elapsed:.0f}s)")
+
+                # Stop isteği geldiyse mevcut başarılı sonucu kaydettik, döngüden çık
+                if self._queue_stop_requested:
+                    break
 
             except Exception as e:
                 import traceback
