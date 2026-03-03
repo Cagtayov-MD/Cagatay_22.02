@@ -59,7 +59,9 @@ def _load_role_aliases() -> dict | None:
                 except re.error:
                     pass
         return {"aliases": alias_map, "patterns": pattern_list}
-    except Exception:
+    except (json.JSONDecodeError, OSError, ValueError) as e:
+        import warnings
+        warnings.warn(f"credits_role_alias_tr.json yüklenemedi: {e}", RuntimeWarning)
         return None
 
 

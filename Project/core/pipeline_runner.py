@@ -32,6 +32,9 @@ from core.vlm_reader import VLMReader
 from utils.stats_logger import StatsLogger
 
 
+_BLOK2_FUZZY_THRESHOLD = 85  # BLOK2 dedup: iki satır bu eşiğin üzerindeyse aynı kabul edilir
+
+
 def _safe_path(path: Path) -> Path:
     """Dosya çakışması varsa _2, _3 ... ekleyerek güvenli bir yol döndür."""
     if not path.exists():
@@ -230,9 +233,7 @@ class PipelineRunner:
             tmdb_result = None
 
             # Profil bazlı OCR kontrolü
-            ocr_enabled = True
-            if content_profile:
-                ocr_enabled = bool(content_profile.get("ocr_enabled", True))
+            ocr_enabled = bool(content_profile.get("ocr_enabled", True)) if content_profile else True
 
             if scope != "audio_only" and ocr_enabled:
                 # ══ [2/6] FRAME_EXTRACT ════════════════════════════
@@ -997,7 +998,7 @@ class PipelineRunner:
             # Fuzzy dedup (rapidfuzz mevcutsa)
             if _has_rapidfuzz:
                 is_dup = any(
-                    _fuzz_ratio(vlow, pt) >= 85
+                    _fuzz_ratio(vlow, pt) >= _BLOK2_FUZZY_THRESHOLD
                     for pt in paddle_texts
                     if pt
                 )
