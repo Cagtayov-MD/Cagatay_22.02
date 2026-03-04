@@ -825,28 +825,14 @@ class ExportEngine:
             else:
                 L.append("\n  (Mac verisi bulunamadi)")
         else:
-            # Transcript varsa göster (ASR sonucu)
-            transcript = []
+            # Gemini özeti varsa göster; yoksa "aktif değil" mesajı
+            summary = None
             if audio_result and isinstance(audio_result, dict):
-                transcript = audio_result.get("transcript", [])
-
-            if transcript:
-                L.append("")
-                for seg in transcript:
-                    start = seg.get("start", 0)
-                    text  = seg.get("text", "").strip()
-                    if text:
-                        ts = _fmt_hms_shared(start, with_ms=False)
-                        L.append(f"  [{ts}] {text}")
+                summary = audio_result.get("summary") or audio_result.get("summary_tr") or audio_result.get("ollama_summary")
+            if summary:
+                L.append(f"\n  {summary}")
             else:
-                # Ollama özet varsa onu göster
-                summary = None
-                if audio_result and isinstance(audio_result, dict):
-                    summary = audio_result.get("summary") or audio_result.get("ollama_summary") or audio_result.get("summary_tr")
-                if summary:
-                    L.append(f"\n  {summary}")
-                else:
-                    L.append("\n  Özet oluşturma aktif değil")
+                L.append("\n  Özet oluşturma aktif değil")
 
         # Footer
         L.append(f"\n{sep}")

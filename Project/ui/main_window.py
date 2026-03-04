@@ -310,19 +310,21 @@ class MainWindow(QMainWindow):
     def _build_status_dots(self):
         """FFmpeg, Gemini, TMDB durum topları."""
         widget = QWidget()
+        widget.setFixedWidth(320)
         lay = QHBoxLayout(widget)
         lay.setContentsMargins(8, 0, 8, 0)
-        lay.setSpacing(16)
+        lay.setSpacing(20)
         for attr, label in [("_dot_ffmpeg", "FFMPEG"), ("_dot_gemini", "GOOGLE"), ("_dot_tmdb", "TMDB")]:
             dot = QLabel("●")
             dot.setStyleSheet(
-                "font-size: 24px; font-weight: bold; color: #555555;"
+                "font-size: 36px; font-weight: bold; color: #555555;"
             )
             lbl = QLabel(label)
-            lbl.setStyleSheet("font-size: 13px; font-weight: bold; color: #aaa;")
+            lbl.setStyleSheet("font-size: 20px; font-weight: bold; color: #aaa;")
+            lbl.setFixedWidth(80)
             setattr(self, attr, dot)
             row = QHBoxLayout()
-            row.setSpacing(5)
+            row.setSpacing(6)
             row.addWidget(dot)
             row.addWidget(lbl)
             lay.addLayout(row)
@@ -342,9 +344,9 @@ class MainWindow(QMainWindow):
         for lbl in (self._sys_date_lbl, self._sys_time_lbl):
             lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             lbl.setStyleSheet(
-                "font-size: 14px; color: #e0e0e0; font-family: 'Consolas';"
+                "font-size: 14px; color: #e0e0e0; font-family: 'Consolas', monospace;"
             )
-            lbl.setFixedWidth(110)
+            lbl.setFixedWidth(140)
             lay.addWidget(lbl)
 
         self._sys_hw_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -734,17 +736,17 @@ class MainWindow(QMainWindow):
                 if dot:
                     if ok:
                         dot.setStyleSheet(
-                            "font-size: 24px; font-weight: bold; color: #22b33a;"
+                            "font-size: 36px; font-weight: bold; color: #22b33a;"
                         )
                         from PySide6.QtWidgets import QGraphicsDropShadowEffect
                         shadow = QGraphicsDropShadowEffect(dot)
                         shadow.setColor(QColor("#22b33a"))
-                        shadow.setBlurRadius(12)
+                        shadow.setBlurRadius(16)
                         shadow.setOffset(0, 0)
                         dot.setGraphicsEffect(shadow)
                     else:
                         dot.setStyleSheet(
-                            "font-size: 24px; font-weight: bold; color: #555555;"
+                            "font-size: 36px; font-weight: bold; color: #555555;"
                         )
                         dot.setGraphicsEffect(None)
 

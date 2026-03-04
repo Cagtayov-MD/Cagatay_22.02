@@ -2,7 +2,8 @@
 
 Covers:
   BLOCK-01: Output contains all 4 block headers in correct order
-  BLOCK-02: BLOK 4 shows transcript lines when audio_result has transcript
+  BLOCK-02: BLOK 4 shows Gemini summary when audio_result has summary
+  BLOCK-02b: BLOK 4 shows "Özet oluşturma aktif değil" when audio_result has no summary
   BLOCK-03: BLOK 4 shows "Özet oluşturma aktif değil" when no audio_result
   BLOCK-04: BLOK 1 shows ASR Motor line when audio_result is provided
   BLOCK-05: Spor profile with match_data shows match info in BLOK 4 (not a separate section)
@@ -74,8 +75,8 @@ def test_four_blocks_present_in_correct_order():
     assert b1 < b2 < b3 < b4, "Bloklar yanlış sırada"
 
 
-def test_blok4_shows_transcript_when_audio_result_has_transcript():
-    """BLOCK-02: When audio_result has transcript, BLOK 4 shows timestamped lines."""
+def test_blok4_shows_summary_when_audio_result_has_summary():
+    """BLOCK-02: When audio_result has summary, BLOK 4 shows the summary text."""
     audio_result = {
         "status": "ok",
         "asr_engine": "faster-whisper",
@@ -84,12 +85,29 @@ def test_blok4_shows_transcript_when_audio_result_has_transcript():
             {"start": 12.0, "text": "Karanlık bir odada..."},
             {"start": 105.0, "text": "Kapı çalınır..."},
         ],
+        "summary": "Bu film karanlık bir odada geçen olayları konu almaktadır.",
     }
     content = _run_write_report(_make_report(), audio_result=audio_result)
-    assert "Karanlık bir odada..." in content, "Transcript satırı BLOK 4'te yok"
-    assert "Kapı çalınır..." in content, "İkinci transcript satırı yok"
-    # Should not show "Özet oluşturma aktif değil"
+    assert "Bu film karanlık bir odada geçen olayları konu almaktadır." in content, "Özet BLOK 4'te yok"
+    # Transcript lines should NOT appear directly in BLOK 4 anymore
+    assert "Karanlık bir odada..." not in content
+    assert "Kapı çalınır..." not in content
+    # Should not show "Özet oluşturma aktif değil" when summary is provided
     assert "Özet oluşturma aktif değil" not in content
+
+
+def test_blok4_shows_no_summary_message_when_audio_but_no_summary():
+    """BLOCK-02b: When audio_result exists but has no summary, shows 'Özet oluşturma aktif değil'."""
+    audio_result = {
+        "status": "ok",
+        "asr_engine": "faster-whisper",
+        "whisper_model": "large-v3",
+        "transcript": [
+            {"start": 12.0, "text": "Karanlık bir odada..."},
+        ],
+    }
+    content = _run_write_report(_make_report(), audio_result=audio_result)
+    assert "Özet oluşturma aktif değil" in content
 
 
 def test_blok4_shows_no_summary_message_when_no_audio():

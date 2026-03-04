@@ -530,8 +530,17 @@ class PipelineRunner:
 
             # ══ TRANSCRIPT ÖZETİ (Gemini) ═════════════════════════
             if audio_result and isinstance(audio_result, dict):
-                transcript_text = audio_result.get("transcript", "")
-                if transcript_text and isinstance(transcript_text, str) and transcript_text.strip():
+                raw_transcript = audio_result.get("transcript", "")
+                # transcript may be a list of segment dicts or a plain string
+                if isinstance(raw_transcript, list):
+                    transcript_text = " ".join(
+                        seg.get("text", "").strip()
+                        for seg in raw_transcript
+                        if isinstance(seg, dict) and seg.get("text", "").strip()
+                    )
+                else:
+                    transcript_text = str(raw_transcript) if raw_transcript else ""
+                if transcript_text.strip():
                     gemini_api_key = get_gemini_api_key()
                     if gemini_api_key:
                         try:
@@ -542,7 +551,7 @@ class PipelineRunner:
                                 log_cb=self._log,
                             )
                             if summary:
-                                audio_result["summary_tr"] = summary
+                                audio_result["summary"] = summary
                         except Exception as _sum_e:
                             self._log(f"  [Summarizer] Özet hatası (pipeline etkilenmedi): {_sum_e}")
                     else:
@@ -563,11 +572,11 @@ class PipelineRunner:
                 ts=export_ts)
             self._stage("EXPORT", time.time() - t)
 
-            # Kullanıcı çıktı klasörüne (output_root) ana rapor ve transcript TXT'yi kopyala
+            # Kullanıcı çıktı klasörüne (output_root) yalnızca ana rapor TXT'yi kopyala
             if self.output_root:
                 out_root = Path(self.output_root)
                 out_root.mkdir(parents=True, exist_ok=True)
-                for _src in (tp, tr_p):
+                for _src in (tp,):
                     _src_p = Path(_src)
                     if _src_p.is_file():
                         _dst = _safe_path(out_root / _src_p.name)
