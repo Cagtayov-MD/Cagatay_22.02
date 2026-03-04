@@ -2,29 +2,41 @@
 gemini_summarizer.py — Transcript'ten Türkçe özet çıkarma (Gemini 2.5 Flash).
 
 summarize_transcript(transcript_text, api_key, log_cb) -> str | None
-  - Transcript metninin ilk ~4000 karakterini Gemini'ye gönderir
-  - 5-8 cümlelik Türkçe özet döndürür
+  - Transcript metnini Gemini'ye gönderir
+  - 8-12 cümlelik Türkçe özet döndürür
 """
 
 import core.llm_provider as _llm
 
 _TIMEOUT_SEC = 30
-_MAX_CHARS = 4000
+_MAX_CHARS = 120000
 
 _SYSTEM_PROMPT = (
-    "Sen profesyonel bir içerik editörüsün. Ekteki transcripti kullanarak içeriği özetle.\n\n"
-    "Şartlarım:\n\n"
-    "Uzunluk: Özet en az 5, en fazla 10 cümle olmalı. Akıcı, doğal ve tek bir paragraf olmalı.\n\n"
-    "Bilgi Kaynağı: Eğer bu bilinen bir filmse, genel kültürünü kullanarak isimleri ve mekanları doğrula. "
-    "Eğer internette bilgisi olmayan bir dizi bölümü ise, asla uydurma yapma ve sadece transcriptteki olaylara sadık kal.\n\n"
-    "Hata Düzeltme: Ses dökümündeki fonetik hataları (Örn: 'Key'->'Kay', 'Met'->'Matt') mantık çerçevesinde düzelt. "
-    "Karakter rollerini ve mekanları netleştir.\n\n"
-    "Gürültü Ayıklama: Günlük selamlaşmaları ve önemsiz diyalogları ele. "
-    "Sadece olay akışını değiştiren kilit sahnelere odaklan.\n\n"
-    "İçerik Yapısı: Hikayenin nerede başladığını, ana karakterin amacını, karşılaştığı ana engeli "
-    "ve bölümün/filmin nasıl sonuçlandığını anlat.\n\n"
-    "Tür ve Ton: İçeriğin türünü (komedi, dram, gerilim) tespit et ve üslubunu ona göre ayarla.\n\n"
-    "Önemli: 'Özet:', 'Giriş:' gibi başlıklar kullanma. Direkt hikayeyi anlatan doğal bir metin yaz."
+    "Sen profesyonel bir senaryo analistisin. Sana bir filmin veya dizi bölümünün "
+    "otomatik oluşturulmuş, hatalı yazımlar içeren bir transcripti verilecektir.\n\n"
+    "GÖREVİN:\n"
+    "Bu transcripti BAŞTAN SONA analiz ederek içeriğin olay örgüsünü özetle.\n\n"
+    "TEMEL KURAL:\n"
+    "YALNIZCA transcript'i kullan. İçerik tanıdık gelse bile "
+    "olayları transcriptten çıkar, asla uydurma yapma.\n"
+    "Transcriptte geçmeyen bir olay veya bilgiyi kesinlikle ekleme.\n\n"
+    "İSİM ve HATA DÜZELTMESİ:\n"
+    "Otomatik transkripsiyondan kaynaklanan fonetik hataları bağlamdan çıkar ve düzelt.\n"
+    "Aynı karakterin farklı yazımlarını (örn: 'Met'/'Mert'/'Matt') birleştir.\n"
+    "Karakter isimlerini, mekânları ve rolleri tutarlı hale getir.\n\n"
+    "KAPSAM:\n"
+    "Transcriptin başından SONUNA kadar tüm ana olayları kapsa.\n"
+    "Hiçbir kilit sahneyi atlama; her ana olay en az bir cümleyle temsil edilmeli.\n"
+    "Özellikle SON SAHNE mutlaka dahil edilmeli — hikayenin nasıl bittiğini yaz.\n\n"
+    "GÜRÜLTÜ AYIKLAMA:\n"
+    "Tekrarlayan altyazı etiketleri, selamlaşmalar ve "
+    "önemsiz diyalogları yoksay.\n"
+    "Uzun sessiz bölümleri dikkate alma.\n\n"
+    "ÇIKTI FORMATI:\n"
+    "- Tek paragraf, akıcı ve edebi Türkçe\n"
+    "- Giriş → Gelişme → Sonuç akışını koru\n"
+    "- 8-12 cümle\n"
+    "- Başlık kullanma, doğrudan hikayeyi anlatmaya başla"
 )
 
 
@@ -43,12 +55,11 @@ def summarize_transcript(
         log_cb: İsteğe bağlı log callback fonksiyonu.
 
     Returns:
-        5-8 cümlelik Türkçe özet string'i veya hata durumunda None.
+        8-12 cümlelik Türkçe özet string'i veya hata durumunda None.
     """
     if not transcript_text or not transcript_text.strip():
         return None
 
-    # İlk ~4000 karakteri al
     snippet = transcript_text.strip()[:_MAX_CHARS]
     prompt = f"Transcript:\n{snippet}"
 
