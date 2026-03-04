@@ -448,6 +448,7 @@ class MainWindow(QMainWindow):
 
         self._queue_running = True
         self._queue_stop_requested = False
+        self._queue_skip_requested = False
         self._queue_profile_name = self.content_combo.currentText()
         self.queue_tab.set_running(True)
 
@@ -537,9 +538,9 @@ class MainWindow(QMainWindow):
                     logolar_dir=resolver.logolar,
                 )
                 def _skip_log(msg, _self=self):
-                    # Her iki durumda da mevcut video işlemini anında durdur:
-                    # skip → sadece bu videoyu atla, stop → videoyu atla ve döngüden çık
-                    if _self._queue_skip_requested or _self._queue_stop_requested:
+                    # skip/force-stop → mevcut videoyu anında durdur
+                    # Güvenli Dur → sadece döngü koşulunu kontrol eder, mevcut video tamamlanır
+                    if _self._queue_skip_requested:
                         raise _VideoSkipped()
                     _self.signals.log_message.emit(msg)
                 runner.set_log_callback(_skip_log)
