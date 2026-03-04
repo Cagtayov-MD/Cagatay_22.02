@@ -528,6 +528,26 @@ class PipelineRunner:
                     self._log(f"  [AUDIO] HATA: {ae}")
                     audio_result = {"status": "error", "error": str(ae)}
 
+            # ══ TRANSCRIPT ÖZETİ (Gemini) ═════════════════════════
+            if audio_result and isinstance(audio_result, dict):
+                transcript_text = audio_result.get("transcript", "")
+                if transcript_text and isinstance(transcript_text, str) and transcript_text.strip():
+                    gemini_api_key = get_gemini_api_key()
+                    if gemini_api_key:
+                        try:
+                            from core.gemini_summarizer import summarize_transcript
+                            summary = summarize_transcript(
+                                transcript_text,
+                                api_key=gemini_api_key,
+                                log_cb=self._log,
+                            )
+                            if summary:
+                                audio_result["summary_tr"] = summary
+                        except Exception as _sum_e:
+                            self._log(f"  [Summarizer] Özet hatası (pipeline etkilenmedi): {_sum_e}")
+                    else:
+                        self._log("  [Summarizer] Gemini API key yok — özet atlanıyor")
+
             # ══ EXPORT ════════════════════════════════════════════
             self._log(f"\n[EXPORT]")
             t = time.time()
