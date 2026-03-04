@@ -366,12 +366,14 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
                 char_buckets[key] = {"actor_variants": [a] if a else [],
                                      "char_variants": [c],
                                      "confidences": [row.get("confidence", 0.6)],
-                                     "verified": [row.get("is_verified_name", False) or row.get("is_llm_verified", False)]}
+                                     "verified": [row.get("is_verified_name", False) or row.get("is_llm_verified", False)],
+                                     "tmdb_orders": [row.get("tmdb_order")]}
             else:
                 if a: b["actor_variants"].append(a)
                 b["char_variants"].append(c)
                 b["confidences"].append(row.get("confidence", 0.6))
                 b["verified"].append(row.get("is_verified_name", False) or row.get("is_llm_verified", False))
+                b["tmdb_orders"].append(row.get("tmdb_order"))
         else:
             no_char_rows.append({
                 "actor_name": a,
@@ -396,12 +398,14 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
             seen_actors.add(actor_key)
         best_conf = max(b.get("confidences") or [0.6])
         is_verified = any(b.get("verified") or [])
+        tmdb_order_val = min((o for o in b.get("tmdb_orders", []) if o is not None), default=None)
         char_based.append({
             "actor_name": actor,
             "character_name": char,
             "confidence": round(best_conf, 3),
             "is_verified_name": is_verified,
             "is_llm_verified": is_verified,
+            "tmdb_order": tmdb_order_val,
         })
 
     # ── GRUP 2: Karakter ismi olmayanlar — fuzzy clustering ──
@@ -482,8 +486,15 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
 
     # Birleştir: önce karakter bilgisi olanlar, sonra olmayanlar
     out = char_based + no_char_based
-    out.sort(key=lambda r: (_norm_key(r.get("character_name", "")),
-                             _norm_key(r.get("actor_name", ""))))
+
+    def _sort_key(r):
+        tmdb_order = r.get("tmdb_order")
+        if tmdb_order is not None:
+            return (0, tmdb_order, _norm_key(r.get("actor_name", "")))
+        return (1, 0, _norm_key(r.get("character_name", "")),
+                _norm_key(r.get("actor_name", "")))
+
+    out.sort(key=_sort_key)
 
     # Çöp filtresi: doğrulanmamış ve düşük confidence → çıkar
     final = []
@@ -633,11 +644,20 @@ class ExportEngine:
         dur = video_info.get("duration_seconds", 1)
 
         # Final çıktı temizliği (dedup + en iyi varyant seçimi)
+        # TMDB kaynaklı veriyi canonicalize'dan geçirme — zaten temiz ve sıralı
+        # verification_status veya frame alanı ile TMDB kaynağı kontrol edilir
         try:
-            if credits_data.get('cast'):
-                credits_data['cast'] = _canonicalize_cast(credits_data['cast'])
-            if credits_data.get('crew'):
-                credits_data['crew'] = _canonicalize_crew(credits_data['crew'])
+            is_tmdb = (
+                credits_data.get("verification_status") == "tmdb_verified"
+                or all(c.get("frame") == "tmdb" for c in (credits_data.get("cast") or []) if c)
+            )
+            if not is_tmdb:
+                if credits_data.get('cast'):
+                    credits_data['cast'] = _canonicalize_cast(credits_data['cast'])
+                if credits_data.get('crew'):
+                    credits_data['crew'] = _canonicalize_crew(credits_data['crew'])
+            # technical_crew her durumda crew ile senkron tutulur
+            if credits_data.get('crew') and 'technical_crew' not in credits_data:
                 credits_data['technical_crew'] = list(credits_data['crew'])
         except Exception as e:
             # Log canonicalization errors but continue with uncanonicalized data
