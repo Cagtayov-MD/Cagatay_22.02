@@ -211,6 +211,11 @@ marimo/_lsp/
 __marimo__/
 *.pyc
 *.pyc
+<<<<<<< Updated upstream
 
 # E-posta sayacı (kişisel veri, repoya dahil edilmez)
 Project/data/email_counter.txt
+=======
+*.pyc
+*.pyc
+>>>>>>> Stashed changes
