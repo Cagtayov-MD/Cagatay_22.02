@@ -187,10 +187,12 @@ class PipelineRunner:
         vname = Path(video_path).stem
         film_title_from_filename = self._extract_film_title_from_filename(vname)
         ts    = datetime.now().strftime("%Y%m%d_%H%M%S")
-        work_dir = os.path.join(
-            self.output_root or os.path.dirname(video_path),
-            f"arsiv_{vname}_{ts}"
+        db_root = (
+            self.config.get("database_root") or
+            os.environ.get("VITOS_DATABASE_ROOT") or
+            r"D:\DATABASE\FilmDizi"
         )
+        work_dir = os.path.join(db_root, f"arsiv_{vname}_{ts}")
         os.makedirs(work_dir, exist_ok=True)
         self._live_log_path = os.path.join(work_dir, "_live_debug.log")
 
@@ -381,7 +383,7 @@ class PipelineRunner:
                                 misses=tmdb_result.misses,
                                 updated=tmdb_result.updated,
                                 matched_title=tmdb_result.matched_title)
-                    if tmdb_result.updated:
+                    if tmdb_result.updated or tmdb_result.matched_id:
                         self._log(f"  OK: '{tmdb_result.matched_title}' — "
                                   f"hits:{tmdb_result.hits} misses:{tmdb_result.misses}")
                         # TMDB-only credits output when verification succeeds
@@ -685,6 +687,25 @@ class PipelineRunner:
 
         return result
 
+    _JOB_TR = {
+        "Director": "Yönetmen",
+        "Screenplay": "Senaryo",
+        "Screenwriter": "Senarist",
+        "Writer": "Yazar",
+        "Story": "Hikaye",
+        "Producer": "Yapımcı",
+        "Executive Producer": "Baş Yapımcı",
+        "Cinematography": "Görüntü Yönetmeni",
+        "Director of Photography": "Görüntü Yönetmeni",
+        "Editor": "Kurgu",
+        "Original Music Composer": "Müzik",
+        "Music": "Müzik",
+        "Costume Design": "Kostüm",
+        "Production Design": "Yapım Tasarımı",
+        "Sound": "Ses",
+        "Makeup": "Makyaj",
+    }
+
     def _apply_tmdb_credits(self, cdata: dict, tmdb_result):
         """TMDB doğrulama başarılıysa rapor içeriğini TMDB kanonik verisiyle sınırla."""
         cast = []
@@ -714,6 +735,7 @@ class PipelineRunner:
                 "name": name,
                 "job": job,
                 "role": job or "Crew",
+                "role_tr": self._JOB_TR.get(job, ""),
                 "role_category": "crew",
                 "raw": "tmdb",
                 "confidence": 1.0,
@@ -1022,10 +1044,14 @@ class PipelineRunner:
         db_dir.mkdir(parents=True, exist_ok=True)
 
         # 1. work_dir içindeki tüm dosyaları DB klasörüne kopyala
-        for src in Path(work_dir).iterdir():
-            if src.is_file():
-                dst = _safe_path(db_dir / src.name)
-                shutil.copy2(src, dst)
+        # work_dir zaten db_dir altındaysa (veya aynıysa) gereksiz kopyalamayı atla
+        work_path = Path(work_dir).resolve()
+        db_dir_resolved = db_dir.resolve()
+        if not (work_path == db_dir_resolved or db_dir_resolved in work_path.parents):
+            for src in Path(work_dir).iterdir():
+                if src.is_file():
+                    dst = _safe_path(db_dir / src.name)
+                    shutil.copy2(src, dst)
 
         # 2. OCR dual-score JSON yaz
         ocr_scores = self._build_ocr_scores(ocr_lines, credits_data)
