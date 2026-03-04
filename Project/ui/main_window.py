@@ -307,12 +307,12 @@ class MainWindow(QMainWindow):
         return grp
 
     def _build_status_dots(self):
-        """FFmpeg, Google, TMDB durum topları."""
+        """FFmpeg, Gemini, TMDB durum topları."""
         widget = QWidget()
         lay = QHBoxLayout(widget)
         lay.setContentsMargins(8, 0, 8, 0)
         lay.setSpacing(12)
-        for attr, label in [("_dot_ffmpeg", "FFmpeg"), ("_dot_google", "Google"), ("_dot_tmdb", "TMDB")]:
+        for attr, label in [("_dot_ffmpeg", "FFmpeg"), ("_dot_gemini", "Gemini"), ("_dot_tmdb", "TMDB")]:
             dot = QLabel("●")
             dot.setStyleSheet("font-size: 18px; color: #555555;")
             lbl = QLabel(label)
@@ -728,8 +728,9 @@ class MainWindow(QMainWindow):
                 if dot:
                     dot.setStyleSheet(f"font-size: 18px; color: {'#22b33a' if ok else '#e94560'};")
 
+            gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
             _set_dot("_dot_ffmpeg", bool(r.ffmpeg))
-            _set_dot("_dot_google", bool(r.google_json))
+            _set_dot("_dot_gemini", bool(gemini_key))
             _set_dot("_dot_tmdb", API_KEYS_JSON.is_file())
 
             if r.errors:
