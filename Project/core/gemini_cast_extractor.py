@@ -30,6 +30,27 @@ KATİ KURALLAR:
 - Aynı kişi farklı yazımlarla geçiyorsa tekilleştir: en doğru/standart yazımı kullan.
 - OCR düzeltmesi yap: harf hataları, aksanlar (Gonxalez→González), birleşik/ayrık kelimeler vb.
 
+ÇOKLU KOLON DÜZENİ (KRİTİK):
+- Film jeneriğinde isimler bazen yatayda 2-3 kolonda gösterilir.
+  OCR bu kolonları soldan sağa okur ve YANLIŞ birleştirir.
+  
+  ÖRNEK HATA:
+    OCR satırları: ["Tommy", "Murvyn", "Douglas", "Rettig", "Vye", "Spencer"]
+    Yanlış okuma:  Tommy Murvyn Douglas + Rettig Vye Spencer
+    Doğru okuma:   Tommy Rettig | Murvyn Vye | Douglas Spencer
+    (her kolondaki üst kelime + alt kelime = bir isim)
+
+- Bu örüntüyü tanı: Ardışık satırlarda N adet tekil kelime varsa
+  ve bu kelimeler bilinen isim parçalarıysa, kolonlara göre eşleştir.
+- Tek başına "Tommy", "Murvyn", "Rettig", "Vye", "Spencer", "Douglas" 
+  gibi kelimeler geliyorsa bunların çok kolonlu bir isim listesinin 
+  parçası olduğunu anla ve doğru şekilde birleştir.
+- Genel kural: üst satır sırasıyla ad, alt satır sırasıyla soyad
+  (veya tam tersi) olabilir. Bilgi tabanındaki gerçek oyuncu isimlerini
+  kullanarak doğru eşleştirmeyi yap.
+- Eğer film adı verilmişse, o filme ait bilinen oyuncu isimlerini referans al
+  ve OCR bozukluklarını bu bilgiyle düzelt.
+
 ÇIKTI ŞEMASI (kesin):
 {{
   "cast": [
@@ -52,7 +73,7 @@ CREW kuralları:
 - "role": mümkünse kısa ve standart tut (örn: Director, Producer, Writer, Cinematography, Editor, Music, Costume, Makeup, Sound, Production Design).
 - Rol belli değilse crew'e ekleme.
 
-GİRDİ OCR METNİ:
+GİRDİ (Film Adı: {film_title}):
 {ocr_text}
 """
 
@@ -89,7 +110,7 @@ class GeminiCastExtractor:
         if not ocr_text:
             return {}
 
-        prompt = _EXTRACT_PROMPT.format(ocr_text=ocr_text)
+        prompt = _EXTRACT_PROMPT.format(ocr_text=ocr_text, film_title=film_title)
         if film_title:
             self._log(f"  [Gemini] Cast ayıklama: '{film_title}'")
         else:
