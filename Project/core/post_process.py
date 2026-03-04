@@ -204,15 +204,36 @@ class PostProcessStage:
 
     def _summarize(self, transcript: str, provider: str,
                    base_url: str, model: str | None) -> str:
-        """5-8 cümle Türkçe özet üret."""
+        """8-12 cümle Türkçe özet üret."""
         system = (
-            "Sen bir film/dizi analistisın. "
-            "Sana verilen transcript'ten 5-8 cümlelik Türkçe özet çıkar. "
-            "Önemli kişileri, olayları ve konuları vurgula. "
-            "Sadece özeti yaz."
+            "Sen profesyonel bir senaryo analistisin. Sana bir filmin veya dizi bölümünün "
+            "otomatik oluşturulmuş, hatalı yazımlar içeren bir transcripti verilecektir.\n\n"
+            "GÖREVİN:\n"
+            "Bu transcripti BAŞTAN SONA analiz ederek içeriğin olay örgüsünü özetle.\n\n"
+            "TEMEL KURAL:\n"
+            "YALNIZCA transcript'i kullan. İçerik tanıdık gelse bile "
+            "olayları transcriptten çıkar, asla uydurma yapma.\n"
+            "Transcriptte geçmeyen bir olay veya bilgiyi kesinlikle ekleme.\n\n"
+            "İSİM ve HATA DÜZELTMESİ:\n"
+            "Otomatik transkripsiyondan kaynaklanan fonetik hataları bağlamdan çıkar ve düzelt.\n"
+            "Aynı karakterin farklı yazımlarını (örn: 'Met'/'Mert'/'Matt') birleştir.\n"
+            "Karakter isimlerini, mekânları ve rolleri tutarlı hale getir.\n\n"
+            "KAPSAM:\n"
+            "Transcriptin başından SONUNA kadar tüm ana olayları kapsa.\n"
+            "Hiçbir kilit sahneyi atlama; her ana olay en az bir cümleyle temsil edilmeli.\n"
+            "Özellikle SON SAHNE mutlaka dahil edilmeli — hikayenin nasıl bittiğini yaz.\n\n"
+            "GÜRÜLTÜ AYIKLAMA:\n"
+            "Tekrarlayan altyazı etiketleri, selamlaşmalar ve "
+            "önemsiz diyalogları yoksay.\n"
+            "Uzun sessiz bölümleri dikkate alma.\n\n"
+            "ÇIKTI FORMATI:\n"
+            "- Tek paragraf, akıcı ve edebi Türkçe\n"
+            "- Giriş → Gelişme → Sonuç akışını koru\n"
+            "- 8-12 cümle\n"
+            "- Başlık kullanma, doğrudan hikayeyi anlatmaya başla"
         )
         return self._chat(
-            f"Transcript:\n{transcript[:4000]}", system,
+            f"Transcript:\n{transcript[:120000]}", system,
             provider, base_url, model
         )
 
