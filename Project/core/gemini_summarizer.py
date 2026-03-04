@@ -8,7 +8,7 @@ summarize_transcript(transcript_text, api_key, log_cb) -> str | None
 
 import core.llm_provider as _llm
 
-_TIMEOUT_SEC = 30
+_TIMEOUT_SEC = 90
 _MAX_CHARS = 120000
 
 _SYSTEM_PROMPT = (

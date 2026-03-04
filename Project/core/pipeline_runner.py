@@ -732,12 +732,31 @@ class PipelineRunner:
                 "tmdb_order": item.get("order", 999),
             })
 
+        # Uncredited oyuncuları filtrele
+        cast = [c for c in cast if "uncredited" not in (c.get("character_name") or "").lower()]
+        # tmdb_order'a göre sırala
+        cast.sort(key=lambda x: x.get("tmdb_order", 999))
+        # Max 15 ile sınırla
+        cast = cast[:15]
+
+        _STUNT_JOBS = {
+            "stunts", "stunt double", "stunt coordinator", "stunt",
+            "stunt driver", "stunt performer", "stunt actor", "utility stunts",
+            "dublör", "dublör koordinatörü",
+            "stuntkoordinator", "stunt-koordinator",
+            "cascadeur", "coordinateur des cascades",
+        }
+
         crew = []
         for item in (tmdb_result.crew or []):
             name = (item.get("name") or "").strip()
             if not name:
                 continue
             job = (item.get("job") or "").strip()
+            job_lower = job.lower().strip()
+            # Stunt/dublör rollerini tamamen atla
+            if job_lower in _STUNT_JOBS or "stunt" in job_lower:
+                continue
             crew.append({
                 "name": name,
                 "job": job,
@@ -1062,7 +1081,11 @@ class PipelineRunner:
             r"D:\DATABASE\FilmDizi"
         )
 
-        stem = Path(video_info.get("filename", "out")).stem
+        film_title = (credits_data.get("film_title") or "").strip()
+        if film_title:
+            stem = film_title.replace(" ", "_")
+        else:
+            stem = Path(video_info.get("filename", "out")).stem
 
         db_dir = Path(db_root) / stem
         db_dir.mkdir(parents=True, exist_ok=True)
