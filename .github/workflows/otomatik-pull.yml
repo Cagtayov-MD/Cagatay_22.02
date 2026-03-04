@@ -10,6 +10,9 @@ jobs:
     runs-on: self-hosted 
     
     steps:
+      - name: Dizin Sahipliğini Güvenli Yap
+        run: git config --global --add safe.directory F:/REPO_GitHub/Cagatay_22.02
+
       - name: Yeni Kodu Çek
-        working-directory: F:\REPO_GitHub\Cagatay_22.02\Project
+        working-directory: F:\REPO_GitHub\Cagatay_22.02
         run: git pull origin main
