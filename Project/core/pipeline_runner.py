@@ -585,6 +585,14 @@ class PipelineRunner:
                         shutil.copy2(_src_p, _dst)
                         self._log(f"  [EXPORT] Kullanıcı raporu kopyalandı: {_dst.name}")
 
+            # E-posta bildirimi (opsiyonel — config'de email_enabled: true ise çalışır)
+            if self.config.get("email_enabled", False) and tp and Path(tp).is_file():
+                try:
+                    from core.email_notifier import send_result_email
+                    send_result_email(tp, log_cb=self._log)
+                except Exception as _email_exc:
+                    self._log(f"  [Email] Gönderilemedi: {_email_exc}")
+
             # ══ DATABASE ══════════════════════════════════════════
             try:
                 self._write_database(
