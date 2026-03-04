@@ -19,7 +19,7 @@ import os
 from pathlib import Path
 from datetime import datetime
 
-from config.runtime_paths import get_tmdb_api_key, resolve_name_db_path
+from config.runtime_paths import get_tmdb_api_key, get_gemini_api_key, resolve_name_db_path
 
 from core.frame_extractor import FrameExtractor
 from core.text_filter import TextFilter
@@ -133,6 +133,9 @@ class PipelineRunner:
 
         # LLMCastFilter config
         self._llm_filter_enabled = bool(self.config.get("llm_cast_filter", True))
+
+        # BLOK2 (VLM derin okuma) — varsayılan KAPALI
+        self._blok2_enabled = bool(self.config.get("blok2_enabled", False))
 
         # VLMReader (VLM-as-OCR) — off by default
         vlm_ocr_enabled = bool(
@@ -381,7 +384,7 @@ class PipelineRunner:
 
                 # ══ BLOK2: TMDB eşleşmedi → VLM ile derin okuma ══
                 if not tmdb_matched:
-                    if self._vlm_reader.enabled and self._vlm_reader.is_available():
+                    if self._blok2_enabled and self._vlm_reader.enabled and self._vlm_reader.is_available():
                         self._log("\n[BLOK2] TMDB eşleşmedi — VLM ile derin okuma başlatılıyor...")
                         vlm_t = time.time()
                         vlm_ocr_lines = []
@@ -411,15 +414,51 @@ class PipelineRunner:
                                 f"  [BLOK2] VLM okuma: {len(vlm_ocr_lines)} satır, "
                                 f"toplam: {len(ocr_lines)} satır ({time.time()-vlm_t:.1f}s)"
                             )
+                    else:
+                        self._log("  [BLOK2] Pasif — config'de blok2_enabled=false")
+                        # Gemini cast extraction
+                        gemini_api_key = get_gemini_api_key()
+                        if gemini_api_key:
+                            from core.gemini_cast_extractor import GeminiCastExtractor
+                            extractor = GeminiCastExtractor(
+                                api_key=gemini_api_key,
+                                log_cb=self._log,
+                            )
+                            gemini_result = extractor.extract(
+                                ocr_lines=[
+                                    line.get("text", "") if isinstance(line, dict) else line.text
+                                    for line in ocr_lines
+                                ],
+                                film_title=cdata.get("film_title", ""),
+                            )
+                            if gemini_result and (gemini_result.get("cast") or gemini_result.get("crew")):
+                                self._log(
+                                    f"  [Gemini] Cast: {len(gemini_result.get('cast', []))} oyuncu, "
+                                    f"Crew: {len(gemini_result.get('crew', []))} kişi"
+                                )
+                                cdata["cast"] = gemini_result.get("cast", [])
+                                cdata["crew"] = gemini_result.get("crew", [])
+                                cdata["total_actors"] = len(cdata["cast"])
+                                cdata["total_crew"] = len(cdata["crew"])
+                                cdata["gemini_extracted"] = True
+                        else:
+                            self._log("  [Gemini] API key bulunamadı — atlanıyor")
 
                 # ══ [LLM] LLM_CAST_FILTER ══════════════════════════
                 # Sadece TMDB eşleşmezse LLM devreye girsin
                 if not tmdb_matched:
                     self._log(f"\n[LLM] Cast Filtreleme (TMDB eşleşmedi)")
                     t = time.time()
+                    # Provider gemini iken Ollama model adı gönderme
+                    import core.llm_provider as _llm_prov
+                    _active_provider = _llm_prov.get_provider()
+                    if _active_provider == "gemini":
+                        _llm_filter_model = self.config.get("llm_filter_model") or None
+                    else:
+                        _llm_filter_model = self.config.get("llm_filter_model") or self.config.get("ollama_model", "qwen2.5vl:7b")
                     llm_filter = LLMCastFilter(
                         ollama_url=self.config.get("ollama_url", "http://localhost:11434"),
-                        model=self.config.get("llm_filter_model") or self.config.get("ollama_model", "qwen2.5vl:7b"),
+                        model=_llm_filter_model,
                         enabled=self._llm_filter_enabled,
                         log_cb=self._log,
                         name_checker=self._name_db.is_name,

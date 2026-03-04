@@ -1,0 +1,122 @@
+"""
+gemini_cast_extractor.py — Gemini 2.5 Flash ile cast/crew ayıklama.
+
+TMDB eşleşmediğinde, PaddleOCR + 8'li filtre sonrası temizlenmiş
+OCR metin listesini Gemini API'ye gönderir. Gemini metin bazlı olarak:
+- Gerçek kişi isimlerini ayıklar
+- Çöp/gürültü metinleri eler
+- Cast (oyuncu) ve Crew (teknik ekip) ayrımı yapar
+- Bozuk isimleri düzeltir (OCR hataları)
+
+Görsel/frame göndermez — sadece metin bazlı çalışır.
+API: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+"""
+
+import json
+
+import core.llm_provider as _llm
+
+_TIMEOUT_SEC = 30
+
+_EXTRACT_PROMPT = """Aşağıda bir film/dizi jeneriğinden OCR ile okunmuş ham metin satırları var.
+Bu listeden:
+1. Gerçek kişi isimlerini ayıkla (çöp/gürültü metinleri ele)
+2. Cast (oyuncular) ve Crew (teknik ekip) olarak ayır
+3. OCR hatalarını düzelt (örn: "Javiar" → "Javier", "Gonxalez" → "González")
+4. Varsa karakter adı ↔ oyuncu eşleşmesini koru
+
+JSON formatında dön:
+{{"cast": [{{"actor_name": "...", "character_name": "..."}}], "crew": [{{"name": "...", "role": "..."}}]}}
+
+Metin listesi:
+{ocr_text}"""
+
+
+class GeminiCastExtractor:
+    """Gemini 2.5 Flash ile OCR metinden cast/crew ayıkla."""
+
+    def __init__(self, api_key: str, model: str = "gemini-2.5-flash", log_cb=None):
+        self._api_key = api_key
+        self._model = model
+        self._log_cb = log_cb
+
+    def _log(self, msg: str) -> None:
+        if self._log_cb:
+            self._log_cb(msg)
+
+    def extract(self, ocr_lines: list[str], film_title: str = "") -> dict:
+        """OCR satırlarından cast/crew ayıkla.
+
+        Args:
+            ocr_lines: Ham OCR metin satırları listesi.
+            film_title: Film/dizi başlığı (isteğe bağlı, log için).
+
+        Returns:
+            {"cast": [...], "crew": [...]} veya hata durumunda boş dict.
+        """
+        if not ocr_lines:
+            return {}
+
+        if not self._api_key:
+            self._log("  [Gemini] API key yok — atlanıyor")
+            return {}
+
+        ocr_text = "\n".join(line.strip() for line in ocr_lines if line and line.strip())
+        if not ocr_text:
+            return {}
+
+        prompt = _EXTRACT_PROMPT.format(ocr_text=ocr_text)
+        if film_title:
+            self._log(f"  [Gemini] Cast ayıklama: '{film_title}'")
+        else:
+            self._log("  [Gemini] Cast ayıklama başlatılıyor...")
+
+        try:
+            response = _llm._gemini_generate(
+                prompt,
+                api_key=self._api_key,
+                model=self._model,
+                timeout=_TIMEOUT_SEC,
+                log_cb=self._log_cb,
+            )
+        except Exception as e:
+            self._log(f"  [Gemini] API hatası: {e}")
+            return {}
+
+        if not response:
+            self._log("  [Gemini] Boş yanıt")
+            return {}
+
+        return self._parse_response(response)
+
+    def _parse_response(self, response: str) -> dict:
+        """Gemini yanıtından JSON cast/crew verisi çıkar."""
+        # JSON bloğunu bul (```json ... ``` veya ham JSON)
+        text = response.strip()
+        # Markdown code fences temizle
+        if "```" in text:
+            start = text.find("{", text.find("```"))
+            end = text.rfind("}") + 1
+            if start != -1 and end > start:
+                text = text[start:end]
+        else:
+            start = text.find("{")
+            end = text.rfind("}") + 1
+            if start != -1 and end > start:
+                text = text[start:end]
+
+        try:
+            data = json.loads(text)
+        except (json.JSONDecodeError, ValueError) as e:
+            self._log(f"  [Gemini] JSON parse hatası: {e}")
+            return {}
+
+        if not isinstance(data, dict):
+            return {}
+
+        result = {}
+        if "cast" in data and isinstance(data["cast"], list):
+            result["cast"] = data["cast"]
+        if "crew" in data and isinstance(data["crew"], list):
+            result["crew"] = data["crew"]
+        return result
