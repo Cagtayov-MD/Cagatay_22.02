@@ -31,14 +31,14 @@ KATİ KURALLAR:
 - OCR düzeltmesi yap: harf hataları, aksanlar (Gonxalez→González), birleşik/ayrık kelimeler vb.
 
 ÇIKTI ŞEMASI (kesin):
-{
+{{
   "cast": [
-    {"actor_name": "Ad Soyad", "character_name": "Karakter" }
+    {{"actor_name": "Ad Soyad", "character_name": "Karakter" }}
   ],
   "crew": [
-    {"name": "Ad Soyad", "role": "Görev/Rol" }
+    {{"name": "Ad Soyad", "role": "Görev/Rol" }}
   ]
-}
+}}
 
 CAST kuralları:
 - Actor (oyuncu) isimlerini "cast" içine koy.
