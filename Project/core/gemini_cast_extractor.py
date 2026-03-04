@@ -72,6 +72,7 @@ CREW kuralları:
 - Crew'e sadece kişi isimlerini ekle.
 - "role": mümkünse kısa ve standart tut (örn: Director, Producer, Writer, Cinematography, Editor, Music, Costume, Makeup, Sound, Production Design).
 - Rol belli değilse crew'e ekleme.
+- Stunt veya dublör rolleri (Stunts, Stunt Double, Stunt Coordinator, Stunt Driver, Stunt Performer, Stunt Actor, Utility Stunts, Dublör, Cascadeur, Stuntkoordinator vb.) varsa bunları tamamen atla — cast'a veya crew'e ekleme.
 
 GİRDİ (Film Adı: {film_title}):
 {ocr_text}

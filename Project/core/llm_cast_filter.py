@@ -31,6 +31,8 @@ KATÎ KURALLAR (bu kurallar kesindir, istisna yoktur):
    Kostüm, Costume, Kostümdesign, Ses, Sound, Efekt, Effects, VFX, SFX,
    Makyaj, Makeup, Işık, Lighting, Gaffer,
    Prodüksiyon, Production manager, Line producer,
+   Stunts, Stunt Double, Stunt Coordinator, Stunt Driver, Stunt Performer, Stunt Actor, Utility Stunts,
+   Dublör, Dublör Koordinatörü, Cascadeur, Coordinateur des cascades, Stuntkoordinator,
    sahneye koyan, yazanlar, yazaniar, çeviren, ceviren, cevirtli, cevirla,
    yonetmen, yapimci, senarist, muzik,
    goruntu yonetmeni, oyuncular, oynayanlar, oynayan, basroller, başroller
@@ -62,6 +64,7 @@ _ROLE_KEYWORDS = {
     "oyuncular", "oynayanlar", "oynayan", "olayaniar",
     "senaryo", "senarist", "müzik", "muzik", "kurgu", "montaj",
     "görüntü yönetmeni", "goruntu yonetmeni",
+    "dublör", "dublör koordinatörü",
     # İngilizce
     "director", "directed by", "a film by", "film by",
     "screenplay", "written by", "story by",
@@ -70,13 +73,17 @@ _ROLE_KEYWORDS = {
     "music", "original score", "editor", "editing",
     "art director", "production designer", "costume design",
     "sound", "sound design", "visual effects", "vfx",
+    "stunts", "stunt double", "stunt coordinator", "stunt",
+    "stunt driver", "stunt performer", "stunt actor", "utility stunts",
     # Almanca
     "regie", "drehbuch", "produzent", "kamera", "schnitt",
     "musik", "ausstattung", "kostümdesign",
+    "stuntkoordinator", "stunt-koordinator",
     # Fransızca
     "réalisation", "realisation", "scénario", "scenario",
     "producteur", "directeur de la photographie",
     "montage", "musique", "décorateur",
+    "cascadeur", "coordinateur des cascades",
     # İtalyanca
     "regia", "sceneggiatura", "produttore",
     "direttore della fotografia", "montaggio", "musica",

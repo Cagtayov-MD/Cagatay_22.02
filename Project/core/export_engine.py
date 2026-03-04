@@ -665,7 +665,7 @@ class ExportEngine:
             logging.warning(f"Credits canonicalization failed: {e}")
 
         if not keywords:
-            keywords = [c["actor_name"] for c in credits_data.get("cast", [])[:20]
+            keywords = [c["actor_name"] for c in credits_data.get("cast", [])[:10]
                         if c.get("actor_name")]
             keywords += [d for d in self._director_names(credits_data) if d]
         report = {
@@ -712,7 +712,11 @@ class ExportEngine:
             "errors": [],
         }
 
-        stem = Path(video_info.get("filename", "out")).stem
+        film_title = (credits_data.get("film_title") or "").strip()
+        if film_title:
+            stem = film_title.replace(" ", "_")
+        else:
+            stem = Path(video_info.get("filename", "out")).stem
         if ts is None:
             ts = datetime.now().strftime("%d%m%y-%H%M")
         jp = self.out / f"{stem}_report.json"
@@ -758,7 +762,7 @@ class ExportEngine:
                 ch = c.get("character_name") or ""
                 ac = c.get("actor_name") or ""
                 if ch:
-                    L.append(f"  {ch}   --   {ac}")
+                    L.append(f"  {ac}   --   {ch}")
                 else:
                     L.append(f"  {ac}")
         else:
@@ -859,7 +863,7 @@ class ExportEngine:
         L.append("  BLOK 2 — OYUNCULAR")
         L.append(sep)
         if cr.get("cast"):
-            L.append(f"\n  {'Karakter Adı':22s}  --  {'Gerçek İsim':<22s}  [Skor]")
+            L.append(f"\n  {'Oyuncu Adı':22s}  --  {'Karakter Adı':<22s}  [Skor]")
             L.append(f"  {'─'*63}")
             for c in cr["cast"]:
                 ch = c.get("character_name") or ""
@@ -868,7 +872,7 @@ class ExportEngine:
                 score_str = f"[{score:.2f}]" if score is not None else ""
                 icon = self._verification_icon(c)
                 if ch:
-                    L.append(f"  {icon} {ch:22s}  --  {ac:<22s}  {score_str}")
+                    L.append(f"  {icon} {ac:22s}  --  {ch:<22s}  {score_str}")
                 else:
                     L.append(f"  {icon} {ac:<46s}  {score_str}")
         else:

@@ -216,7 +216,7 @@ def test_write_database_creates_all_files(tmp_path):
         ts=ts,
     )
 
-    db_dir = db_root / "myvideo"
+    db_dir = db_root / "Test_Film"
     assert db_dir.is_dir()
 
     files = list(db_dir.iterdir())
@@ -278,9 +278,9 @@ def test_write_database_filename_contains_timestamp(tmp_path):
         ts=ts,
     )
 
-    db_dir = tmp_path / "DB" / "clip"
+    db_dir = tmp_path / "DB" / "Test_Film"
     for f in db_dir.iterdir():
-        assert re.search(r"clip_\d{6}-\d{4}", f.name), \
+        assert re.search(r"Test_Film_\d{6}-\d{4}", f.name), \
             f"Timestamp not found in filename: {f.name}"
 
 
@@ -310,7 +310,7 @@ def test_write_database_uses_env_var_fallback(tmp_path, monkeypatch):
         ts="010125-1200",
     )
 
-    assert (db_root / "clip").is_dir()
+    assert (db_root / "Test_Film").is_dir()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -346,7 +346,7 @@ def test_write_database_collision_protection(tmp_path):
     runner._write_database(**_call)
     runner._write_database(**_call)
 
-    db_dir = db_root / "clip"
+    db_dir = db_root / "Test_Film"
     names = [f.name for f in db_dir.iterdir()]
     # Both copies of report TXT should exist (original + _2 variant)
     assert f"clip_{ts}.txt" in names
