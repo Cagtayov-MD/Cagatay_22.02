@@ -13,6 +13,7 @@ v2.0 Değişiklikler:
 import concurrent.futures
 import copy
 import json
+import re
 import shutil
 import time
 import os
@@ -184,6 +185,7 @@ class PipelineRunner:
         t0 = time.time()
         video_path = str(Path(video_path).resolve())
         vname = Path(video_path).stem
+        film_title_from_filename = self._extract_film_title_from_filename(vname)
         ts    = datetime.now().strftime("%Y%m%d_%H%M%S")
         work_dir = os.path.join(
             self.output_root or os.path.dirname(video_path),
@@ -247,7 +249,7 @@ class PipelineRunner:
 
             # Varsayılanlar (audio_only için)
             ocr_lines = []
-            cdata = self._empty_credits_data(vname)
+            cdata = self._empty_credits_data(film_title_from_filename)
             cdata_raw = None
             tmdb_result = None
 
@@ -364,8 +366,8 @@ class PipelineRunner:
                     tmdb_result = None
                 else:
                     if not cdata.get("film_title"):
-                        cdata["film_title"] = vname
-                        self._log(f"  [TMDB] film_title yok, video adı kullanılıyor: {vname}")
+                        cdata["film_title"] = film_title_from_filename
+                        self._log(f"  [TMDB] film_title yok, dosya adından çıkarıldı: {film_title_from_filename}")
 
                     tmdb_result = self._run_tmdb(cdata, work_dir)
                     self._stage("TMDB_VERIFY", time.time() - t,
@@ -919,6 +921,38 @@ class PipelineRunner:
             **details,
         }
         self.stats.end_stage(name, status)
+
+    @staticmethod
+    def _extract_film_title_from_filename(stem: str) -> str:
+        """evoArcadmin format dosya adından film başlığını ayıkla.
+
+        Format: evoArcadmin_XXXXX_YYYY-NNNN-N-NNNN-NN-N-BAŞLIK
+        Regex: sayısal bloktan sonraki kısım başlık.
+
+        Örnekler:
+          evoArcadmin_TEST1_1955-0019-1-0000-00-1-KÜL_KEDİSİ  → "Kül Kedisi"
+          evoArcadmin_DÖNÜŞÜ OLMAYAN NEHİR_1989-0624-1-0000-00-1-DÖNÜŞÜ_OLMAYAN_NEHİR → "Dönüşü Olmayan Nehir"
+
+        Eğer format tanınmazsa orijinal stem döndürülür.
+        """
+        # Sayısal blok: 4 rakam - 4 rakam - 1 rakam - 4 rakam - 2 rakam - 1 rakam -
+        m = re.search(r'\d{4}-\d{4}-\d-\d{4}-\d{2}-\d-(.+)$', stem)
+        if m:
+            title_raw = m.group(1)
+            # Alt çizgiyi boşluğa çevir
+            title = title_raw.replace('_', ' ').strip()
+            # Title case (Türkçe uyumlu — basit)
+            # Turkish rules: İ(U+0130)→i, I→ı (not regular i)
+            def _tr_capitalize(w: str) -> str:
+                if not w:
+                    return w
+                # Keep first character as-is (already correct uppercase form)
+                # For the rest: replace İ→i and I→ı, then lowercase
+                rest = w[1:].replace('\u0130', 'i').replace('I', 'ı').lower()
+                return w[0] + rest
+            title = ' '.join(_tr_capitalize(w) for w in title.split())
+            return title
+        return stem
 
     @staticmethod
     def _empty_credits_data(film_title: str = "") -> dict:

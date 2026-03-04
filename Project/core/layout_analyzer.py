@@ -74,7 +74,7 @@ class LayoutAnalyzer:
             }
         """
         if not ocr_results:
-            return {"layout_type": "empty", "rows": [], "pairs": [], "header": ""}
+            return {"layout_type": "empty", "rows": [], "pairs": [], "header": "", "stacked_names": []}
 
         # Frame boyutlarını tahmin et
         if not frame_width or not frame_height:
@@ -118,11 +118,15 @@ class LayoutAnalyzer:
             mid_x = self._estimate_mid_x(rows, frame_width)
             pairs = self._extract_pairs(rows, frame_width, mid_x, min_x_gap)
 
+        # ── ADIM 5: Çok kolonlu (3+) ad/soyad satır tespiti ──
+        stacked_lines = self._detect_stacked_name_rows(rows, frame_width)
+
         return {
             "layout_type": layout_type,
             "rows": rows,
             "pairs": pairs,
             "header": header,
+            "stacked_names": stacked_lines,
         }
 
     def _group_into_rows(self, results: list, y_threshold: float) -> list[LayoutRow]:
@@ -285,6 +289,97 @@ class LayoutAnalyzer:
                 ))
 
         return pairs
+
+    def _detect_stacked_name_rows(self, rows: list[LayoutRow],
+                                   frame_width: int) -> list[str]:
+        """Çok kolonlu (3+) ad/soyad satırlarını tespit edip birleştir.
+
+        Film jeneriğinde isimler bazen birden fazla kolonda şöyle gösterilir:
+            Tommy    Murvyn    Douglas    ← üst satır (adlar)
+            Rettig   Vye       Spencer    ← alt satır (soyadlar)
+
+        Aynı X kolonundaki kelimeler birleştirilerek tam ad elde edilir:
+            Tommy Rettig, Murvyn Vye, Douglas Spencer
+
+        Koşullar:
+        1. Ardışık 2 satır, her birinde N ≥ 3 tekil kelime (2-sütunlu ile çakışma yok)
+        2. Her iki satırda aynı sayıda kelime
+        3. X merkezleri birbiriyle ±%10 toleransla eşleşiyor
+        4. Kelimeler arasında belirgin boşluk (gap) var
+        5. Satırlar arası Y mesafesi, satır yüksekliğinin ~1–2 katı
+
+        Returns:
+            Birleştirilmiş tam isim listesi (örn. ["Tommy Rettig", "Murvyn Vye", ...])
+        """
+        if len(rows) < 2:
+            return []
+
+        merged: list[str] = []
+        used_indices: set[int] = set()
+
+        for i in range(len(rows) - 1):
+            if i in used_indices:
+                continue
+
+            row_a = rows[i]
+            row_b = rows[i + 1]
+
+            # Başlık satırlarını atla
+            if (row_a.items and self._is_header_text(row_a.items[0][0])):
+                continue
+            if (row_b.items and self._is_header_text(row_b.items[0][0])):
+                continue
+
+            n = len(row_a.items)
+            # Koşul 1: Her satırda en az 3 kelime
+            if n < 3 or len(row_b.items) != n:
+                continue
+
+            # Koşul 4: Kelimeler arasında belirgin boşluk var mı?
+            def _has_gaps(row: LayoutRow, fw: int) -> bool:
+                min_gap = fw * 0.05  # frame genişliğinin %5'i
+                sorted_items = sorted(row.items, key=lambda x: x[1][0])
+                for k in range(len(sorted_items) - 1):
+                    gap = max(0.0, sorted_items[k + 1][1][0] - sorted_items[k][1][2])
+                    if gap < min_gap:
+                        return False
+                return True
+
+            if not _has_gaps(row_a, frame_width) or not _has_gaps(row_b, frame_width):
+                continue
+
+            # Koşul 3: X merkezleri eşleşiyor mu?
+            a_sorted = sorted(row_a.items, key=lambda x: (x[1][0] + x[1][2]) / 2.0)
+            b_sorted = sorted(row_b.items, key=lambda x: (x[1][0] + x[1][2]) / 2.0)
+
+            tolerance = frame_width * 0.10
+            x_match = all(
+                abs(((a_sorted[k][1][0] + a_sorted[k][1][2]) / 2.0) -
+                    ((b_sorted[k][1][0] + b_sorted[k][1][2]) / 2.0)) <= tolerance
+                for k in range(n)
+            )
+            if not x_match:
+                continue
+
+            # Koşul 5: Y mesafesi satır yüksekliğinin ~1–2 katı
+            avg_height_a = sum(
+                (item[1][3] - item[1][1]) for item in row_a.items
+            ) / n
+            y_gap = row_b.y_center - row_a.y_center
+            if not (0.5 * avg_height_a <= y_gap <= 2.5 * avg_height_a):
+                continue
+
+            # Tüm koşullar sağlandı — birleştir
+            for k in range(n):
+                first_name = a_sorted[k][0].strip()
+                last_name = b_sorted[k][0].strip()
+                if first_name and last_name:
+                    merged.append(f"{first_name} {last_name}")
+
+            used_indices.add(i)
+            used_indices.add(i + 1)
+
+        return merged
 
     def merge_sequential_with_layout(
             self, sequential_lines: list, layout_pairs: list[CastPair]
