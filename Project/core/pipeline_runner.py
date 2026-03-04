@@ -351,6 +351,11 @@ class PipelineRunner:
                 # Snapshot before filters (DATABASE credits_raw için)
                 cdata_raw = copy.deepcopy(cdata)
 
+                # ── Pre-TMDB: BLOK2 pasifse Gemini cast ayıklamasını TMDB'den önce çalıştır
+                # (temiz isimlerle TMDB'ye gidilsin; Gemini zaten burada çalışırsa BLOK2 sonrasında tekrar çalışmaz)
+                if not self._blok2_enabled:
+                    self._run_gemini_cast_extract(ocr_lines, cdata)
+
                 # ══ [6/6] TMDB_VERIFY ══════════════════════════════
                 # TMDB önce çalışsın — eşleşirse cast TMDB'den gelecek, LLM gereksiz
                 self._log(f"\n[6/6] TMDB_VERIFY")
@@ -417,33 +422,11 @@ class PipelineRunner:
                             )
                     else:
                         self._log("  [BLOK2] Pasif — config'de blok2_enabled=false")
-                        # Gemini cast extraction
-                        gemini_api_key = get_gemini_api_key()
-                        if gemini_api_key:
-                            from core.gemini_cast_extractor import GeminiCastExtractor
-                            extractor = GeminiCastExtractor(
-                                api_key=gemini_api_key,
-                                log_cb=self._log,
-                            )
-                            gemini_result = extractor.extract(
-                                ocr_lines=[
-                                    line.get("text", "") if isinstance(line, dict) else line.text
-                                    for line in ocr_lines
-                                ],
-                                film_title=cdata.get("film_title", ""),
-                            )
-                            if gemini_result and (gemini_result.get("cast") or gemini_result.get("crew")):
-                                self._log(
-                                    f"  [Gemini] Cast: {len(gemini_result.get('cast', []))} oyuncu, "
-                                    f"Crew: {len(gemini_result.get('crew', []))} kişi"
-                                )
-                                cdata["cast"] = gemini_result.get("cast", [])
-                                cdata["crew"] = gemini_result.get("crew", [])
-                                cdata["total_actors"] = len(cdata["cast"])
-                                cdata["total_crew"] = len(cdata["crew"])
-                                cdata["gemini_extracted"] = True
+                        # Gemini cast extraction — daha önce (pre-TMDB) çalıştırılmadıysa çalıştır
+                        if cdata.get("gemini_extracted"):
+                            self._log("  [Gemini] Zaten çalıştı (pre-TMDB) — atlanıyor")
                         else:
-                            self._log("  [Gemini] API key bulunamadı — atlanıyor")
+                            self._run_gemini_cast_extract(ocr_lines, cdata)
 
                 # ══ [LLM] LLM_CAST_FILTER ══════════════════════════
                 # Sadece TMDB eşleşmezse LLM devreye girsin
@@ -763,6 +746,43 @@ class PipelineRunner:
         cdata["_tmdb_keywords"] = [k for k in tmdb_keywords if k]
 
         return cdata
+
+    # ──────────────────────────────────────────────────────────────
+    # GEMINI CAST EXTRACT
+    # ──────────────────────────────────────────────────────────────
+    def _run_gemini_cast_extract(self, ocr_lines: list, cdata: dict) -> bool:
+        """Gemini ile OCR satırlarından cast/crew ayıkla ve cdata'yı güncelle.
+
+        Returns:
+            True — Gemini sonuç döndürdü ve cdata güncellendi.
+            False — API key yok veya Gemini sonuç döndürmedi.
+        """
+        api_key = get_gemini_api_key()
+        if not api_key:
+            self._log("  [Gemini] API key bulunamadı — atlanıyor")
+            return False
+
+        from core.gemini_cast_extractor import GeminiCastExtractor
+        extractor = GeminiCastExtractor(api_key=api_key, log_cb=self._log)
+        result = extractor.extract(
+            ocr_lines=[
+                line.get("text", "") if isinstance(line, dict) else line.text
+                for line in ocr_lines
+            ],
+            film_title=cdata.get("film_title", ""),
+        )
+        if result and (result.get("cast") or result.get("crew")):
+            self._log(
+                f"  [Gemini] Cast: {len(result.get('cast', []))} oyuncu, "
+                f"Crew: {len(result.get('crew', []))} kişi"
+            )
+            cdata["cast"] = result.get("cast", [])
+            cdata["crew"] = result.get("crew", [])
+            cdata["total_actors"] = len(cdata["cast"])
+            cdata["total_crew"] = len(cdata["crew"])
+            cdata["gemini_extracted"] = True
+            return True
+        return False
 
     # ──────────────────────────────────────────────────────────────
     # TMDB
