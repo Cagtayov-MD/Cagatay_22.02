@@ -708,62 +708,56 @@ class ExportEngine:
         L = []
         sep  = "=" * 65
         sep2 = "-" * 65
-        L.append(sep)
-        L.append("  VİTOS — ANALİZ RAPORU")
-        L.append(sep)
         fi = r["file_info"]
+        p  = r["processing"]
+        cr = r["credits"]
+
+        # ═══ BLOK 1 — VİDEO BİLGİLERİ ═══
+        L.append(sep)
+        L.append("  BLOK 1 — VİDEO BİLGİLERİ")
+        L.append(sep)
         L.append(f"\n  Dosya      : {fi['filename']}")
         L.append(f"  Sure       : {fi['duration_human']}")
         L.append(f"  Cozunurluk : {fi['resolution']} @ {fi['fps']} FPS")
         L.append(f"  Boyut      : {fi['filesize_bytes']/1024/1024:.1f} MB")
-        p = r["processing"]
-        L.append(f"\n  Profil     : {r['profile']}")
+        L.append(f"  Profil     : {r['profile']}")
         L.append(f"  Icerik     : {p.get('content_type','?')}")
         L.append(f"  OCR Motor  : {p.get('ocr_engine','?')}")
+
+        # ASR motor bilgisi
         asr_model = "—"
-        asr_engine = "ASR"
         if audio_result and isinstance(audio_result, dict):
             asr_engine = audio_result.get("asr_engine") or "ASR"
             asr_model = audio_result.get("whisper_model") or audio_result.get("model", "—")
-        L.append(f"  ASR Motor  : {asr_engine} ({asr_model})")
-        L.append(f"  Toplam sure: {p['total_duration_sec']:.1f}s ({p['speed_ratio']}x)")
+            L.append(f"  ASR Motor  : {asr_engine} ({asr_model})")
+        else:
+            L.append(f"  ASR Motor  : —")
 
-        # ASR BİLGİLERİ
-        if audio_result and isinstance(audio_result, dict) and audio_result.get("status") == "ok":
-            L.append(f"\n{sep2}")
-            L.append("  ASR BİLGİLERİ")
-            L.append(sep2)
-            transcript = audio_result.get("transcript", [])
-            L.append(f"  Segment    : {len(transcript)} segment")
-            audio_dur = audio_result.get("audio_duration_sec") or audio_result.get("duration_sec")
-            if audio_dur:
-                L.append(f"  Audio Sure : {audio_dur:.0f}s")
-            extract_t = audio_result.get("extract_time_sec")
-            if extract_t is not None:
-                L.append(f"  Extract    : {extract_t:.1f}s")
-            transcribe_t = audio_result.get("transcribe_time_sec")
-            if transcribe_t is not None:
-                L.append(f"  Transcribe : {transcribe_t:.1f}s")
-            if asr_model and asr_model != "—":
-                device = audio_result.get("device", "cuda")
-                dtype  = audio_result.get("compute_type", "float16")
-                L.append(f"  Whisper    : {asr_model} ({device}, {dtype})")
-            lang = audio_result.get("language", "tr")
-            L.append(f"  Dil        : {lang}")
-
+        # Pipeline stages
         L.append(f"\n{sep2}")
         L.append("  PIPELINE")
         L.append(sep2)
         for s in p["stages"]:
             ico = "[OK]" if s["status"] in ("ok", "completed") else "[--]" if s["status"] == "skipped" else "[!!]"
-            L.append(f"  {ico} {s['name']:20s} {s['duration_sec']:8.1f}s")
+            L.append(f"  {ico} {s['name']:24s} {s['duration_sec']:8.1f}s")
 
-        cr = r["credits"]
-        L.append(f"\n{sep2}")
-        L.append("  OYUNCULAR")
-        L.append(sep2)
+        # Audio stage bilgileri de pipeline'a ekle
+        if audio_result and isinstance(audio_result, dict) and audio_result.get("status") == "ok":
+            stages_map = audio_result.get("stages") or {}
+            if isinstance(stages_map, dict):
+                for stage_name, stage_info in stages_map.items():
+                    if isinstance(stage_info, dict):
+                        st = stage_info.get("status", "ok")
+                        dur = stage_info.get("duration_sec", 0)
+                        ico = "[OK]" if st in ("ok", "completed") else "[--]" if st == "skipped" else "[!!]"
+                        L.append(f"  {ico} {'AUDIO_' + stage_name.upper():24s} {dur:8.1f}s")
+
+        # ═══ BLOK 2 — OYUNCULAR ═══
+        L.append(f"\n{sep}")
+        L.append("  BLOK 2 — OYUNCULAR")
+        L.append(sep)
         if cr.get("cast"):
-            L.append(f"  {'Karakter Adı':22s}  --  {'Gerçek İsim':<22s}  [Skor]")
+            L.append(f"\n  {'Karakter Adı':22s}  --  {'Gerçek İsim':<22s}  [Skor]")
             L.append(f"  {'─'*63}")
             for c in cr["cast"]:
                 ch = c.get("character_name") or ""
@@ -776,38 +770,41 @@ class ExportEngine:
                 else:
                     L.append(f"  {icon} {ac:<46s}  {score_str}")
         else:
-            L.append("  (Oyuncu verisi yok)")
+            L.append("\n  (Oyuncu verisi yok)")
 
-        if cr.get("technical_crew") or cr.get("crew"):
-            L.append(f"\n{sep2}")
-            L.append("  CREDITS (TEKNİK EKİP)")
-            L.append(sep2)
-            for t in (cr.get("technical_crew") or cr.get("crew") or []):
-                role_txt = t.get('role_tr') or t.get('role') or t.get('job') or ''
-                L.append(f"  {role_txt:12s}: {t.get('name','')}")
+        # ═══ BLOK 3 — YAPIM EKİBİ ═══
+        L.append(f"\n{sep}")
+        L.append("  BLOK 3 — YAPIM EKİBİ")
+        L.append(sep)
 
+        # Önce yönetmenler
         if cr.get("directors"):
             dir_names = self._director_names(cr)
             if dir_names:
                 L.append(f"\n  Yönetmen   : {', '.join(dir_names)}")
 
-        L.append(f"\n{sep2}")
-        L.append("  ÖZET (Ollama)")
-        L.append(sep2)
-        summary = None
-        if audio_result and isinstance(audio_result, dict):
-            summary = audio_result.get("summary") or audio_result.get("ollama_summary")
-        L.append(f"  {summary}" if summary else "  Özet oluşturma aktif değil")
+        # Teknik ekip
+        crew_list = cr.get("technical_crew") or cr.get("crew") or []
+        if crew_list:
+            L.append(f"\n  {'─' * 63}")  # indented crew separator (63 dashes)
+            for t in crew_list:
+                role_txt = t.get('role_tr') or t.get('role') or t.get('job') or ''
+                L.append(f"  {role_txt:14s}: {t.get('name','')}")
 
-        # Spor profili: Maç Bilgileri bölümü
+        if not cr.get("directors") and not crew_list:
+            L.append("\n  (Ekip verisi yok)")
+
+        # ═══ BLOK 4 — ÖZET ═══
+        L.append(f"\n{sep}")
+        L.append("  BLOK 4 — ÖZET")
+        L.append(sep)
+
+        # Spor profili: Maç Bilgileri BLOK 4 içinde gösterilir
         match_data = r.get("match_data")
         if match_data or p.get("content_type") == "Spor":
-            L.append(f"\n{sep2}")
-            L.append("  MAC BILGILERI")
-            L.append(sep2)
             if match_data:
                 if match_data.get("spor_turu"):
-                    L.append(f"  Spor Turu     : {match_data['spor_turu']}")
+                    L.append(f"\n  Spor Turu     : {match_data['spor_turu']}")
                 if match_data.get("lig"):
                     L.append(f"  Lig           : {match_data['lig']}")
                 if match_data.get("sehir"):
@@ -826,8 +823,32 @@ class ExportEngine:
                     for ol in olaylar:
                         L.append(f"    {ol.get('dakika','')}' {ol.get('olay','')} — {ol.get('oyuncu','')} ({ol.get('takim','')})")
             else:
-                L.append("  (Mac verisi bulunamadi)")
+                L.append("\n  (Mac verisi bulunamadi)")
+        else:
+            # Transcript varsa göster (ASR sonucu)
+            transcript = []
+            if audio_result and isinstance(audio_result, dict):
+                transcript = audio_result.get("transcript", [])
 
+            if transcript:
+                L.append("")
+                for seg in transcript:
+                    start = seg.get("start", 0)
+                    text  = seg.get("text", "").strip()
+                    if text:
+                        ts = _fmt_hms_shared(start, with_ms=False)
+                        L.append(f"  [{ts}] {text}")
+            else:
+                # Ollama özet varsa onu göster
+                summary = None
+                if audio_result and isinstance(audio_result, dict):
+                    summary = audio_result.get("summary") or audio_result.get("ollama_summary") or audio_result.get("summary_tr")
+                if summary:
+                    L.append(f"\n  {summary}")
+                else:
+                    L.append("\n  Özet oluşturma aktif değil")
+
+        # Footer
         L.append(f"\n{sep}")
         L.append(f"  Olusturulma: {r['generated_at']}")
         L.append(sep)

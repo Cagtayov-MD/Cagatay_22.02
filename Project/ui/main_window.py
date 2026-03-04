@@ -287,7 +287,8 @@ class MainWindow(QMainWindow):
         lay.setSpacing(4)
         self.stage_bars = {}
         stages = ["INGEST", "FRAME_EXTRACT", "TEXT_FILTER",
-                  "OCR_CREDITS", "CREDITS_PARSE", "EXPORT"]
+                  "OCR_CREDITS", "CREDITS_PARSE", "TMDB_VERIFY",
+                  "AUDIO_EXTRACT", "AUDIO_TRANSCRIBE", "EXPORT"]
         for name in stages:
             r = QHBoxLayout()
             lbl = QLabel(name)
