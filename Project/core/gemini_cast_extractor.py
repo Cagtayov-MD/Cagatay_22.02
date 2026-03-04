@@ -18,19 +18,43 @@ import core.llm_provider as _llm
 
 _TIMEOUT_SEC = 30
 
-_EXTRACT_PROMPT = """Aşağıda bir film/dizi jeneriğinden OCR ile okunmuş ham metin satırları var.
-Bu listeden:
-1. Gerçek kişi isimlerini ayıkla (çöp/gürültü metinleri ele)
-2. Cast (oyuncular) ve Crew (teknik ekip) olarak ayır
-3. OCR hatalarını düzelt (örn: "Javiar" → "Javier", "Gonxalez" → "González")
-4. Varsa karakter adı ↔ oyuncu eşleşmesini koru
+_EXTRACT_PROMPT = """Sen bir film/dizi jeneriği OCR temizleme ve cast/crew ayıklama asistanısın.
+Girdi: OCR ile okunmuş ham metin satırları (gürültü içerebilir).
+Amaç: YALNIZCA gerçek kişi isimlerini ayıklamak, cast/crew ayırmak ve OCR kaynaklı isim hatalarını düzeltmek.
 
-JSON formatında dön:
-{{"cast": [{{"actor_name": "...", "character_name": "..."}}], "crew": [{{"name": "...", "role": "..."}}]}}
+KATİ KURALLAR:
+- SADECE JSON döndür. JSON dışında tek bir karakter bile yazma.
+- Emin değilsen öğeyi EKLEME (false positive istemiyoruz).
+- Şirket/marka/platfrom/teknik terim/başlık/yıl/ülke/slogan vb. kişi olmayan her şeyi ele.
+- Tamamı büyük harfli uzun başlıklar, “DIRECTED BY”, “CAST”, “PRODUCER”, “SPECIAL THANKS”, “WITH” gibi kategori satırları kişi değildir (kategori olabilir ama kişi listesine ekleme).
+- Aynı kişi farklı yazımlarla geçiyorsa tekilleştir: en doğru/standart yazımı kullan.
+- OCR düzeltmesi yap: harf hataları, aksanlar (Gonxalez→González), birleşik/ayrık kelimeler vb.
 
-Metin listesi:
-{ocr_text}"""
+ÇIKTI ŞEMASI (kesin):
+{
+  "cast": [
+    {"actor_name": "Ad Soyad", "character_name": "Karakter" }
+  ],
+  "crew": [
+    {"name": "Ad Soyad", "role": "Görev/Rol" }
+  ]
+}
 
+CAST kuralları:
+- Actor (oyuncu) isimlerini "cast" içine koy.
+- Karakter adı görünmüyorsa "character_name" boş string olsun "".
+- Karakter↔oyuncu eşleşmesi açıkça anlaşılıyorsa koru.
+  Örn formatlar: "CHARACTER — ACTOR", "ACTOR as CHARACTER", "CHARACTER / ACTOR".
+  Belirsizse eşleştirme yapma (character_name="").
+
+CREW kuralları:
+- Crew'e sadece kişi isimlerini ekle.
+- "role": mümkünse kısa ve standart tut (örn: Director, Producer, Writer, Cinematography, Editor, Music, Costume, Makeup, Sound, Production Design).
+- Rol belli değilse crew'e ekleme.
+
+GİRDİ OCR METNİ:
+{ocr_text}
+"""
 
 class GeminiCastExtractor:
     """Gemini 2.5 Flash ile OCR metinden cast/crew ayıkla."""

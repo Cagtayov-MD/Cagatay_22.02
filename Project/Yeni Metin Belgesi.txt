@@ -1,0 +1,1787 @@
+{
+  "$schema": "arsiv_decode_report_v1",
+  "generated_at": "2026-03-04T01:46:33.975218",
+  "profile": "WORKSTATION",
+  "file_info": {
+    "filename": "test.mp4",
+    "filepath": "F:\\test\\test.mp4",
+    "filesize_bytes": 928816643,
+    "duration_seconds": 6954.752,
+    "duration_human": "1:55:54",
+    "resolution": "384x288",
+    "fps": 25.0
+  },
+  "processing": {
+    "scope": "video_only",
+    "content_type": "FilmDizi",
+    "ocr_engine": "PaddleOCR (GPU)",
+    "first_segment_min": 2.0,
+    "last_segment_min": 7.0,
+    "stages": [
+      {
+        "name": "INGEST",
+        "duration_sec": 2.85,
+        "status": "ok",
+        "details": {
+          "duration": "1:55:54",
+          "resolution": "384x288"
+        }
+      },
+      {
+        "name": "FRAME_EXTRACT",
+        "duration_sec": 9.95,
+        "status": "ok",
+        "details": {
+          "total": 540,
+          "entry": 120,
+          "exit_": 420
+        }
+      },
+      {
+        "name": "TEXT_FILTER",
+        "duration_sec": 10.92,
+        "status": "ok",
+        "details": {
+          "input": 540,
+          "candidates": 529
+        }
+      },
+      {
+        "name": "OCR_CREDITS",
+        "duration_sec": 165.47,
+        "status": "ok",
+        "details": {
+          "processed": 529,
+          "lines": 238,
+          "layout_pairs": 22
+        }
+      },
+      {
+        "name": "CREDITS_PARSE",
+        "duration_sec": 0.04,
+        "status": "ok",
+        "details": {
+          "actors": 257,
+          "crew": 0,
+          "companies": 0
+        }
+      },
+      {
+        "name": "TMDB_VERIFY",
+        "duration_sec": 4.2,
+        "status": "tmdb match not found",
+        "details": {
+          "hits": 0,
+          "misses": 0,
+          "updated": false,
+          "matched_title": ""
+        }
+      }
+    ],
+    "total_duration_sec": 193.43,
+    "speed_ratio": 35.95
+  },
+  "credits": {
+    "film_title": "test",
+    "year": null,
+    "cast": [
+      {
+        "actor_name": "Nisa Serezli",
+        "character_name": "",
+        "confidence": 0.99,
+        "is_verified_name": true,
+        "is_llm_verified": true
+      },
+      {
+        "actor_name": "Orhaw Aydunbas Orhan Aydnbas",
+        "character_name": "ceviren",
+        "confidence": 1.0,
+        "is_verified_name": true,
+        "is_llm_verified": true
+      }
+    ],
+    "crew": [],
+    "technical_crew": [],
+    "directors": [],
+    "production_companies": [],
+    "production_info": [],
+    "total_actors": 3,
+    "total_crew": 0,
+    "total_companies": 0,
+    "verification_status": "ocr_parsed"
+  },
+  "keywords": [
+    "Nisa Serezli",
+    "Orhaw Aydunbas Orhan Aydnbas"
+  ],
+  "logos_detected": [],
+  "ocr_results": [
+    {
+      "text": "alaw",
+      "first_seen": 3.0,
+      "last_seen": 3.0,
+      "count": 1,
+      "confidence": 0.44
+    },
+    {
+      "text": "Amanda",
+      "first_seen": 3.0,
+      "last_seen": 3.0,
+      "count": 1,
+      "confidence": 0.699
+    },
+    {
+      "text": "algw",
+      "first_seen": 3.0,
+      "last_seen": 3.0,
+      "count": 1,
+      "confidence": 0.466
+    },
+    {
+      "text": "man",
+      "first_seen": 3.0,
+      "last_seen": 3.0,
+      "count": 1,
+      "confidence": 0.394
+    },
+    {
+      "text": "ilqw",
+      "first_seen": 4.0,
+      "last_seen": 4.0,
+      "count": 1,
+      "confidence": 0.387
+    },
+    {
+      "text": "Crlqn",
+      "first_seen": 4.0,
+      "last_seen": 4.0,
+      "count": 1,
+      "confidence": 0.514
+    },
+    {
+      "text": "alau",
+      "first_seen": 5.0,
+      "last_seen": 5.0,
+      "count": 1,
+      "confidence": 0.47
+    },
+    {
+      "text": "alguw",
+      "first_seen": 6.0,
+      "last_seen": 6.0,
+      "count": 1,
+      "confidence": 0.383
+    },
+    {
+      "text": "Crlgu",
+      "first_seen": 7.0,
+      "last_seen": 7.0,
+      "count": 1,
+      "confidence": 0.43
+    },
+    {
+      "text": "slauw",
+      "first_seen": 7.0,
+      "last_seen": 7.0,
+      "count": 1,
+      "confidence": 0.36
+    },
+    {
+      "text": "manda",
+      "first_seen": 10.0,
+      "last_seen": 10.0,
+      "count": 1,
+      "confidence": 0.694
+    },
+    {
+      "text": "alqu",
+      "first_seen": 11.0,
+      "last_seen": 11.0,
+      "count": 1,
+      "confidence": 0.444
+    },
+    {
+      "text": "dlau",
+      "first_seen": 12.0,
+      "last_seen": 12.0,
+      "count": 1,
+      "confidence": 0.357
+    },
+    {
+      "text": "Crian",
+      "first_seen": 13.0,
+      "last_seen": 13.0,
+      "count": 1,
+      "confidence": 0.447
+    },
+    {
+      "text": "alg",
+      "first_seen": 13.0,
+      "last_seen": 13.0,
+      "count": 1,
+      "confidence": 0.398
+    },
+    {
+      "text": "Barillet ve Cpedy",
+      "first_seen": 14.0,
+      "last_seen": 14.0,
+      "count": 1,
+      "confidence": 0.654
+    },
+    {
+      "text": "varana",
+      "first_seen": 14.0,
+      "last_seen": 14.0,
+      "count": 1,
+      "confidence": 0.405
+    },
+    {
+      "text": "Orhan Aydnbas",
+      "first_seen": 14.0,
+      "last_seen": 15.0,
+      "count": 2,
+      "confidence": 0.833
+    },
+    {
+      "text": "cevirtli",
+      "first_seen": 14.0,
+      "last_seen": 14.0,
+      "count": 1,
+      "confidence": 0.524
+    },
+    {
+      "text": "sahneyekoyan",
+      "first_seen": 14.0,
+      "last_seen": 14.0,
+      "count": 1,
+      "confidence": 0.694
+    },
+    {
+      "text": "annstes",
+      "first_seen": 14.0,
+      "last_seen": 14.0,
+      "count": 1,
+      "confidence": 0.478
+    },
+    {
+      "text": "yazanlar",
+      "first_seen": 14.0,
+      "last_seen": 14.0,
+      "count": 1,
+      "confidence": 0.696
+    },
+    {
+      "text": "antlyer",
+      "first_seen": 14.0,
+      "last_seen": 14.0,
+      "count": 1,
+      "confidence": 0.354
+    },
+    {
+      "text": "FA",
+      "first_seen": 14.0,
+      "last_seen": 14.0,
+      "count": 1,
+      "confidence": 0.39
+    },
+    {
+      "text": "yaran!",
+      "first_seen": 14.0,
+      "last_seen": 14.0,
+      "count": 1,
+      "confidence": 0.582
+    },
+    {
+      "text": "ceviren",
+      "first_seen": 15.0,
+      "last_seen": 15.0,
+      "count": 1,
+      "confidence": 0.697
+    },
+    {
+      "text": "Tolga Askwes",
+      "first_seen": 15.0,
+      "last_seen": 15.0,
+      "count": 1,
+      "confidence": 0.634
+    },
+    {
+      "text": "sahneyekoyanTolgnAskwes",
+      "first_seen": 15.0,
+      "last_seen": 15.0,
+      "count": 1,
+      "confidence": 0.565
+    },
+    {
+      "text": "sahneye koyan",
+      "first_seen": 17.0,
+      "last_seen": 17.0,
+      "count": 1,
+      "confidence": 0.68
+    },
+    {
+      "text": "Barilletve Gridy",
+      "first_seen": 18.0,
+      "last_seen": 18.0,
+      "count": 1,
+      "confidence": 0.61
+    },
+    {
+      "text": "Totga Askunes",
+      "first_seen": 18.0,
+      "last_seen": 18.0,
+      "count": 1,
+      "confidence": 0.576
+    },
+    {
+      "text": "yazaniar",
+      "first_seen": 18.0,
+      "last_seen": 18.0,
+      "count": 1,
+      "confidence": 0.683
+    },
+    {
+      "text": "Crhan Audnbos",
+      "first_seen": 20.0,
+      "last_seen": 20.0,
+      "count": 1,
+      "confidence": 0.57
+    },
+    {
+      "text": "Barillet ve",
+      "first_seen": 21.0,
+      "last_seen": 21.0,
+      "count": 1,
+      "confidence": 0.646
+    },
+    {
+      "text": "yazantar",
+      "first_seen": 21.0,
+      "last_seen": 21.0,
+      "count": 1,
+      "confidence": 0.654
+    },
+    {
+      "text": "Chede",
+      "first_seen": 23.0,
+      "last_seen": 23.0,
+      "count": 1,
+      "confidence": 0.491
+    },
+    {
+      "text": "Joga Askme",
+      "first_seen": 23.0,
+      "last_seen": 23.0,
+      "count": 1,
+      "confidence": 0.483
+    },
+    {
+      "text": "Yhedy",
+      "first_seen": 23.0,
+      "last_seen": 23.0,
+      "count": 1,
+      "confidence": 0.589
+    },
+    {
+      "text": "Barilletve",
+      "first_seen": 24.0,
+      "last_seen": 24.0,
+      "count": 1,
+      "confidence": 0.661
+    },
+    {
+      "text": "Tolga Askunes",
+      "first_seen": 24.0,
+      "last_seen": 24.0,
+      "count": 1,
+      "confidence": 0.554
+    },
+    {
+      "text": "Barillst veGpedy",
+      "first_seen": 25.0,
+      "last_seen": 25.0,
+      "count": 1,
+      "confidence": 0.582
+    },
+    {
+      "text": "oynayanlar",
+      "first_seen": 26.0,
+      "last_seen": 29.0,
+      "count": 2,
+      "confidence": 0.996
+    },
+    {
+      "text": "Nisa Serezli",
+      "first_seen": 26.0,
+      "last_seen": 26.0,
+      "count": 1,
+      "confidence": 0.69
+    },
+    {
+      "text": "Cihat Tametr",
+      "first_seen": 26.0,
+      "last_seen": 26.0,
+      "count": 1,
+      "confidence": 0.655
+    },
+    {
+      "text": "Etienne",
+      "first_seen": 26.0,
+      "last_seen": 26.0,
+      "count": 1,
+      "confidence": 0.699
+    },
+    {
+      "text": "SelmaTirkdogan",
+      "first_seen": 26.0,
+      "last_seen": 26.0,
+      "count": 1,
+      "confidence": 0.671
+    },
+    {
+      "text": "Lucette",
+      "first_seen": 26.0,
+      "last_seen": 26.0,
+      "count": 1,
+      "confidence": 0.698
+    },
+    {
+      "text": "Hadi Camaw",
+      "first_seen": 26.0,
+      "last_seen": 26.0,
+      "count": 1,
+      "confidence": 0.681
+    },
+    {
+      "text": "Pierrot",
+      "first_seen": 26.0,
+      "last_seen": 26.0,
+      "count": 1,
+      "confidence": 0.698
+    },
+    {
+      "text": "ihnt lame",
+      "first_seen": 26.0,
+      "last_seen": 26.0,
+      "count": 1,
+      "confidence": 0.513
+    },
+    {
+      "text": "CihatTamer",
+      "first_seen": 27.0,
+      "last_seen": 27.0,
+      "count": 1,
+      "confidence": 0.668
+    },
+    {
+      "text": "t..Hacti Ccamaw",
+      "first_seen": 28.0,
+      "last_seen": 28.0,
+      "count": 1,
+      "confidence": 0.451
+    },
+    {
+      "text": "NifoSerezli",
+      "first_seen": 29.0,
+      "last_seen": 29.0,
+      "count": 1,
+      "confidence": 0.574
+    },
+    {
+      "text": "Plerrot,",
+      "first_seen": 29.0,
+      "last_seen": 29.0,
+      "count": 1,
+      "confidence": 0.668
+    },
+    {
+      "text": "Cihat Tamer",
+      "first_seen": 30.0,
+      "last_seen": 30.0,
+      "count": 1,
+      "confidence": 0.689
+    },
+    {
+      "text": "HactiCaman",
+      "first_seen": 30.0,
+      "last_seen": 30.0,
+      "count": 1,
+      "confidence": 0.591
+    },
+    {
+      "text": "NitaSererli",
+      "first_seen": 31.0,
+      "last_seen": 31.0,
+      "count": 1,
+      "confidence": 0.618
+    },
+    {
+      "text": "Hacti Comaw",
+      "first_seen": 32.0,
+      "last_seen": 32.0,
+      "count": 1,
+      "confidence": 0.588
+    },
+    {
+      "text": "Pierot.Fali Cawta",
+      "first_seen": 33.0,
+      "last_seen": 33.0,
+      "count": 1,
+      "confidence": 0.412
+    },
+    {
+      "text": "GhatTamerr",
+      "first_seen": 34.0,
+      "last_seen": 34.0,
+      "count": 1,
+      "confidence": 0.605
+    },
+    {
+      "text": "elmaWskdogan",
+      "first_seen": 35.0,
+      "last_seen": 35.0,
+      "count": 1,
+      "confidence": 0.603
+    },
+    {
+      "text": "awaM",
+      "first_seen": 35.0,
+      "last_seen": 35.0,
+      "count": 1,
+      "confidence": 0.393
+    },
+    {
+      "text": "Hadi Cunan",
+      "first_seen": 36.0,
+      "last_seen": 36.0,
+      "count": 1,
+      "confidence": 0.63
+    },
+    {
+      "text": "Nisa Ocreght",
+      "first_seen": 37.0,
+      "last_seen": 37.0,
+      "count": 1,
+      "confidence": 0.506
+    },
+    {
+      "text": "Cinat lamer",
+      "first_seen": 37.0,
+      "last_seen": 37.0,
+      "count": 1,
+      "confidence": 0.584
+    },
+    {
+      "text": "SoimaWrktogan",
+      "first_seen": 39.0,
+      "last_seen": 39.0,
+      "count": 1,
+      "confidence": 0.549
+    },
+    {
+      "text": "NisaScreli",
+      "first_seen": 39.0,
+      "last_seen": 39.0,
+      "count": 1,
+      "confidence": 0.596
+    },
+    {
+      "text": "Hasi",
+      "first_seen": 39.0,
+      "last_seen": 39.0,
+      "count": 1,
+      "confidence": 0.414
+    },
+    {
+      "text": "Caman",
+      "first_seen": 39.0,
+      "last_seen": 39.0,
+      "count": 1,
+      "confidence": 0.588
+    },
+    {
+      "text": "Hath",
+      "first_seen": 40.0,
+      "last_seen": 40.0,
+      "count": 1,
+      "confidence": 0.587
+    },
+    {
+      "text": "Haidi",
+      "first_seen": 41.0,
+      "last_seen": 41.0,
+      "count": 1,
+      "confidence": 0.576
+    },
+    {
+      "text": "Cama",
+      "first_seen": 41.0,
+      "last_seen": 41.0,
+      "count": 1,
+      "confidence": 0.694
+    },
+    {
+      "text": "ShlmaTitkdogaw",
+      "first_seen": 41.0,
+      "last_seen": 41.0,
+      "count": 1,
+      "confidence": 0.513
+    },
+    {
+      "text": "'aman",
+      "first_seen": 41.0,
+      "last_seen": 41.0,
+      "count": 1,
+      "confidence": 0.566
+    },
+    {
+      "text": "Hati Camam",
+      "first_seen": 42.0,
+      "last_seen": 42.0,
+      "count": 1,
+      "confidence": 0.64
+    },
+    {
+      "text": "pvkdoiay",
+      "first_seen": 42.0,
+      "last_seen": 42.0,
+      "count": 1,
+      "confidence": 0.447
+    },
+    {
+      "text": "Cikat Tameo",
+      "first_seen": 42.0,
+      "last_seen": 42.0,
+      "count": 1,
+      "confidence": 0.556
+    },
+    {
+      "text": "latt",
+      "first_seen": 42.0,
+      "last_seen": 42.0,
+      "count": 1,
+      "confidence": 0.468
+    },
+    {
+      "text": "oynayamia",
+      "first_seen": 43.0,
+      "last_seen": 43.0,
+      "count": 1,
+      "confidence": 0.557
+    },
+    {
+      "text": "DemircanTarkdogan",
+      "first_seen": 43.0,
+      "last_seen": 43.0,
+      "count": 1,
+      "confidence": 0.643
+    },
+    {
+      "text": "Loulou",
+      "first_seen": 43.0,
+      "last_seen": 43.0,
+      "count": 1,
+      "confidence": 0.696
+    },
+    {
+      "text": "Alt",
+      "first_seen": 43.0,
+      "last_seen": 43.0,
+      "count": 1,
+      "confidence": 0.472
+    },
+    {
+      "text": "Umberto",
+      "first_seen": 43.0,
+      "last_seen": 43.0,
+      "count": 1,
+      "confidence": 0.698
+    },
+    {
+      "text": "Philippe",
+      "first_seen": 43.0,
+      "last_seen": 43.0,
+      "count": 1,
+      "confidence": 0.698
+    },
+    {
+      "text": "Theo",
+      "first_seen": 43.0,
+      "last_seen": 43.0,
+      "count": 1,
+      "confidence": 0.698
+    },
+    {
+      "text": "Ali Osogw",
+      "first_seen": 43.0,
+      "last_seen": 43.0,
+      "count": 1,
+      "confidence": 0.555
+    },
+    {
+      "text": "VibaOstrnda",
+      "first_seen": 43.0,
+      "last_seen": 43.0,
+      "count": 1,
+      "confidence": 0.404
+    },
+    {
+      "text": "Kerewwmazer",
+      "first_seen": 43.0,
+      "last_seen": 43.0,
+      "count": 1,
+      "confidence": 0.608
+    },
+    {
+      "text": "Ali",
+      "first_seen": 43.0,
+      "last_seen": 43.0,
+      "count": 1,
+      "confidence": 0.637
+    },
+    {
+      "text": "Tsan",
+      "first_seen": 43.0,
+      "last_seen": 43.0,
+      "count": 1,
+      "confidence": 0.508
+    },
+    {
+      "text": "oulon",
+      "first_seen": 44.0,
+      "last_seen": 44.0,
+      "count": 1,
+      "confidence": 0.475
+    },
+    {
+      "text": "Ali Orogwz",
+      "first_seen": 44.0,
+      "last_seen": 44.0,
+      "count": 1,
+      "confidence": 0.611
+    },
+    {
+      "text": "Yplmaz Gwruda",
+      "first_seen": 44.0,
+      "last_seen": 44.0,
+      "count": 1,
+      "confidence": 0.679
+    },
+    {
+      "text": "Louor",
+      "first_seen": 44.0,
+      "last_seen": 44.0,
+      "count": 1,
+      "confidence": 0.517
+    },
+    {
+      "text": "Ali Ozoguy",
+      "first_seen": 45.0,
+      "last_seen": 45.0,
+      "count": 1,
+      "confidence": 0.634
+    },
+    {
+      "text": "Wlsar Cintuda",
+      "first_seen": 45.0,
+      "last_seen": 45.0,
+      "count": 1,
+      "confidence": 0.411
+    },
+    {
+      "text": "etiol",
+      "first_seen": 45.0,
+      "last_seen": 45.0,
+      "count": 1,
+      "confidence": 0.393
+    },
+    {
+      "text": "Louiou",
+      "first_seen": 46.0,
+      "last_seen": 46.0,
+      "count": 1,
+      "confidence": 0.682
+    },
+    {
+      "text": "YpluaCuruda",
+      "first_seen": 46.0,
+      "last_seen": 46.0,
+      "count": 1,
+      "confidence": 0.543
+    },
+    {
+      "text": "KerewWdmazer",
+      "first_seen": 46.0,
+      "last_seen": 46.0,
+      "count": 1,
+      "confidence": 0.586
+    },
+    {
+      "text": "YplmarCtruda",
+      "first_seen": 47.0,
+      "last_seen": 47.0,
+      "count": 1,
+      "confidence": 0.542
+    },
+    {
+      "text": "Philipp",
+      "first_seen": 47.0,
+      "last_seen": 47.0,
+      "count": 1,
+      "confidence": 0.68
+    },
+    {
+      "text": "VemirconTiskdogan",
+      "first_seen": 47.0,
+      "last_seen": 47.0,
+      "count": 1,
+      "confidence": 0.553
+    },
+    {
+      "text": "Lotiou",
+      "first_seen": 48.0,
+      "last_seen": 48.0,
+      "count": 1,
+      "confidence": 0.636
+    },
+    {
+      "text": "Ali Ozogwz",
+      "first_seen": 48.0,
+      "last_seen": 48.0,
+      "count": 1,
+      "confidence": 0.604
+    },
+    {
+      "text": "KeremMlmazer",
+      "first_seen": 48.0,
+      "last_seen": 48.0,
+      "count": 1,
+      "confidence": 0.617
+    },
+    {
+      "text": "AIE",
+      "first_seen": 48.0,
+      "last_seen": 48.0,
+      "count": 1,
+      "confidence": 0.352
+    },
+    {
+      "text": "Yotlou",
+      "first_seen": 48.0,
+      "last_seen": 48.0,
+      "count": 1,
+      "confidence": 0.507
+    },
+    {
+      "text": "Yplma Guruda",
+      "first_seen": 49.0,
+      "last_seen": 49.0,
+      "count": 1,
+      "confidence": 0.64
+    },
+    {
+      "text": "Uniberto",
+      "first_seen": 49.0,
+      "last_seen": 49.0,
+      "count": 1,
+      "confidence": 0.636
+    },
+    {
+      "text": "nibeu",
+      "first_seen": 50.0,
+      "last_seen": 50.0,
+      "count": 1,
+      "confidence": 0.481
+    },
+    {
+      "text": "Uniaerto",
+      "first_seen": 51.0,
+      "last_seen": 51.0,
+      "count": 1,
+      "confidence": 0.54
+    },
+    {
+      "text": "Kerewyumazer",
+      "first_seen": 51.0,
+      "last_seen": 51.0,
+      "count": 1,
+      "confidence": 0.568
+    },
+    {
+      "text": "Ali Ozoqwz",
+      "first_seen": 51.0,
+      "last_seen": 51.0,
+      "count": 1,
+      "confidence": 0.678
+    },
+    {
+      "text": "Lmoce",
+      "first_seen": 51.0,
+      "last_seen": 51.0,
+      "count": 1,
+      "confidence": 0.409
+    },
+    {
+      "text": "Yplmaz Curuda",
+      "first_seen": 52.0,
+      "last_seen": 52.0,
+      "count": 1,
+      "confidence": 0.571
+    },
+    {
+      "text": "DersesTakdogan",
+      "first_seen": 52.0,
+      "last_seen": 52.0,
+      "count": 1,
+      "confidence": 0.501
+    },
+    {
+      "text": "AliOoquy",
+      "first_seen": 52.0,
+      "last_seen": 52.0,
+      "count": 1,
+      "confidence": 0.621
+    },
+    {
+      "text": "VewncanTarkdogan",
+      "first_seen": 53.0,
+      "last_seen": 53.0,
+      "count": 1,
+      "confidence": 0.551
+    },
+    {
+      "text": "Kerem Ylmazer",
+      "first_seen": 53.0,
+      "last_seen": 53.0,
+      "count": 1,
+      "confidence": 0.664
+    },
+    {
+      "text": "Philinpe",
+      "first_seen": 53.0,
+      "last_seen": 53.0,
+      "count": 1,
+      "confidence": 0.687
+    },
+    {
+      "text": "Ali Ozoqwy",
+      "first_seen": 55.0,
+      "last_seen": 55.0,
+      "count": 1,
+      "confidence": 0.64
+    },
+    {
+      "text": "Yilmaz Guruda",
+      "first_seen": 55.0,
+      "last_seen": 55.0,
+      "count": 1,
+      "confidence": 0.545
+    },
+    {
+      "text": "Phis",
+      "first_seen": 55.0,
+      "last_seen": 55.0,
+      "count": 1,
+      "confidence": 0.543
+    },
+    {
+      "text": "PemircanTankdo",
+      "first_seen": 56.0,
+      "last_seen": 56.0,
+      "count": 1,
+      "confidence": 0.513
+    },
+    {
+      "text": "Thieol",
+      "first_seen": 56.0,
+      "last_seen": 56.0,
+      "count": 1,
+      "confidence": 0.436
+    },
+    {
+      "text": "Kerem Yylmazer",
+      "first_seen": 56.0,
+      "last_seen": 56.0,
+      "count": 1,
+      "confidence": 0.658
+    },
+    {
+      "text": "Kerew",
+      "first_seen": 57.0,
+      "last_seen": 57.0,
+      "count": 1,
+      "confidence": 0.668
+    },
+    {
+      "text": "Ylmaz",
+      "first_seen": 57.0,
+      "last_seen": 57.0,
+      "count": 1,
+      "confidence": 0.674
+    },
+    {
+      "text": "VllnaGwruda",
+      "first_seen": 57.0,
+      "last_seen": 57.0,
+      "count": 1,
+      "confidence": 0.507
+    },
+    {
+      "text": "DemiscanTe",
+      "first_seen": 58.0,
+      "last_seen": 58.0,
+      "count": 1,
+      "confidence": 0.518
+    },
+    {
+      "text": "AliOrogwy",
+      "first_seen": 58.0,
+      "last_seen": 58.0,
+      "count": 1,
+      "confidence": 0.544
+    },
+    {
+      "text": "Pemican Taiktogas",
+      "first_seen": 58.0,
+      "last_seen": 58.0,
+      "count": 1,
+      "confidence": 0.454
+    },
+    {
+      "text": "Kerem",
+      "first_seen": 58.0,
+      "last_seen": 58.0,
+      "count": 1,
+      "confidence": 0.691
+    },
+    {
+      "text": "Demiscan e",
+      "first_seen": 59.0,
+      "last_seen": 59.0,
+      "count": 1,
+      "confidence": 0.515
+    },
+    {
+      "text": "Ozoquty",
+      "first_seen": 59.0,
+      "last_seen": 59.0,
+      "count": 1,
+      "confidence": 0.479
+    },
+    {
+      "text": "Cwinda",
+      "first_seen": 59.0,
+      "last_seen": 59.0,
+      "count": 1,
+      "confidence": 0.542
+    },
+    {
+      "text": "matCwuda",
+      "first_seen": 59.0,
+      "last_seen": 59.0,
+      "count": 1,
+      "confidence": 0.566
+    },
+    {
+      "text": "Ozogwy",
+      "first_seen": 59.0,
+      "last_seen": 59.0,
+      "count": 1,
+      "confidence": 0.447
+    },
+    {
+      "text": "HA",
+      "first_seen": 61.0,
+      "last_seen": 61.0,
+      "count": 1,
+      "confidence": 0.589
+    },
+    {
+      "text": "LF",
+      "first_seen": 64.0,
+      "last_seen": 64.0,
+      "count": 1,
+      "confidence": 0.37
+    },
+    {
+      "text": "LE",
+      "first_seen": 65.0,
+      "last_seen": 65.0,
+      "count": 1,
+      "confidence": 0.465
+    },
+    {
+      "text": "STA",
+      "first_seen": 67.0,
+      "last_seen": 67.0,
+      "count": 1,
+      "confidence": 0.402
+    },
+    {
+      "text": "Co",
+      "first_seen": 70.0,
+      "last_seen": 70.0,
+      "count": 1,
+      "confidence": 0.463
+    },
+    {
+      "text": "Op",
+      "first_seen": 71.0,
+      "last_seen": 71.0,
+      "count": 1,
+      "confidence": 0.376
+    },
+    {
+      "text": "Cp",
+      "first_seen": 75.0,
+      "last_seen": 75.0,
+      "count": 1,
+      "confidence": 0.526
+    },
+    {
+      "text": "CA",
+      "first_seen": 76.0,
+      "last_seen": 76.0,
+      "count": 1,
+      "confidence": 0.588
+    },
+    {
+      "text": "TA",
+      "first_seen": 76.0,
+      "last_seen": 76.0,
+      "count": 1,
+      "confidence": 0.412
+    },
+    {
+      "text": "La",
+      "first_seen": 76.0,
+      "last_seen": 76.0,
+      "count": 1,
+      "confidence": 0.397
+    },
+    {
+      "text": "Lo",
+      "first_seen": 106.0,
+      "last_seen": 106.0,
+      "count": 1,
+      "confidence": 0.395
+    },
+    {
+      "text": "Lp",
+      "first_seen": 108.0,
+      "last_seen": 108.0,
+      "count": 1,
+      "confidence": 0.428
+    },
+    {
+      "text": "L0",
+      "first_seen": 111.0,
+      "last_seen": 111.0,
+      "count": 1,
+      "confidence": 0.365
+    },
+    {
+      "text": "cscoco",
+      "first_seen": 6542.752,
+      "last_seen": 6542.752,
+      "count": 1,
+      "confidence": 0.428
+    },
+    {
+      "text": "SC",
+      "first_seen": 6543.752,
+      "last_seen": 6543.752,
+      "count": 1,
+      "confidence": 0.424
+    },
+    {
+      "text": "COEACE",
+      "first_seen": 6545.752,
+      "last_seen": 6545.752,
+      "count": 1,
+      "confidence": 0.383
+    },
+    {
+      "text": "OC",
+      "first_seen": 6547.752,
+      "last_seen": 6547.752,
+      "count": 1,
+      "confidence": 0.516
+    },
+    {
+      "text": "CC",
+      "first_seen": 6548.752,
+      "last_seen": 6548.752,
+      "count": 1,
+      "confidence": 0.5
+    },
+    {
+      "text": "cocococ",
+      "first_seen": 6552.752,
+      "last_seen": 6552.752,
+      "count": 1,
+      "confidence": 0.453
+    },
+    {
+      "text": "CEOM",
+      "first_seen": 6554.752,
+      "last_seen": 6554.752,
+      "count": 1,
+      "confidence": 0.409
+    },
+    {
+      "text": "CEOV",
+      "first_seen": 6558.752,
+      "last_seen": 6558.752,
+      "count": 1,
+      "confidence": 0.433
+    },
+    {
+      "text": "EOVLE",
+      "first_seen": 6561.752,
+      "last_seen": 6561.752,
+      "count": 1,
+      "confidence": 0.378
+    },
+    {
+      "text": "SYAV",
+      "first_seen": 6562.752,
+      "last_seen": 6562.752,
+      "count": 1,
+      "confidence": 0.41
+    },
+    {
+      "text": "AY",
+      "first_seen": 6570.752,
+      "last_seen": 6570.752,
+      "count": 1,
+      "confidence": 0.437
+    },
+    {
+      "text": "OCOCA",
+      "first_seen": 6574.752,
+      "last_seen": 6574.752,
+      "count": 1,
+      "confidence": 0.554
+    },
+    {
+      "text": "ocococ",
+      "first_seen": 6576.752,
+      "last_seen": 6576.752,
+      "count": 1,
+      "confidence": 0.445
+    },
+    {
+      "text": "OCOCAOR",
+      "first_seen": 6579.752,
+      "last_seen": 6579.752,
+      "count": 1,
+      "confidence": 0.439
+    },
+    {
+      "text": "FAWL",
+      "first_seen": 6581.752,
+      "last_seen": 6581.752,
+      "count": 1,
+      "confidence": 0.42
+    },
+    {
+      "text": "AV",
+      "first_seen": 6582.752,
+      "last_seen": 6582.752,
+      "count": 1,
+      "confidence": 0.578
+    },
+    {
+      "text": "FOV",
+      "first_seen": 6582.752,
+      "last_seen": 6582.752,
+      "count": 1,
+      "confidence": 0.401
+    },
+    {
+      "text": "SAM",
+      "first_seen": 6586.752,
+      "last_seen": 6586.752,
+      "count": 1,
+      "confidence": 0.416
+    },
+    {
+      "text": "AW",
+      "first_seen": 6588.752,
+      "last_seen": 6588.752,
+      "count": 1,
+      "confidence": 0.456
+    },
+    {
+      "text": "AVA",
+      "first_seen": 6591.752,
+      "last_seen": 6591.752,
+      "count": 1,
+      "confidence": 0.477
+    },
+    {
+      "text": "ZAV",
+      "first_seen": 6591.752,
+      "last_seen": 6591.752,
+      "count": 1,
+      "confidence": 0.353
+    },
+    {
+      "text": "FAWE",
+      "first_seen": 6599.752,
+      "last_seen": 6599.752,
+      "count": 1,
+      "confidence": 0.4
+    },
+    {
+      "text": "OVE",
+      "first_seen": 6602.752,
+      "last_seen": 6602.752,
+      "count": 1,
+      "confidence": 0.36
+    },
+    {
+      "text": "SCOCAT",
+      "first_seen": 6626.752,
+      "last_seen": 6626.752,
+      "count": 1,
+      "confidence": 0.367
+    },
+    {
+      "text": "cococ",
+      "first_seen": 6627.752,
+      "last_seen": 6627.752,
+      "count": 1,
+      "confidence": 0.476
+    },
+    {
+      "text": "DCOCA",
+      "first_seen": 6632.752,
+      "last_seen": 6632.752,
+      "count": 1,
+      "confidence": 0.589
+    },
+    {
+      "text": "acac",
+      "first_seen": 6632.752,
+      "last_seen": 6632.752,
+      "count": 1,
+      "confidence": 0.504
+    },
+    {
+      "text": "COC",
+      "first_seen": 6634.752,
+      "last_seen": 6634.752,
+      "count": 1,
+      "confidence": 0.452
+    },
+    {
+      "text": "ICOCACO",
+      "first_seen": 6635.752,
+      "last_seen": 6635.752,
+      "count": 1,
+      "confidence": 0.505
+    },
+    {
+      "text": "DCOCN",
+      "first_seen": 6638.752,
+      "last_seen": 6638.752,
+      "count": 1,
+      "confidence": 0.538
+    },
+    {
+      "text": "XX",
+      "first_seen": 6651.752,
+      "last_seen": 6651.752,
+      "count": 1,
+      "confidence": 0.486
+    },
+    {
+      "text": "ocococs",
+      "first_seen": 6717.752,
+      "last_seen": 6717.752,
+      "count": 1,
+      "confidence": 0.479
+    },
+    {
+      "text": "CoCc",
+      "first_seen": 6720.752,
+      "last_seen": 6720.752,
+      "count": 1,
+      "confidence": 0.368
+    },
+    {
+      "text": "cococon",
+      "first_seen": 6754.752,
+      "last_seen": 6754.752,
+      "count": 1,
+      "confidence": 0.378
+    },
+    {
+      "text": "1Cococo",
+      "first_seen": 6755.752,
+      "last_seen": 6755.752,
+      "count": 1,
+      "confidence": 0.377
+    },
+    {
+      "text": "ICOCOCAA",
+      "first_seen": 6757.752,
+      "last_seen": 6757.752,
+      "count": 1,
+      "confidence": 0.366
+    },
+    {
+      "text": "icococsc",
+      "first_seen": 6760.752,
+      "last_seen": 6760.752,
+      "count": 1,
+      "confidence": 0.503
+    },
+    {
+      "text": "XCAXA",
+      "first_seen": 6762.752,
+      "last_seen": 6762.752,
+      "count": 1,
+      "confidence": 0.427
+    },
+    {
+      "text": "XCACAD",
+      "first_seen": 6762.752,
+      "last_seen": 6762.752,
+      "count": 1,
+      "confidence": 0.351
+    },
+    {
+      "text": "OX",
+      "first_seen": 6765.752,
+      "last_seen": 6765.752,
+      "count": 1,
+      "confidence": 0.434
+    },
+    {
+      "text": "YCX",
+      "first_seen": 6773.752,
+      "last_seen": 6773.752,
+      "count": 1,
+      "confidence": 0.367
+    },
+    {
+      "text": "XCX",
+      "first_seen": 6774.752,
+      "last_seen": 6774.752,
+      "count": 1,
+      "confidence": 0.402
+    },
+    {
+      "text": "VA",
+      "first_seen": 6782.752,
+      "last_seen": 6782.752,
+      "count": 1,
+      "confidence": 0.396
+    },
+    {
+      "text": "CX",
+      "first_seen": 6784.752,
+      "last_seen": 6784.752,
+      "count": 1,
+      "confidence": 0.531
+    },
+    {
+      "text": "COCX",
+      "first_seen": 6790.752,
+      "last_seen": 6790.752,
+      "count": 1,
+      "confidence": 0.468
+    },
+    {
+      "text": "COCO",
+      "first_seen": 6797.752,
+      "last_seen": 6797.752,
+      "count": 1,
+      "confidence": 0.449
+    },
+    {
+      "text": "1X",
+      "first_seen": 6815.752,
+      "last_seen": 6815.752,
+      "count": 1,
+      "confidence": 0.379
+    },
+    {
+      "text": "DCA",
+      "first_seen": 6829.752,
+      "last_seen": 6829.752,
+      "count": 1,
+      "confidence": 0.612
+    },
+    {
+      "text": "DCO",
+      "first_seen": 6830.752,
+      "last_seen": 6830.752,
+      "count": 1,
+      "confidence": 0.434
+    },
+    {
+      "text": "ocar",
+      "first_seen": 6831.752,
+      "last_seen": 6831.752,
+      "count": 1,
+      "confidence": 0.548
+    },
+    {
+      "text": "CSC",
+      "first_seen": 6848.752,
+      "last_seen": 6848.752,
+      "count": 1,
+      "confidence": 0.355
+    },
+    {
+      "text": "ccoc",
+      "first_seen": 6853.752,
+      "last_seen": 6853.752,
+      "count": 1,
+      "confidence": 0.434
+    },
+    {
+      "text": "ococe",
+      "first_seen": 6857.752,
+      "last_seen": 6857.752,
+      "count": 1,
+      "confidence": 0.428
+    },
+    {
+      "text": "TIY",
+      "first_seen": 6858.752,
+      "last_seen": 6858.752,
+      "count": 1,
+      "confidence": 0.375
+    },
+    {
+      "text": "cocac",
+      "first_seen": 6867.752,
+      "last_seen": 6867.752,
+      "count": 1,
+      "confidence": 0.377
+    },
+    {
+      "text": "vacac",
+      "first_seen": 6867.752,
+      "last_seen": 6867.752,
+      "count": 1,
+      "confidence": 0.37
+    },
+    {
+      "text": "ocor",
+      "first_seen": 6869.752,
+      "last_seen": 6869.752,
+      "count": 1,
+      "confidence": 0.363
+    },
+    {
+      "text": "DOCOC",
+      "first_seen": 6871.752,
+      "last_seen": 6871.752,
+      "count": 1,
+      "confidence": 0.426
+    },
+    {
+      "text": "IC",
+      "first_seen": 6878.752,
+      "last_seen": 6878.752,
+      "count": 1,
+      "confidence": 0.443
+    },
+    {
+      "text": "or",
+      "first_seen": 6879.752,
+      "last_seen": 6879.752,
+      "count": 1,
+      "confidence": 0.668
+    },
+    {
+      "text": "ary",
+      "first_seen": 6881.752,
+      "last_seen": 6881.752,
+      "count": 1,
+      "confidence": 0.372
+    },
+    {
+      "text": "CAM",
+      "first_seen": 6888.752,
+      "last_seen": 6888.752,
+      "count": 1,
+      "confidence": 0.354
+    },
+    {
+      "text": "OCAO",
+      "first_seen": 6889.752,
+      "last_seen": 6889.752,
+      "count": 1,
+      "confidence": 0.44
+    },
+    {
+      "text": "2CAD",
+      "first_seen": 6889.752,
+      "last_seen": 6889.752,
+      "count": 1,
+      "confidence": 0.357
+    },
+    {
+      "text": "DCOC,",
+      "first_seen": 6896.752,
+      "last_seen": 6896.752,
+      "count": 1,
+      "confidence": 0.391
+    },
+    {
+      "text": "DCJV",
+      "first_seen": 6903.752,
+      "last_seen": 6903.752,
+      "count": 1,
+      "confidence": 0.463
+    },
+    {
+      "text": "ncoc",
+      "first_seen": 6903.752,
+      "last_seen": 6903.752,
+      "count": 1,
+      "confidence": 0.468
+    },
+    {
+      "text": "acoc",
+      "first_seen": 6904.752,
+      "last_seen": 6904.752,
+      "count": 1,
+      "confidence": 0.391
+    },
+    {
+      "text": "olayaniar",
+      "first_seen": 6905.752,
+      "last_seen": 6905.752,
+      "count": 1,
+      "confidence": 0.563
+    },
+    {
+      "text": "NiaSeretli",
+      "first_seen": 6905.752,
+      "last_seen": 6905.752,
+      "count": 1,
+      "confidence": 0.532
+    },
+    {
+      "text": "semo.Vwhkdogan",
+      "first_seen": 6905.752,
+      "last_seen": 6905.752,
+      "count": 1,
+      "confidence": 0.474
+    },
+    {
+      "text": "Hhdi",
+      "first_seen": 6905.752,
+      "last_seen": 6905.752,
+      "count": 1,
+      "confidence": 0.468
+    },
+    {
+      "text": "Camin",
+      "first_seen": 6905.752,
+      "last_seen": 6905.752,
+      "count": 1,
+      "confidence": 0.542
+    },
+    {
+      "text": "JC",
+      "first_seen": 6908.752,
+      "last_seen": 6908.752,
+      "count": 1,
+      "confidence": 0.377
+    },
+    {
+      "text": "NisaSeerlilogan",
+      "first_seen": 6920.752,
+      "last_seen": 6920.752,
+      "count": 1,
+      "confidence": 0.587
+    },
+    {
+      "text": "outo",
+      "first_seen": 6920.752,
+      "last_seen": 6920.752,
+      "count": 1,
+      "confidence": 0.557
+    },
+    {
+      "text": "Uylayanlar",
+      "first_seen": 6921.752,
+      "last_seen": 6921.752,
+      "count": 1,
+      "confidence": 0.524
+    },
+    {
+      "text": "tient",
+      "first_seen": 6921.752,
+      "last_seen": 6921.752,
+      "count": 1,
+      "confidence": 0.395
+    },
+    {
+      "text": "Yplmaz Guruda",
+      "first_seen": 6921.752,
+      "last_seen": 6921.752,
+      "count": 1,
+      "confidence": 0.692
+    },
+    {
+      "text": "Mmazes",
+      "first_seen": 6921.752,
+      "last_seen": 6921.752,
+      "count": 1,
+      "confidence": 0.607
+    },
+    {
+      "text": "Ali 0zoqwz",
+      "first_seen": 6921.752,
+      "last_seen": 6921.752,
+      "count": 1,
+      "confidence": 0.633
+    },
+    {
+      "text": "tenm",
+      "first_seen": 6921.752,
+      "last_seen": 6921.752,
+      "count": 1,
+      "confidence": 0.412
+    },
+    {
+      "text": "Yllmaz",
+      "first_seen": 6923.752,
+      "last_seen": 6923.752,
+      "count": 1,
+      "confidence": 0.629
+    },
+    {
+      "text": "Gwuda",
+      "first_seen": 6923.752,
+      "last_seen": 6923.752,
+      "count": 1,
+      "confidence": 0.647
+    },
+    {
+      "text": "Ali Ozoquz",
+      "first_seen": 6929.752,
+      "last_seen": 6929.752,
+      "count": 1,
+      "confidence": 0.654
+    },
+    {
+      "text": "Ypilmaz",
+      "first_seen": 6948.752,
+      "last_seen": 6948.752,
+      "count": 1,
+      "confidence": 0.538
+    }
+  ],
+  "errors": []
+}
