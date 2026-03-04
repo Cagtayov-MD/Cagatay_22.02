@@ -702,7 +702,88 @@ class ExportEngine:
             json.dump(report, f, ensure_ascii=False, indent=2)
         self._write_report(report, tp, audio_result=audio_result)
         self._write_transcript(video_info, audio_result, tr_p)
-        return str(jp), str(tp), str(tr_p)
+        user_tp = _safe_path(self.out / f"{stem}_{ts}_kullanici.txt")
+        self._write_user_report(report, user_tp, audio_result=audio_result)
+        return str(jp), str(tp), str(tr_p), str(user_tp)
+
+    def _write_user_report(self, r, path, audio_result: dict | None = None):
+        """Kullanıcıya yönelik temiz, sabit formatlı TXT raporu yaz."""
+        L = []
+        sep = "=" * 64
+        fi = r["file_info"]
+        cr = r["credits"]
+
+        # Film/Program Bilgileri
+        L.append(sep)
+        L.append("  FİLM / PROGRAM BİLGİLERİ")
+        L.append(sep)
+        film_title = r.get("film_title") or fi.get("filename", "")
+        L.append(f"  Ad            : {film_title}")
+        L.append(f"  Süre          : {fi.get('duration_human', '')}")
+        fps = fi.get("fps", 0)
+        resolution = fi.get("resolution", "")
+        L.append(f"  Çözünürlük    : {resolution} @ {fps} FPS")
+        total_frames = fi.get("total_frames")
+        if total_frames is not None:
+            L.append(f"  Kare Sayısı   : {total_frames}")
+
+        # Oyuncular
+        L.append(sep)
+        L.append("  OYUNCULAR")
+        L.append(sep)
+        cast_list = cr.get("cast") or []
+        if cast_list:
+            for c in cast_list:
+                ch = c.get("character_name") or ""
+                ac = c.get("actor_name") or ""
+                if ch:
+                    L.append(f"  {ch}   --   {ac}")
+                else:
+                    L.append(f"  {ac}")
+        else:
+            L.append("  (Oyuncu verisi yok)")
+
+        # Yapım Ekibi
+        L.append(sep)
+        L.append("  YAPIM EKİBİ")
+        L.append(sep)
+        crew_list = cr.get("technical_crew") or cr.get("crew") or []
+        directors = self._director_names(cr)
+        if directors or crew_list:
+            for d in directors:
+                L.append(f"  Yönetmen   :   {d}")
+            for t in crew_list:
+                role_txt = t.get("role_tr") or t.get("role") or t.get("job") or ""
+                L.append(f"  {role_txt}   :   {t.get('name', '')}")
+        else:
+            L.append("  (Ekip verisi yok)")
+
+        # Anahtar Sözcükler (sadece oyuncu isimleri)
+        L.append(sep)
+        L.append("  ANAHTAR SÖZCÜKLER")
+        L.append(sep)
+        actor_names = [c["actor_name"] for c in cast_list if c.get("actor_name")]
+        if actor_names:
+            L.append(f"  {', '.join(actor_names)}")
+
+        # Özet
+        L.append(sep)
+        L.append("  ÖZET")
+        L.append(sep)
+        summary = None
+        if audio_result and isinstance(audio_result, dict):
+            summary = (audio_result.get("summary") or
+                       audio_result.get("summary_tr") or
+                       audio_result.get("ollama_summary"))
+        L.append(f"  {summary}" if summary else "  Özet oluşturulmadı.")
+
+        # Footer
+        L.append(sep)
+        L.append(f"  Oluşturulma: {r['generated_at']}")
+        L.append(sep)
+
+        with open(path, "w", encoding="utf-8-sig") as f:
+            f.write("\n".join(L))
 
     def _write_report(self, r, path, audio_result: dict | None = None):
         L = []
