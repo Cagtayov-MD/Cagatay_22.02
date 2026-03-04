@@ -704,6 +704,12 @@ class PipelineRunner:
         "Production Design": "Yapım Tasarımı",
         "Sound": "Ses",
         "Makeup": "Makyaj",
+        "Makeup Artist": "Makyaj",
+        "Art Direction": "Sanat Yönetmeni",
+        "Set Decoration": "Set Dekorasyonu",
+        "Casting": "Oyuncu Seçimi",
+        "Visual Effects": "Görsel Efekt",
+        "Stunt Coordinator": "Dublör Koordinatörü",
     }
 
     def _apply_tmdb_credits(self, cdata: dict, tmdb_result):
@@ -723,6 +729,7 @@ class PipelineRunner:
                 "frame": "tmdb",
                 "is_verified_name": True,
                 "is_tmdb_verified": True,
+                "tmdb_order": item.get("order", 999),
             })
 
         crew = []
@@ -735,7 +742,7 @@ class PipelineRunner:
                 "name": name,
                 "job": job,
                 "role": job or "Crew",
-                "role_tr": self._JOB_TR.get(job, ""),
+                "role_tr": self._JOB_TR.get(job, job),
                 "role_category": "crew",
                 "raw": "tmdb",
                 "confidence": 1.0,
@@ -978,32 +985,49 @@ class PipelineRunner:
     def _extract_film_title_from_filename(stem: str) -> str:
         """evoArcadmin format dosya adından film başlığını ayıkla.
 
-        Format: evoArcadmin_XXXXX_YYYY-NNNN-N-NNNN-NN-N-BAŞLIK
-        Regex: sayısal bloktan sonraki kısım başlık.
-
-        Örnekler:
-          evoArcadmin_TEST1_1955-0019-1-0000-00-1-KÜL_KEDİSİ  → "Kül Kedisi"
-          evoArcadmin_DÖNÜŞÜ OLMAYAN NEHİR_1989-0624-1-0000-00-1-DÖNÜŞÜ_OLMAYAN_NEHİR → "Dönüşü Olmayan Nehir"
+        Desteklenen formatlar:
+          1. {prefix}_{FILM_ADI}_{YIL}-{rest}  (yıl bazlı segment, çok kelimeli başlık)
+             evoArcadmin_DÖNÜŞÜ OLMAYAN NEHİR_1989-0624-... → "Dönüşü Olmayan Nehir"
+             evoArcadmin_KÜL_KEDİSİ_1955-0019-... → "Kül Kedisi"
+          2. {prefix}_{code}_{YIL}-NNNN-N-NNNN-NN-N-BAŞLIK  (sayısal blok sonunda başlık)
+             evoArcadmin_TEST1_1955-0019-1-0000-00-1-KÜL_KEDİSİ → "Kül Kedisi"
 
         Eğer format tanınmazsa orijinal stem döndürülür.
         """
-        # Sayısal blok: 4 rakam - 4 rakam - 1 rakam - 4 rakam - 2 rakam - 1 rakam -
+        def _tr_capitalize(w: str) -> str:
+            if not w:
+                return w
+            # Keep first character as-is (already correct uppercase form)
+            # For the rest: replace İ→i and I→ı, then lowercase
+            rest = w[1:].replace('\u0130', 'i').replace('I', 'ı').lower()
+            return w[0] + rest
+
+        def _to_title(raw: str) -> str:
+            return ' '.join(_tr_capitalize(w) for w in raw.replace('_', ' ').split())
+
+        # Strateji 1: {prefix}_{FILM_ADI}_{YIL}-{rest} formatı
+        # Alt çizgiyle ayrılmış segmentlerde yıl (4 rakam) ile başlayan bloğu bul
+        # Sadece çok kelimeli orta segment gerçek başlık olarak değerlendirilir
+        parts = stem.split('_')
+        for i, part in enumerate(parts):
+            if i > 0 and re.match(r'^\d{4}-', part):
+                if i > 1:
+                    mid_raw = '_'.join(parts[1:i])
+                    # Birden fazla kelime varsa (boşluk veya alt çizgiyle) gerçek başlık
+                    mid_words = mid_raw.replace('_', ' ').split()
+                    if len(mid_words) >= 2:
+                        title = _to_title(mid_raw)
+                        if title:
+                            return title
+                break
+
+        # Strateji 2: Sayısal blok sonundaki başlık (4-4-1-4-2-1-BAŞLIK)
         m = re.search(r'\d{4}-\d{4}-\d-\d{4}-\d{2}-\d-(.+)$', stem)
         if m:
-            title_raw = m.group(1)
-            # Alt çizgiyi boşluğa çevir
-            title = title_raw.replace('_', ' ').strip()
-            # Title case (Türkçe uyumlu — basit)
-            # Turkish rules: İ(U+0130)→i, I→ı (not regular i)
-            def _tr_capitalize(w: str) -> str:
-                if not w:
-                    return w
-                # Keep first character as-is (already correct uppercase form)
-                # For the rest: replace İ→i and I→ı, then lowercase
-                rest = w[1:].replace('\u0130', 'i').replace('I', 'ı').lower()
-                return w[0] + rest
-            title = ' '.join(_tr_capitalize(w) for w in title.split())
-            return title
+            title = _to_title(m.group(1))
+            if title:
+                return title
+
         return stem
 
     @staticmethod
