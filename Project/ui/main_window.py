@@ -315,9 +315,9 @@ class MainWindow(QMainWindow):
         lay.setSpacing(12)
         for attr, label in [("_dot_ffmpeg", "FFmpeg"), ("_dot_gemini", "Gemini"), ("_dot_tmdb", "TMDB")]:
             dot = QLabel("●")
-            dot.setStyleSheet("font-size: 18px; color: #555555;")
+            dot.setStyleSheet("font-size: 22px; color: #555555;")
             lbl = QLabel(label)
-            lbl.setStyleSheet("font-size: 11px; color: #888;")
+            lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: #e94560;")
             setattr(self, attr, dot)
             row = QHBoxLayout()
             row.setSpacing(4)
@@ -329,6 +329,7 @@ class MainWindow(QMainWindow):
     def _build_system_info(self):
         """Tarih, Saat ve CPU/GPU/RAM — 3 satır dikey, sağa yaslanmış."""
         widget = QWidget()
+        widget.setMinimumWidth(220)
         lay = QVBoxLayout(widget)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(2)
@@ -339,11 +340,13 @@ class MainWindow(QMainWindow):
 
         for lbl in (self._sys_date_lbl, self._sys_time_lbl):
             lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            lbl.setStyleSheet("font-size: 14px; color: #e0e0e0;")
+            lbl.setStyleSheet("font-size: 14px; color: #e0e0e0; font-family: 'Consolas', 'Monaco', 'Courier New', monospace;")
+            lbl.setMinimumWidth(130)
             lay.addWidget(lbl)
 
         self._sys_hw_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._sys_hw_lbl.setStyleSheet("font-size: 12px; color: #888;")
+        self._sys_hw_lbl.setMinimumWidth(180)
         lay.addWidget(self._sys_hw_lbl)
 
         self._sys_timer = QTimer(widget)
