@@ -26,7 +26,7 @@ Bu listeden:
 4. Varsa karakter adı ↔ oyuncu eşleşmesini koru
 
 JSON formatında dön:
-{{"cast": [{{"actor_name": "...", "character_name": "..."}}], "crew": [{{"name": "...", "role": "..."}}]}}
+{"cast": [{"actor_name": "...", "character_name": "..."}], "crew": [{"name": "...", "role": "..."}]}
 
 Metin listesi:
 {ocr_text}"""
@@ -65,7 +65,7 @@ class GeminiCastExtractor:
         if not ocr_text:
             return {}
 
-        prompt = _EXTRACT_PROMPT.format(ocr_text=ocr_text)
+        prompt = _EXTRACT_PROMPT.replace("{ocr_text}", ocr_text)
         if film_title:
             self._log(f"  [Gemini] Cast ayıklama: '{film_title}'")
         else:
