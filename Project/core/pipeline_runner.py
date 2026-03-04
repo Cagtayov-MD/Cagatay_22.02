@@ -565,7 +565,7 @@ class PipelineRunner:
             self.stats.start_stage("EXPORT")
             export_ts = datetime.now().strftime("%d%m%y-%H%M")
             exp = ExportEngine(work_dir, name_db=self._name_db)
-            jp, tp, tr_p = exp.generate(
+            jp, tp, tr_p, user_tp = exp.generate(
                 info, cdata, ocr_lines, self.stage_stats,
                 "WORKSTATION", scope, first_min, last_min,
                 keywords=cdata.get("_tmdb_keywords") or None,
@@ -574,16 +574,16 @@ class PipelineRunner:
                 ts=export_ts)
             self._stage("EXPORT", time.time() - t)
 
-            # Kullanıcı çıktı klasörüne (output_root) yalnızca ana rapor TXT'yi kopyala
+            # Kullanıcı çıktı klasörüne (output_root) yalnızca kullanıcı TXT'yi kopyala
             if self.output_root:
                 out_root = Path(self.output_root)
                 out_root.mkdir(parents=True, exist_ok=True)
-                for _src in (tp,):
+                for _src in (user_tp,):
                     _src_p = Path(_src)
                     if _src_p.is_file():
                         _dst = _safe_path(out_root / _src_p.name)
                         shutil.copy2(_src_p, _dst)
-                        self._log(f"  [EXPORT] Kullanıcı klasörüne kopyalandı: {_dst.name}")
+                        self._log(f"  [EXPORT] Kullanıcı raporu kopyalandı: {_dst.name}")
 
             # ══ DATABASE ══════════════════════════════════════════
             try:
@@ -610,12 +610,14 @@ class PipelineRunner:
             self._log(f"  JSON      : {jp}")
             self._log(f"  Rapor     : {tp}")
             self._log(f"  Transcript: {tr_p}")
+            self._log(f"  Kullanıcı : {user_tp}")
             self._log(f"{'='*60}")
 
             return {
                 "report_json":       jp,
                 "report_txt":        tp,
                 "transcript_txt":    tr_p,
+                "user_report_txt":   user_tp,
                 "work_dir":          work_dir,
                 "video_info":        info,
                 "credits":           cdata,
