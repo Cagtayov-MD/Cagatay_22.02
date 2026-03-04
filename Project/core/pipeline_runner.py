@@ -239,7 +239,8 @@ class PipelineRunner:
             executor = None
             if scope == "audio_only":
                 audio_result = self._run_audio(video_path, work_dir)
-            elif scope == "video+audio":
+            else:
+                # video_only ve video+audio → her zaman audio başlat (paralel)
                 executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
                 audio_future = executor.submit(self._run_audio, video_path, work_dir)
                 self._log("  [AUDIO] Ses analizi arka planda başlatıldı (paralel mod)")
