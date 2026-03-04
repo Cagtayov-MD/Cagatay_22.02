@@ -678,6 +678,7 @@ class ExportEngine:
                 "speed_ratio": round(dur / max(total_sec, 0.1), 2),
             },
             "credits": credits_data,
+            "film_title": credits_data.get("film_title", ""),
             "keywords": keywords,
             "logos_detected": logos or [],
             "ocr_results": [
@@ -717,7 +718,7 @@ class ExportEngine:
         L.append(sep)
         L.append("  FİLM / PROGRAM BİLGİLERİ")
         L.append(sep)
-        film_title = r.get("film_title") or fi.get("filename", "")
+        film_title = r.get("film_title") or cr.get("film_title") or fi.get("filename", "")
         L.append(f"  Ad            : {film_title}")
         L.append(f"  Süre          : {fi.get('duration_human', '')}")
         fps = fi.get("fps", 0)
