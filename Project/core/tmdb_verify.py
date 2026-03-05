@@ -4,7 +4,7 @@ tmdb_verify.py — TMDB arama bazlı doğrulama.
 ID girmeden çalışır. Film adı + oyuncu listesiyle TMDB'de arama yapar.
 
 Doğruluk mantığı:
-  - film_adı + herhangi bir oyuncu eşleşirse → %100 güven
+  - film_adı + en az 2 oyuncu eşleşirse → %100 güven
   - film_adı yok ama 3 farklı oyuncu eşleşirse → %100 güven
   - Eşleşme sağlanırsa tüm cast TMDB'deki kanonik isimlerle güncellenir.
 """
@@ -474,8 +474,8 @@ class TMDBVerify:
         Strateji:
           1. Film adıyla search/multi → top 10 sonucu oyuncularla doğrula
              (birden fazla başlık varyantı denenir; örn. "Madam" → "Madame")
-             - film_adı + 1 oyuncu → %100 güven
-             - film_adı + yönetmen (TMDB crew'unda) → %100 güven (cast yoksa)
+             - film_adı + 2 oyuncu → %100 güven
+             - film_adı + 1 oyuncu + yönetmen (TMDB crew'unda) → %100 güven
           2. Film adı yoksa her oyuncuyla/yönetmenle search/person → combined_credits doğrula
              (combined_credits başarısız olursa known_for fallback)
              - combined_credits cast + crew bölümleri taranır; yönetmenler crew'den eşleşir
@@ -518,12 +518,12 @@ class TMDBVerify:
                 tmdb_names = self._extract_names(credits)
                 matched    = self._count_matches(cast_names, tmdb_names)
                 self._log(f"  [TMDB]   → {matched}/{len(cast_names)} oyuncu eşleşti")
-                if matched >= 1:
+                if matched >= 2:
                     self._log(f"  [TMDB] film adı + {matched} oyuncu eşleşti → %100 güven")
                     return r, kind
-                # Cast eşleşmesi yoksa yönetmen eşleşmesini kontrol et
-                if matched == 0 and director_names and _director_matches_crew(credits):
-                    self._log(f"  [TMDB] film adı + yönetmen eşleşti → %100 güven")
+                # 1 oyuncu + yönetmen eşleşmesi de kabul edilir
+                if matched >= 1 and director_names and _director_matches_crew(credits):
+                    self._log(f"  [TMDB] film adı + {matched} oyuncu + yönetmen eşleşti → %100 güven")
                     return r, kind
             # Bu başlık denemesinde eşleşme yoksa sonraki varyantı dene
 
