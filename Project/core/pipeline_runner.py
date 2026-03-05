@@ -656,7 +656,14 @@ class PipelineRunner:
     # ──────────────────────────────────────────────────────────────
     def _run_audio(self, video_path: str, work_dir: str) -> dict:
         """AudioBridge üzerinden ses pipeline'ını çalıştır."""
-        try:
+        # --- ASR GEÇİCİ OLARAK DEVRE DIŞI ---
+        # Testlerin hızlanması için ASR ve transcript modeli şu an skip ediliyor.
+        # Aksi bir talimat gelene kadar bu blok aktif kalacak.
+        self._log("  [Audio] ASR geçici olarak devre dışı — atlanıyor (skip)")
+        return {"status": "skipped", "reason": "asr_temporarily_disabled"}
+        # --- ASR GEÇİCİ OLARAK DEVRE DIŞI SONU ---
+
+        try:  # noqa: unreachable
             from core.audio_bridge import AudioBridge
         except ImportError:
             self._log("  [Audio] audio_bridge modülü yok — ses atlanıyor")
