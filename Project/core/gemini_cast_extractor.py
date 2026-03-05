@@ -73,9 +73,6 @@ CREW kuralları:
 - "role": mümkünse kısa ve standart tut (örn: Director, Producer, Writer, Cinematography, Editor, Music, Costume, Makeup, Sound, Production Design).
 - Rol belli değilse crew'e ekleme.
 - Stunt veya dublör rolleri (Stunts, Stunt Double, Stunt Coordinator, Stunt Driver, Stunt Performer, Stunt Actor, Utility Stunts, Dublör, Cascadeur, Stuntkoordinator vb.) varsa bunları tamamen atla — cast'a veya crew'e ekleme.
-
-GİRDİ (Film Adı: {film_title}):
-{ocr_text}
 """
 
 class GeminiCastExtractor:
@@ -119,11 +116,19 @@ class GeminiCastExtractor:
         if not ocr_text:
             return {}
 
-        prompt = _EXTRACT_PROMPT.format(ocr_text=ocr_text, film_title=film_title)
         if film_title:
+            title_section = f"""DOSYA ADI BAŞLIĞI (ANCHOR — bu başlık dosya adından çıkarılmıştır ve güvenilirdir):
+"{film_title}"
+Bu başlığı referans al. OCR satırlarında farklı bir başlık görünse bile, dosya adından gelen başlık önceliklidir.
+OCR'dan okunan kısa/anlamsız metin parçaları (örn. "XX", "AB", "CD") film başlığı DEĞİLDİR.
+
+"""
             self._log(f"  [Gemini] Cast ayıklama: '{film_title}'")
         else:
+            title_section = "Film başlığı bilinmiyor.\n\n"
             self._log("  [Gemini] Cast ayıklama başlatılıyor...")
+
+        prompt = _EXTRACT_PROMPT + title_section + "GİRDİ:\n" + ocr_text
 
         # Timeout tespiti için açık bayrak — log mesajı yerine doğrudan kontrol
         _timed_out_flag: list[bool] = []

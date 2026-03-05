@@ -7,7 +7,7 @@ v2.0 Değişiklikler:
 - AudioBridge gerçekten entegre edildi — scope="video+audio" artık çalışıyor.
 - google_json + logolar_dir parametreleri eklendi (path_resolver sabit yollar).
 - BUG-01 (double diarization): transcribe.run() çağrısından hf_token kaldırıldı.
-- TMDB: ID girmeden çalışır. film_adı + 1 oyuncu = %100 güven.
+- TMDB: ID girmeden çalışır. film_adı + 2 oyuncu = %100 güven. Dosya adı anchor.
 """
 
 import concurrent.futures
@@ -356,8 +356,16 @@ class PipelineRunner:
                 cdata_raw = copy.deepcopy(cdata)
 
                 # ── Pre-TMDB: Gemini cast ayıklamasını TMDB'den önce her zaman çalıştır
-                # (temiz isimlerle TMDB'ye gidilsin; BLOK2 durumundan bağımsız)
+                # Dosya adından gelen başlığı anchor olarak koru
+                if film_title_from_filename:
+                    cdata["film_title"] = film_title_from_filename
                 self._run_gemini_cast_extract(ocr_lines, cdata)
+                # Gemini film_title'ı ezmiş olabilir — dosya adı anchor'ını geri yükle
+                if film_title_from_filename and cdata.get("film_title") != film_title_from_filename:
+                    gemini_title = cdata.get("film_title", "")
+                    cdata["film_title"] = film_title_from_filename
+                    cdata["_gemini_suggested_title"] = gemini_title
+                    self._log(f"  [Anchor] Gemini başlığı '{gemini_title}' → dosya adı anchor'ı korundu: '{film_title_from_filename}'")
 
                 # ══ [6/6] TMDB_VERIFY ══════════════════════════════
                 # TMDB önce çalışsın — eşleşirse cast TMDB'den gelecek, LLM gereksiz
@@ -371,9 +379,12 @@ class PipelineRunner:
                     self._stage("TMDB_VERIFY", 0.0, status="skipped", reason="match_parse_enabled")
                     tmdb_result = None
                 else:
-                    if not cdata.get("film_title"):
+                    # Dosya adından gelen başlık her zaman öncelikli
+                    if film_title_from_filename:
                         cdata["film_title"] = film_title_from_filename
-                        self._log(f"  [TMDB] film_title yok, dosya adından çıkarıldı: {film_title_from_filename}")
+                        self._log(f"  [TMDB] Dosya adı anchor başlığı: '{film_title_from_filename}'")
+                    elif not cdata.get("film_title"):
+                        self._log(f"  [TMDB] film_title yok ve dosya adından çıkarılamadı")
 
                     tmdb_result = self._run_tmdb(cdata, work_dir)
                     self._stage("TMDB_VERIFY", time.time() - t,
