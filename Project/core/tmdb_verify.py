@@ -476,10 +476,11 @@ class TMDBVerify:
              (birden fazla başlık varyantı denenir; örn. "Madam" → "Madame")
              - film_adı + 1 oyuncu → %100 güven
              - film_adı + yönetmen (TMDB crew'unda) → %100 güven (cast yoksa)
-          2. Film adı yoksa her oyuncuyla search/person → combined_credits doğrula
+          2. Film adı yoksa her oyuncuyla/yönetmenle search/person → combined_credits doğrula
              (combined_credits başarısız olursa known_for fallback)
-             - 3 oyuncu eşleşirse → %100 güven
-             - yönetmenler de search_person ile aranır
+             - combined_credits cast + crew bölümleri taranır; yönetmenler crew'den eşleşir
+             - 3 kişi (oyuncu+yönetmen karışık) eşleşirse → %100 güven
+             - son doğrulama: TMDB cast + crew isimleri karşılaştırılır
         """
         director_names = director_names or []
 
@@ -569,17 +570,23 @@ class TMDBVerify:
                                 work_matches[wid]["count"] += 1
                         continue
 
-                # combined_credits'ten cast bölümünü kullan
-                for work in (person_credits.get("cast") or []):
-                    kind = work.get("media_type", "")
-                    if kind not in ("tv", "movie"):
-                        continue
-                    wid = work.get("id", 0)
-                    if not wid:
-                        continue
-                    if wid not in work_matches:
-                        work_matches[wid] = {"entry": work, "kind": kind, "count": 0}
-                    work_matches[wid]["count"] += 1
+                # combined_credits cast + crew bölümlerini tara.
+                # Oyuncular cast'ta, yönetmenler crew'da görünür — her ikisi de aranmalı.
+                # Aynı kişinin aynı yapıtta hem cast hem crew'da yer aldığı durumu önlemek
+                # için kişi başına iş ID'si tekil tutulur.
+                seen_work_ids: set = set()
+                for section in ("cast", "crew"):
+                    for work in (person_credits.get(section) or []):
+                        kind = work.get("media_type", "")
+                        if kind not in ("tv", "movie"):
+                            continue
+                        wid = work.get("id", 0)
+                        if not wid or wid in seen_work_ids:
+                            continue
+                        seen_work_ids.add(wid)
+                        if wid not in work_matches:
+                            work_matches[wid] = {"entry": work, "kind": kind, "count": 0}
+                        work_matches[wid]["count"] += 1
 
         # En çok eşleşen yapıtı bul
         if work_matches:
@@ -588,10 +595,20 @@ class TMDBVerify:
                 # Credits ile kesin doğrula
                 credits = self._fetch_credits(best["kind"], best["entry"]["id"])
                 if credits:
-                    tmdb_names = self._extract_names(credits)
-                    matched    = self._count_matches(cast_names, tmdb_names)
-                    if matched >= self.MIN_ACTOR_MATCH:
-                        self._log(f"  [TMDB] {matched} oyuncu eşleşti → %100 güven")
+                    tmdb_cast_names = self._extract_names(credits, section="cast")
+                    tmdb_crew_names = self._extract_names(credits, section="crew")
+                    matched = self._count_matches(cast_names, tmdb_cast_names)
+                    # Yönetmenler TMDB crew'unda eşleşir; toplam sayıya dahil et
+                    director_matched = sum(
+                        1 for d in director_names
+                        if _fuzzy_match(d, tmdb_crew_names, threshold=82)
+                    )
+                    total_matched = matched + director_matched
+                    if total_matched >= self.MIN_ACTOR_MATCH:
+                        self._log(
+                            f"  [TMDB] {matched} oyuncu + {director_matched} yönetmen "
+                            f"eşleşti → %100 güven"
+                        )
                         return best["entry"], best["kind"]
 
         return None, ""
