@@ -388,6 +388,18 @@ class PipelineRunner:
                         # TMDB-only credits output when verification succeeds
                         cdata = self._apply_tmdb_credits(cdata, tmdb_result)
                         tmdb_matched = True
+                        if ocr_lines:
+                            try:
+                                from core.credits_qa import check_missing_actors
+                                qa = check_missing_actors(
+                                    ocr_results=ocr_lines,
+                                    tmdb_cast=cdata.get("cast", []),
+                                )
+                                if qa.missing_actors:
+                                    cdata["credits_qa"] = qa.to_dict()
+                                    self._log(f"  {qa.summary}")
+                            except Exception as e:
+                                self._log(f"  [QA] {e}")
                     else:
                         self._log(f"  --: {tmdb_result.reason}")
 
