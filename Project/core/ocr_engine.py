@@ -8,11 +8,23 @@ v2.1 GÜNCELLEMELER:
 - Daha iyi watermark tespiti
 """
 
-import cv2
-import numpy as np
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+
+try:
+    import cv2
+    HAS_CV2 = True
+except ImportError:
+    cv2 = None
+    HAS_CV2 = False
+
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    np = None
+    HAS_NUMPY = False
 
 try:
     from paddleocr import PaddleOCR
@@ -99,6 +111,9 @@ class OCREngine:
         self.fuzzy_threshold = 82
         self.watermark_threshold = 15
         self.max_digit_ratio = 0.55
+        # Performance guard: _fuzzy_dedup is O(n²); cap input at max_results
+        # (default 500, configurable via cfg["max_ocr_results"])
+        self.max_results = int(self.cfg.get("max_ocr_results", 500))
 
     def _init_paddle(self, use_gpu, lang):
         """
@@ -365,6 +380,10 @@ class OCREngine:
         cb(f"  [OCR-Filter] 5.Blacklist: {len(step4)} → {len(step5)}")
         step6 = self._name_split_pass(step5)
         cb(f"  [OCR-Filter] 6.NameSplit: {len(step5)} → {len(step6)}")
+        # Performance guard: _fuzzy_dedup is O(n²) — cap before it runs
+        if len(step6) > self.max_results:
+            step6 = sorted(step6, key=lambda r: r.confidence, reverse=True)[:self.max_results]
+            cb(f"  [OCR-Filter] 6b.MaxResults: en yüksek {self.max_results} sonuç seçildi")
         step7 = self._fuzzy_dedup(step6)
         cb(f"  [OCR-Filter] 7.Dedup: {len(step6)} → {len(step7)}")
         step8 = self._persistence_and_watermark(step7)
@@ -541,6 +560,8 @@ class OCREngine:
           - Alt bölge (ROI) crop — jenerik yazıları frame alt %30'unda yoğun
           - Hard frame için özel strateji (daha agresif preprocessing)
         """
+        if not HAS_CV2 or not HAS_NUMPY:
+            raise ImportError("cv2 ve numpy kurulu değil — _prepare_variants kullanılamaz")
         h, w = img.shape[:2]
 
         # ── 1. Upscale (düşük çözünürlük) ──────────────────────────
@@ -656,15 +677,21 @@ class OCREngine:
         """
         %55+ digit → drop (plaka, timecode, numara).
         Yıl sayıları (1900-2100) korunur.
+        Düzeltme BUG-ANALYZE-04: "2023.", "(2023)" gibi biçimler de korunur.
         """
         clean = []
         for r in results:
             text = r.text.strip()
             if not text:
                 continue
-            # 4 haneli yıl → koru
-            if text.isdigit() and len(text) == 4:
-                val = int(text)
+            # 4 haneli yıl — bare ("2023"), noktalı ("2023."), parantezli ("(2023)")
+            # Her biçim ayrı olarak kontrol edilerek çakışan formlar önlenir
+            year_text = text
+            if year_text.startswith('(') and year_text.endswith(')'):
+                year_text = year_text[1:-1]
+            year_text = year_text.rstrip('.')
+            if year_text.isdigit() and len(year_text) == 4:
+                val = int(year_text)
                 if 1900 <= val <= 2100:
                     clean.append(r)
                     continue

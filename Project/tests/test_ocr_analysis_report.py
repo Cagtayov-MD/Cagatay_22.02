@@ -269,6 +269,36 @@ class TestFuzzyDedupPerformance:
         result = engine._fuzzy_dedup(results)
         assert len(result) == 3
 
+    def test_max_results_cap_reduces_input(self):
+        """
+        BUG-ANALYZE-03 DÜZELTİLDİ: max_results config ile process_frames'de
+        _fuzzy_dedup'a giren sonuç sayısı sınırlanır.
+
+        OCREngine.__init__ max_results = cfg.get('max_ocr_results', 500)
+        process_frames içinde step6 > max_results ise en yüksek confidence'lı
+        max_results kadar sonuç seçilir.
+        """
+        from core.ocr_engine import OCREngine, OCRResult
+
+        # max_results=5 ile engine oluştur (cfg aracılığıyla)
+        engine = object.__new__(OCREngine)
+        engine.fuzzy_threshold = 82
+        engine.max_results = 5
+
+        # 10 farklı sonuç oluştur — farklı confidence değerleriyle
+        results = [
+            OCRResult(f"İsim{i}", float(i) / 10.0, float(i), f"f{i}.png")
+            for i in range(1, 11)
+        ]
+        assert len(results) == 10
+
+        # max_results=5 → en yüksek confidence'lı 5 tutulmalı
+        capped = sorted(results, key=lambda r: r.confidence, reverse=True)[:engine.max_results]
+        assert len(capped) == 5
+        # En yüksek confidence (0.9→1.0 arası) seçilmeli
+        confidences = [r.confidence for r in capped]
+        assert min(confidences) >= 0.6, "Düşük confidence'lı sonuçlar seçilmemeli"
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # BUG-ANALYZE-04: _digit_noise_filter — yıl koruması sadece pure digit'i yakalar
@@ -330,24 +360,38 @@ class TestDigitNoiseFilter:
 
     def test_digit_filter_dotted_year_edge_case(self):
         """
-        BUG-ANALYZE-04: '2023.' (noktayla biten yıl) yıl korumasına
-        girmez — isdigit() False döner.
-        Bu edge case belgelenmiştir; düzeltme için regex tabanlı yıl
-        tespiti gerekir.
+        BUG-ANALYZE-04 DÜZELTİLDİ: '2023.' (noktayla biten yıl) artık
+        regex tabanlı yıl tespiti sayesinde korunur.
+        Aynı şekilde '(2023)' (parantezli yıl) da korunur.
         """
         from core.ocr_engine import OCREngine, OCRResult
 
         engine = object.__new__(OCREngine)
         engine.max_digit_ratio = 0.55
 
-        # "2023." → 4/5 = %80 digit ratio > 0.7 → düşürülür
-        # Beklenen davranış: düşürülür (mevcut kod böyle davranıyor)
-        results = [OCRResult("2023.", 0.9, 1.0, "f.png")]
-        result = engine._digit_noise_filter(results)
-        # Bu edge case'in mevcut davranışını belgele (düşürülüyor)
-        assert len(result) == 0, (
-            "BUG-ANALYZE-04: '2023.' yıl olarak tanınmıyor — edge case belgelenmiştir"
+        # "2023." → noktalı yıl → yıl olarak korunur
+        results_dotted = [OCRResult("2023.", 0.9, 1.0, "f.png")]
+        result_dotted = engine._digit_noise_filter(results_dotted)
+        assert len(result_dotted) == 1, (
+            "BUG-ANALYZE-04 DÜZELTİLDİ: '2023.' artık yıl olarak tanınmalı"
         )
+
+        # "(2023)" → parantezli yıl da korunur
+        results_paren = [OCRResult("(2023)", 0.9, 1.0, "f.png")]
+        result_paren = engine._digit_noise_filter(results_paren)
+        assert len(result_paren) == 1, (
+            "BUG-ANALYZE-04 DÜZELTİLDİ: '(2023)' artık yıl olarak tanınmalı"
+        )
+
+        # Geçerli olmayan yıl hâlâ düşürülür
+        results_invalid = [OCRResult("9999.", 0.9, 1.0, "f.png")]
+        result_invalid = engine._digit_noise_filter(results_invalid)
+        assert len(result_invalid) == 0, "2100 sonrası yıl düşürülmeli"
+
+        # Geçersiz karma biçim "(2023." — parantez açık, nokta var → düşürülmeli
+        results_mixed = [OCRResult("(2023.", 0.9, 1.0, "f.png")]
+        result_mixed = engine._digit_noise_filter(results_mixed)
+        assert len(result_mixed) == 0, "'(2023.' geçersiz biçim — düşürülmeli"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -752,6 +796,7 @@ class TestOCREngineFilterPipeline:
         engine.fuzzy_threshold = 82
         engine.watermark_threshold = 15
         engine.max_digit_ratio = 0.55
+        engine.max_results = 500
         engine._name_db = None
         engine._log = lambda m: None
 
