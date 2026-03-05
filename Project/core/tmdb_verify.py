@@ -535,9 +535,13 @@ class TMDBVerify:
         cast_names_set = set(cast_names)
         actor_candidates = [n for n in cast_names if not _looks_like_company(n)]
         self._log(f"  [TMDB] Aranan oyuncular (filtreli): {actor_candidates[:5]}")
-        persons_to_search = actor_candidates[:8] + [d for d in director_names if d not in cast_names_set]
+        persons_to_search = actor_candidates[:20] + [d for d in director_names if d not in cast_names_set]
 
-        for actor in persons_to_search:
+        for idx, actor in enumerate(persons_to_search):
+            # Her 5 kişide bir ek bekleme — rate limit güvenliği
+            if idx > 0 and idx % 5 == 0:
+                self._log(f"  [TMDB] Strateji 2 throttle: {idx}/{len(persons_to_search)} kişi işlendi, bekleniyor...")
+                self.client._throttle_sleep(0.5)
             cache_key = f"search_person_{_norm(actor)}"
             persons = self._load_cache(cache_key)
             if persons is None:
@@ -667,6 +671,8 @@ class TMDBVerify:
             if canonical:
                 if canonical != actor:
                     row["actor_name"] = canonical
+                    if "actor" in row:
+                        row["actor"] = canonical
                     updated = True
                 row["is_verified_name"] = True
                 row["is_tmdb_verified"] = True
