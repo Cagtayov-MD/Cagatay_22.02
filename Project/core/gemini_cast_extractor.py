@@ -16,7 +16,7 @@ import json
 
 import core.llm_provider as _llm
 
-_TIMEOUT_SEC = 30
+_TIMEOUT_SEC = 60
 
 _EXTRACT_PROMPT = """Sen bir film/dizi jeneriği OCR temizleme ve cast/crew ayıklama asistanısın.
 Girdi: OCR ile okunmuş ham metin satırları (gürültü içerebilir).
