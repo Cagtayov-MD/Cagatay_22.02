@@ -33,6 +33,48 @@ def _norm(s: str) -> str:
     return "".join(ch for ch in (s or "").lower() if ch.isalnum())
 
 
+# Şirket/organizasyon isimlerini tespit etmek için anahtar kelimeler
+COMPANY_KEYWORDS = {
+    'productions', 'production', 'sa', 'ltd', 'inc', 'corp',
+    'musicales', 'musicale', 'musique', 'editions', 'edition',
+    'records', 'music', 'films', 'film', 'pictures', 'picture',
+    'entertainment', 'distribution', 'distributeur', 'international',
+    'studios', 'studio', 'canal', 'mk2', 'channel', 'media',
+    'télévision', 'television', 'tv', 'arte', 'tve', 'rai',
+}
+
+
+def _looks_like_company(name: str) -> bool:
+    """İsim bir şirket/organizasyon gibi görünüyor mu?"""
+    name_lower = name.lower()
+    words = name_lower.replace('-', ' ').split()
+    # Herhangi bir kelime company_keywords'te ise şirkettir
+    if any(w in COMPANY_KEYWORDS for w in words):
+        return True
+    # Tüm büyük harf + rakam/özel karakter ağırlıklı → şirket kodu
+    alpha = [c for c in name if c.isalpha()]
+    if alpha and sum(1 for c in alpha if c.isupper()) / len(alpha) > 0.8 and len(name) > 10:
+        # Boşluk yoksa tek kelime büyük harf blok → şirket
+        if ' ' not in name.strip():
+            return True
+    return False
+
+
+def _title_candidates(title: str) -> List[str]:
+    """
+    Verilen film başlığından olası TMDB arama varyantları üret.
+    Örnek: "Madam Bovary" → ["Madam Bovary", "Madame Bovary"]
+    """
+    candidates = [title]
+    words = title.split()
+    # "Madam" → "Madame" (Fransızca unvan düzeltmesi)
+    new_words = ["Madame" if w.lower() == "madam" else w for w in words]
+    variant = " ".join(new_words)
+    if variant != title:
+        candidates.append(variant)
+    return list(dict.fromkeys(candidates))  # sıralı tekrarsız
+
+
 def _fuzzy_match(query: str, choices: List[str], threshold: int = 85) -> Optional[str]:
     """Fuzzy eşleştirme — en iyi sonucu döndür."""
     if not query or not choices:
@@ -282,6 +324,15 @@ class TMDBVerify:
             self._log(f"  [TMDB] Sadece en güvenilir ilk 50 isim kullanılıyor")
             cast_names = cast_names[:50]
 
+        # ── cast_names ön-filtreleme: Şirket/organizasyon isimlerini çıkar ──
+        company_filtered = [n for n in cast_names if not _looks_like_company(n)]
+        if len(cast_names) != len(company_filtered):
+            self._log(f"  [TMDB] Şirket filtresi: {len(cast_names)} → {len(company_filtered)} isim")
+            removed = [n for n in cast_names if n not in set(company_filtered)]
+            if removed[:5]:
+                self._log(f"  [TMDB] Şirket olarak elenenler: {removed[:5]}")
+        cast_names = company_filtered
+
         # ── İsim kalite filtresi: OCR çöpünü TMDB'ye göndermeden ele ──
         def _is_plausible_name(name: str) -> bool:
             """İsim olarak makul mü? Sesli harf, kelime yapısı kontrolü."""
@@ -417,21 +468,21 @@ class TMDBVerify:
                 for d in director_names
             )
 
-        # ── Strateji 1: Film adıyla ara ──
-        if film_title:
-            self._log(f"  [TMDB] Aranan başlık: '{film_title}'")
-            cache_key = f"search_multi_{_norm(film_title)}"
+        # ── Strateji 1: Film adıyla ara (çoklu başlık denemesi) ──
+        for film_title_attempt in _title_candidates(film_title) if film_title else []:
+            self._log(f"  [TMDB] Aranan başlık: '{film_title_attempt}'")
+            cache_key = f"search_multi_{_norm(film_title_attempt)}"
             results = self._load_cache(cache_key)
             if results is None:
                 try:
-                    results = self.client.search_multi(film_title)
+                    results = self.client.search_multi(film_title_attempt)
                     self._save_cache(cache_key, results)
                 except Exception as e:
                     self._log(f"  [TMDB] Arama hatası: {e}")
                     results = []
 
             self._log(f"  [TMDB] {len(results or [])} sonuç bulundu")
-            for r in (results or [])[:5]:
+            for r in (results or [])[:10]:
                 kind = r.get("media_type", "")
                 title = r.get("name") or r.get("title") or "?"
                 if kind not in ("tv", "movie"):
@@ -450,6 +501,7 @@ class TMDBVerify:
                 if matched == 0 and director_names and _director_matches_crew(credits):
                     self._log(f"  [TMDB] film adı + yönetmen eşleşti → %100 güven")
                     return r, kind
+            # Bu başlık denemesinde eşleşme yoksa sonraki varyantı dene
 
         # ── Strateji 2: Oyuncularla ara ──
         self._log(f"  [TMDB] Film adıyla eşleşme yok veya film adı yanlış, oyuncularla aranıyor...")

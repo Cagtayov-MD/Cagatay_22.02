@@ -550,6 +550,28 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
             merged_out.append(final[i])
         final = merged_out
 
+    # ── Çok-kişi birleşim tespiti: 3+ büyük harf kelime → ayır ──
+    expanded = []
+    for row in final:
+        actor = (row.get("actor_name") or "").strip()
+        words = actor.split()
+        # 3+ kelime, hepsi büyük harfle başlıyor VE toplam uzunluk > 20
+        if (len(words) >= 3
+                and all(w and w[0].isupper() for w in words)
+                and len(actor) > 20):
+            mid = len(words) // 2
+            name1 = " ".join(words[:mid])
+            name2 = " ".join(words[mid:])
+            if len(name1) >= 5 and len(name2) >= 5:
+                row1 = dict(row)
+                row1["actor_name"] = name1
+                row2 = dict(row)
+                row2["actor_name"] = name2
+                expanded.extend([row1, row2])
+                continue
+        expanded.append(row)
+    final = expanded
+
     return final
 
 def _canonicalize_crew(crew: list[dict]) -> list[dict]:
