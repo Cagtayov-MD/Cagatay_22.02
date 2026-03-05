@@ -57,6 +57,11 @@ def _looks_like_company(name: str) -> bool:
         # Boşluk yoksa tek kelime büyük harf blok → şirket
         if ' ' not in name.strip():
             return True
+    # Boşluksuz birleşik kelime içinde şirket anahtar kelimesi varsa şirkettir
+    # (örn. 'editionsmusicales' → 'editions' + 'musicales')
+    if ' ' not in name.strip() and len(name) > 8:
+        if any(kw in name_lower for kw in COMPANY_KEYWORDS if len(kw) > 4):
+            return True
     return False
 
 
@@ -505,12 +510,13 @@ class TMDBVerify:
 
         # ── Strateji 2: Oyuncularla ara ──
         self._log(f"  [TMDB] Film adıyla eşleşme yok veya film adı yanlış, oyuncularla aranıyor...")
-        self._log(f"  [TMDB] Aranan oyuncular: {cast_names[:5]}")
         work_matches: Dict[int, dict] = {}  # tmdb_id → {entry, kind, count}
 
-        # Oyuncular + yönetmenler birlikte aranır
+        # Oyuncular + yönetmenler birlikte aranır; şirket isimleri önceden elenir
         cast_names_set = set(cast_names)
-        persons_to_search = list(cast_names[:25]) + [d for d in director_names if d not in cast_names_set]
+        actor_candidates = [n for n in cast_names if not _looks_like_company(n)]
+        self._log(f"  [TMDB] Aranan oyuncular (filtreli): {actor_candidates[:5]}")
+        persons_to_search = actor_candidates[:8] + [d for d in director_names if d not in cast_names_set]
 
         for actor in persons_to_search:
             cache_key = f"search_person_{_norm(actor)}"

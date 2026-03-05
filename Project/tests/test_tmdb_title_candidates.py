@@ -43,3 +43,11 @@ def test_plausible_actor_not_filtered():
     from core.tmdb_verify import _looks_like_company
     assert _looks_like_company("CHRISTOPHE MALAVOY") is False
     assert _looks_like_company("LUCAS BELVAUX") is False
+
+
+def test_strategy2_filters_company_names():
+    """Strateji 2 persons_to_search listesi şirket isimi içermemeli."""
+    from core.tmdb_verify import _looks_like_company
+    company_names = ['editions musicales', 'MK2PRODUCTIONS SA', 'editionsmusicales']
+    for name in company_names:
+        assert _looks_like_company(name) is True, f"Şirket ismi olarak tanınmadı: {name}"
