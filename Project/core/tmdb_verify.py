@@ -228,8 +228,28 @@ class TMDBVerify:
         ]
         cast_names = [n for n in cast_names if len(n) >= 3]
 
+        # ── Yönetmen isimlerini çek ──────────────────────────────────────────
+        director_names: List[str] = []
+        for row in (cdata.get("directors") or []):
+            if isinstance(row, dict):
+                name = (row.get("name") or "").strip()
+                if len(name) >= 3:
+                    director_names.append(name)
+        # crew listesinden de yönetmen rolündeki isimleri al
+        for row in (cdata.get("crew") or []):
+            if not isinstance(row, dict):
+                continue
+            job = (row.get("job") or row.get("role") or "").lower()
+            if "yönetmen" in job or "yonetmen" in job or "director" in job:
+                name = (row.get("name") or "").strip()
+                if len(name) >= 3 and name not in director_names:
+                    director_names.append(name)
+
+        if not cast_names and not director_names:
+            return TMDBVerifyResult(False, "no cast or directors to verify")
+
         if not cast_names:
-            return TMDBVerifyResult(False, "no cast to verify")
+            self._log(f"  [TMDB] Cast boş ama {len(director_names)} yönetmen var — yönetmenle aramaya devam ediliyor")
 
         # ── Anomali tespiti: gerçek dışı yüksek cast sayısı ──
         if len(cast_names) > 500:
@@ -276,11 +296,11 @@ class TMDBVerify:
 
         cast_names = qualified_names
 
-        if not cast_names:
-            return TMDBVerifyResult(False, "no cast to verify")
+        if not cast_names and not director_names:
+            return TMDBVerifyResult(False, "no cast or directors to verify")
 
         # TMDB'de eşleşme bul
-        tmdb_entry, kind = self._find_tmdb_entry(film_title, cast_names)
+        tmdb_entry, kind = self._find_tmdb_entry(film_title, cast_names, director_names)
 
         if not tmdb_entry:
             self._log(f"  [TMDB] Eşleşme bulunamadı")
@@ -360,14 +380,27 @@ class TMDBVerify:
 
     # ── TMDB'de eşleşme bul ─────────────────────────────────────────
     def _find_tmdb_entry(self, film_title: str,
-                         cast_names: List[str]) -> tuple:
+                         cast_names: List[str],
+                         director_names: List[str] = None) -> tuple:
         """
         Strateji:
           1. Film adıyla search/multi → top 5 sonucu oyuncularla doğrula
              - film_adı + 1 oyuncu → %100 güven
+             - film_adı + yönetmen (TMDB crew'unda) → %100 güven (cast yoksa)
           2. Film adı yoksa her oyuncuyla search/person → known_for'u doğrula
              - 3 oyuncu eşleşirse → %100 güven
+             - yönetmenler de search_person ile aranır
         """
+        director_names = director_names or []
+
+        def _director_matches_crew(credits: dict) -> bool:
+            """TMDB crew'unda yönetmen eşleşmesi var mı?"""
+            tmdb_crew = self._extract_names(credits, section="crew")
+            return any(
+                _fuzzy_match(d, tmdb_crew, threshold=82)
+                for d in director_names
+            )
+
         # ── Strateji 1: Film adıyla ara ──
         if film_title:
             self._log(f"  [TMDB] Aranan başlık: '{film_title}'")
@@ -397,13 +430,21 @@ class TMDBVerify:
                 if matched >= 1:
                     self._log(f"  [TMDB] film adı + {matched} oyuncu eşleşti → %100 güven")
                     return r, kind
+                # Cast eşleşmesi yoksa yönetmen eşleşmesini kontrol et
+                if matched == 0 and director_names and _director_matches_crew(credits):
+                    self._log(f"  [TMDB] film adı + yönetmen eşleşti → %100 güven")
+                    return r, kind
 
         # ── Strateji 2: Oyuncularla ara ──
         self._log(f"  [TMDB] Film adıyla eşleşme yok, oyuncularla aranıyor...")
         self._log(f"  [TMDB] Aranan oyuncular: {cast_names[:5]}")
         work_matches: Dict[int, dict] = {}  # tmdb_id → {entry, kind, count}
 
-        for actor in cast_names[:8]:
+        # Oyuncular + yönetmenler birlikte aranır
+        cast_names_set = set(cast_names)
+        persons_to_search = list(cast_names[:8]) + [d for d in director_names if d not in cast_names_set]
+
+        for actor in persons_to_search:
             cache_key = f"search_person_{_norm(actor)}"
             persons = self._load_cache(cache_key)
             if persons is None:

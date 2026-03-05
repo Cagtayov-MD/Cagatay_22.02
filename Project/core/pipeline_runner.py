@@ -355,10 +355,9 @@ class PipelineRunner:
                 # Snapshot before filters (DATABASE credits_raw için)
                 cdata_raw = copy.deepcopy(cdata)
 
-                # ── Pre-TMDB: BLOK2 pasifse Gemini cast ayıklamasını TMDB'den önce çalıştır
-                # (temiz isimlerle TMDB'ye gidilsin; Gemini zaten burada çalışırsa BLOK2 sonrasında tekrar çalışmaz)
-                if not self._blok2_enabled:
-                    self._run_gemini_cast_extract(ocr_lines, cdata)
+                # ── Pre-TMDB: Gemini cast ayıklamasını TMDB'den önce her zaman çalıştır
+                # (temiz isimlerle TMDB'ye gidilsin; BLOK2 durumundan bağımsız)
+                self._run_gemini_cast_extract(ocr_lines, cdata)
 
                 # ══ [6/6] TMDB_VERIFY ══════════════════════════════
                 # TMDB önce çalışsın — eşleşirse cast TMDB'den gelecek, LLM gereksiz
