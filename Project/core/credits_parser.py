@@ -3,6 +3,12 @@ import json
 import re
 from pathlib import Path
 
+try:
+    from rapidfuzz import process as _rf_process, fuzz as _rf_fuzz
+    _RAPIDFUZZ_AVAILABLE = True
+except ImportError:
+    _RAPIDFUZZ_AVAILABLE = False
+
 # ── Türkçe rol anahtar kelimeleri (inline fallback) ───────────────────────────
 _CAST_KEYWORDS = frozenset({
     "oynayanlar", "oyuncular", "cast", "başroller", "basroller",
@@ -27,6 +33,34 @@ _PRODUCTION_KEYWORDS = frozenset({
     "yapım", "yapim", "production", "yapımevi", "yapimevi",
 })
 
+# ── OCR normalizasyon tablosu ─────────────────────────────────────────────────
+# Türkçe karakterleri ASCII karşılıklarına map eder (OCR bozulmalarına tolerans için)
+_TR_ASCII_TABLE = str.maketrans(
+    "İıIÖöÜüŞşÇçĞğ",
+    "iiioouussccgg"
+)
+
+
+def _ocr_normalize(text: str) -> str:
+    """OCR bozulmalarına toleranslı normalizasyon.
+
+    Türkçe karakterleri ASCII'ye map eder, lowercase yapar,
+    sadece alfanümerik + boşluk bırakır, ekip numarası prefix'ini temizler.
+
+    Örnek:
+        "KAMERA OPERATORLERi" → "kamera operatorleri"
+        "2.EKiP ISIK SEFi"   → "ekip isik sefi"
+    """
+    t = text.strip().translate(_TR_ASCII_TABLE).lower()
+    # Sadece alfanümerik + boşluk bırak
+    t = re.sub(r'[^a-z0-9\s]', ' ', t)
+    # Çoklu boşlukları tekleştir
+    t = re.sub(r'\s+', ' ', t).strip()
+    # Ekip numarası prefix'i temizle: "2 ekip " → ""
+    t = re.sub(r'^\d+\.?\s*ekip\s*', '', t)
+    return t
+
+
 # ── JSON alias tablosu (lazy yükleme) ─────────────────────────────────────────
 _ROLE_ALIASES = None  # {aliases: {low_str: (category, canonical)}, patterns: [...]}
 
@@ -35,8 +69,9 @@ def _load_role_aliases() -> dict | None:
     """credits_role_alias_tr.json'dan rol alias'larını yükle.
 
     Returns:
-        dict with keys 'aliases' (str→(category,canonical)) and 'patterns'
-        (list of (compiled_re, category, canonical)), or None on failure.
+        dict with keys 'aliases' (str→(category,canonical)),
+        'normalized_aliases' (ocr-normalized str→(category,canonical)) and
+        'patterns' (list of (compiled_re, category, canonical)), or None on failure.
     """
     json_path = Path(__file__).resolve().parent.parent / "config" / "credits_role_alias_tr.json"
     if not json_path.exists():
@@ -58,7 +93,13 @@ def _load_role_aliases() -> dict | None:
                     pattern_list.append((re.compile(pat, re.IGNORECASE), category, canonical))
                 except re.error:
                     pass
-        return {"aliases": alias_map, "patterns": pattern_list}
+        # Normalize edilmiş paralel lookup tablosu
+        normalized_map: dict[str, tuple[str, str]] = {}
+        for raw_alias, val in alias_map.items():
+            normed = _ocr_normalize(raw_alias)
+            if normed and normed not in normalized_map:
+                normalized_map[normed] = val
+        return {"aliases": alias_map, "patterns": pattern_list, "normalized_aliases": normalized_map}
     except (json.JSONDecodeError, OSError, ValueError) as e:
         import warnings
         warnings.warn(f"credits_role_alias_tr.json yüklenemedi: {e}", RuntimeWarning)
@@ -128,8 +169,12 @@ def _is_subtitle_like(text: str) -> bool:
     """Altyazı benzeri metinleri tespit et."""
     t = text.strip()
     words = t.split()
-    # 6+ kelimeli metin → muhtemelen altyazı, jenerik ismi değil
-    if len(words) > 6:
+    # Tamamı büyük harf veya her kelimesi büyük harfle başlayan metinler
+    # genellikle crew/rol başlığıdır, altyazı değil
+    if t.isupper() or (len(words) >= 2 and all(w and w[0].isupper() for w in words)):
+        return False
+    # 8+ kelimeli metin → muhtemelen altyazı, jenerik ismi değil
+    if len(words) > 8:
         return True
     # Yoğun noktalama
     punct_count = sum(1 for c in t if c in '!?;…"\'')
@@ -150,23 +195,70 @@ def _detect_role_category(text: str):
 
     Önce credits_role_alias_tr.json'daki alias tablosu kullanılır;
     JSON bulunamazsa hardcoded set'lere fallback yapılır.
+
+    Eşleştirme katmanları (öncelik sırasıyla):
+      1. Tam eşleşme (exact match)
+      2. Prefix eşleşme
+      3. Regex pattern eşleşmesi
+      4. OCR-normalize edilmiş tam/prefix eşleşme (Türkçe karakter bozulmalarına toleranslı)
+      5. OCR-normalize edilmiş regex eşleşmesi
+      6. RapidFuzz fuzzy matching (skor >= 80)
+      7. Şirket suffix kontrolü
     """
     low = text.strip().lower()
 
     # ── JSON alias tablosundan eşleştir (çok dilli) ───────────────────────
     aliases = _get_role_aliases()
     if aliases:
-        # Tam eşleşme veya "alias: " / "alias " ile başlayan
+        # 1. Tam eşleşme
         if low in aliases["aliases"]:
             return aliases["aliases"][low][0]
+        # 2. Prefix eşleşme
         for alias, (category, _canonical) in aliases["aliases"].items():
             if low == alias or low.startswith(alias + " ") or low.startswith(alias + ":"):
                 return category
-        # Regex pattern eşleşmesi
+        # 3. Regex pattern eşleşmesi
         for compiled, category, _canonical in aliases["patterns"]:
             if compiled.search(low):
                 return category
-        # Şirket suffix kontrolü (JSON'dan bağımsız)
+
+        # 4-5. OCR-tolerant normalizasyon ile tekrar dene
+        norm = _ocr_normalize(low)
+        if norm:
+            norm_aliases = aliases.get("normalized_aliases", {})
+            # 4a. Normalize tam eşleşme
+            if norm in norm_aliases:
+                return norm_aliases[norm][0]
+            # 4b. Normalize prefix eşleşme
+            for normed_alias, (category, _canonical) in norm_aliases.items():
+                if norm == normed_alias or norm.startswith(normed_alias + " ") or norm.startswith(normed_alias + ":"):
+                    return category
+            # 5. Normalize metin üzerinde regex eşleşmesi
+            for compiled, category, _canonical in aliases["patterns"]:
+                if compiled.search(norm):
+                    return category
+
+        # 6. RapidFuzz fuzzy matching (skor >= 80)
+        if _RAPIDFUZZ_AVAILABLE:
+            all_aliases = list(aliases["aliases"].keys())
+            if all_aliases:
+                result = _rf_process.extractOne(
+                    low, all_aliases, scorer=_rf_fuzz.ratio, score_cutoff=80
+                )
+                if result:
+                    return aliases["aliases"][result[0]][0]
+                # Normalize edilmiş metin üzerinde de dene
+                if norm:
+                    norm_aliases = aliases.get("normalized_aliases", {})
+                    norm_keys = list(norm_aliases.keys())
+                    if norm_keys:
+                        result = _rf_process.extractOne(
+                            norm, norm_keys, scorer=_rf_fuzz.ratio, score_cutoff=80
+                        )
+                        if result:
+                            return norm_aliases[result[0]][0]
+
+        # 7. Şirket suffix kontrolü (JSON'dan bağımsız)
         for suffix in _COMPANY_SUFFIXES:
             if low.endswith(suffix) and len(low) > len(suffix) + 2:
                 return "company"
@@ -266,6 +358,8 @@ class CreditsParser:
         current_role = ""
         unrecognized_streak = 0  # ardışık tanınmayan satır sayacı (director sonrası)
         NOISE_STREAK_LIMIT = 3   # bu kadar ardışık tanınmayan satır → noise bloğu
+        general_streak = 0       # genel ardışık tanınmayan satır sayacı
+        GENERAL_STREAK_LIMIT = 5 # bu kadar → current_category "cast"'a resetle
 
         for line in (ocr_lines or []):
             text = _get_text(line).strip()
@@ -279,8 +373,9 @@ class CreditsParser:
             # Rol başlığı tespiti
             cat = _detect_role_category(text)
             if cat:
-                # Tanınan bir kategori geldi — noise streak sıfırla
+                # Tanınan bir kategori geldi — her iki streak'i sıfırla
                 unrecognized_streak = 0
+                general_streak = 0
                 # İnline isim var mı kontrol et: "yonetmen → TULAY ERATALAY" gibi
                 inline_name = _extract_inline_name(text)
                 if inline_name and cat in ("crew", "director"):
@@ -333,6 +428,22 @@ class CreditsParser:
                     unrecognized_streak = 0
                     if current_category == "noise":
                         current_category = "director"
+
+            # ── Genel noise streak reset (tüm kategoriler) ───────────────────
+            # 5+ ardışık tanınmayan/doğrulanmayan satır → current_category "cast"'a resetle.
+            # Bu, sponsor bloklarının yanlış kategoride (crew/director/production/noise)
+            # kalmasını engeller. Noise continue'dan ÖNCE çalışmalı.
+            if current_category != "cast":
+                in_name_db_general = self._name_db and self._name_db.is_name(text)
+                if in_name_db_general:
+                    general_streak = 0
+                else:
+                    general_streak += 1
+                    if general_streak >= GENERAL_STREAK_LIMIT:
+                        current_category = "cast"
+                        current_role = ""
+                        general_streak = 0
+                        continue  # mevcut satırı atla, sonrakinden devam et
 
             # "noise" kategorisindeyken hiçbir listeye ekleme
             if current_category == "noise":

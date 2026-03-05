@@ -53,7 +53,11 @@
         "director of photography", "director of photography:",
         "dop", "d.o.p.", "kamera", "camera",
         "bildgestaltung", "directeur de la photographie",
-        "direttore della fotografia", "director de fotografía"
+        "direttore della fotografia", "director de fotografía",
+        "goruntuyonetmeni", "goruntuyon.asistani", "goruntu yon. asistani",
+        "kamera operatorleri", "kamera operatörleri",
+        "kamera asistanlari", "kamera asistani",
+        "focuspuller", "focus puller", "dit"
       ],
       "patterns": [
         "\\bgörüntü\\s+yönetmeni\\b", "\\bgoruntu\\s+yonetmeni\\b",
@@ -67,7 +71,8 @@
         "müzik", "muzik", "music", "musik", "musique", "musica",
         "original score", "original music", "soundtrack",
         "original soundtrack", "film müziği", "film muzigi",
-        "komponist", "compositeur", "compositore", "compositor"
+        "komponist", "compositeur", "compositore", "compositor",
+        "muzik telifhaklaridanismanligi", "music supervisor"
       ],
       "patterns": [
         "\\bmüzik\\b", "\\bmuzik\\b", "\\bmusic\\b", "\\bmusik\\b",
@@ -80,7 +85,9 @@
       "aliases": [
         "kurgu", "montaj", "editing", "edited by", "editor",
         "film editing", "schnitt", "montage", "montaggio",
-        "edición", "edicion", "edição", "edicao"
+        "edición", "edicion", "edição", "edicao",
+        "kurgu asistanlari", "kurgu asistani",
+        "negatif montaj", "senkron"
       ],
       "patterns": [
         "\\bkurgu\\b", "\\bmontaj\\b", "\\beditor\\b",
@@ -135,7 +142,9 @@
       "aliases": [
         "kostüm", "kostum", "costume", "costumes", "costume design",
         "kostümdesign", "création costumes", "costumi",
-        "diseño de vestuario"
+        "diseño de vestuario",
+        "kostum asistanlari", "kostum asistani",
+        "terzi"
       ],
       "patterns": [
         "\\bkostüm\\b", "\\bkostum\\b", "\\bcostume\\b"
@@ -147,7 +156,10 @@
       "aliases": [
         "ses", "sound", "ton", "audio", "sound design",
         "ses tasarımı", "ses tasarimi", "sound mixer",
-        "tonmeister", "ingénieur du son"
+        "tonmeister", "ingénieur du son",
+        "ses kayit", "ses kaylt", "seskayit", "seskaylt",
+        "ses edit", "ses ediiefeki", "ses edit efekt",
+        "ses operatoru", "2.ekip ses operatoru", "2.ekipses operatoro"
       ],
       "patterns": [
         "\\bses\\b", "\\bsound\\b", "\\bton\\b"
@@ -160,10 +172,16 @@
         "efekt", "effects", "special effects", "visual effects",
         "vfx", "sfx", "effekte", "effets spéciaux",
         "effetti speciali", "efectos especiales",
-        "efectos especiales digitales", "efectos especiales mocuillaje"
+        "efectos especiales digitales", "efectos especiales mocuillaje",
+        "gorsel efekt", "görsel efekt",
+        "sfx supervizor", "sfx supervi̇zor",
+        "gorsel efekt set sopervizoru", "gorsel efekt varlik yoneticis",
+        "gorsel efekt yoneticiyapimcisi",
+        "cgi sopervizoro", "cgi supervizoru"
       ],
       "patterns": [
-        "\\befekt\\b", "\\beffects\\b", "\\bvfx\\b", "\\bsfx\\b"
+        "\\befekt\\b", "\\beffects\\b", "\\bvfx\\b", "\\bsfx\\b",
+        "gorsel\\s*efekt", "g[oö]rsel\\s*efekt"
       ]
     },
     {
@@ -172,7 +190,9 @@
       "aliases": [
         "makyaj", "makeup", "make-up", "make up",
         "hair and makeup", "maske", "maquillage",
-        "trucco", "maquillaje"
+        "trucco", "maquillaje",
+        "makyaj asistanlari", "makyaj asistani",
+        "makyoz", "kuafor", "kuafor asistani"
       ],
       "patterns": [
         "\\bmakyaj\\b", "\\bmakeup\\b", "\\bmake-up\\b"
@@ -183,7 +203,9 @@
       "category": "crew",
       "aliases": [
         "ışık", "isik", "lighting", "gaffer", "lichtgestaltung",
-        "éclairage", "illuminazione", "iluminación"
+        "éclairage", "illuminazione", "iluminación",
+        "isik sefi", "isik bestboy", "isik asistanlari",
+        "2.ekip isik sefi", "isik asistani", "1sik", "isok"
       ],
       "patterns": [
         "\\bışık\\b", "\\bisik\\b", "\\blighting\\b", "\\bgaffer\\b"
@@ -202,6 +224,140 @@
         "\\bprodüksiyon\\b", "\\bproduksiyon\\b",
         "\\bline\\s+producer\\b"
       ]
+    },
+    {
+      "canonical": "Set Amiri",
+      "category": "crew",
+      "aliases": [
+        "set amiri", "setamiri", "set amii", "set gorevl", "set gorevlisi",
+        "set goreviiler", "setamii", "2.ekip set amiri", "2.ekipset amiri",
+        "mekan asistani", "mekanasistani"
+      ],
+      "patterns": ["set\\s*amiri", "set\\s*gorev"]
+    },
+    {
+      "canonical": "Yapım Asistanları",
+      "category": "crew",
+      "aliases": [
+        "yapim asistanlari", "yapimasistanlari", "yapim asistani",
+        "reji koordinasyon", "rejikoordinasyon", "regi koordinasyon"
+      ],
+      "patterns": ["yapim\\s*asistan"]
+    },
+    {
+      "canonical": "Aksiyon Koordinatörü",
+      "category": "crew",
+      "aliases": [
+        "aksiyon koordinatoru", "aksiyonkoordinatoru", "aksiyon koordinatöru",
+        "aksiyon sanatlari", "aksiyonsanatlari", "stunt team"
+      ],
+      "patterns": ["aksiyon\\s*koordinat"]
+    },
+    {
+      "canonical": "Satınalma ve Sponsorluk",
+      "category": "crew",
+      "aliases": [
+        "satinalma ve sponsorluk", "satinalma", "sponsor sorumlusu",
+        "sponsor sorumlulari"
+      ],
+      "patterns": ["sat[iı]nalma", "sponsor\\s*sorumlu"]
+    },
+    {
+      "canonical": "Post Prodüksiyon",
+      "category": "crew",
+      "aliases": [
+        "post produksiyon", "postproduksiyon", "postproduksiyonasistan",
+        "postproduksiyonstudyosu", "post prodüksiyon", "color correction",
+        "color grading", "colorcorrection", "color gradingasistani"
+      ],
+      "patterns": ["post\\s*prod[uü]ksiyon", "color\\s*(correction|grading)"]
+    },
+    {
+      "canonical": "Dublaj",
+      "category": "crew",
+      "aliases": [
+        "dublaj yonetmeni", "dublajyonetmeni", "dublaj kayit",
+        "diyalog edit", "diyalogedit", "ses esleme", "sesesleme",
+        "premiks", "atmosfer", "atmosferefektkurgu"
+      ],
+      "patterns": ["dublaj", "diyalog\\s*edit", "ses\\s*esleme", "premiks"]
+    },
+    {
+      "canonical": "Figürasyon Ajansı",
+      "category": "crew",
+      "aliases": [
+        "figurasyon", "figurasyonve oyuncuajansi", "cast ajanslari",
+        "castajanslari", "casting", "best casting", "mayadroomajans"
+      ],
+      "patterns": ["fig[uü]rasyon", "cast\\s*ajans"]
+    },
+    {
+      "canonical": "Set Fotoğrafçısı",
+      "category": "crew",
+      "aliases": [
+        "set fotografcisi", "setfotografcisi"
+      ],
+      "patterns": ["set\\s*foto[gğ]raf"]
+    },
+    {
+      "canonical": "Jeneratör",
+      "category": "crew",
+      "aliases": [
+        "jenerator", "generator"
+      ],
+      "patterns": ["jenerator"]
+    },
+    {
+      "canonical": "Catering",
+      "category": "crew",
+      "aliases": [
+        "catering", "yemek"
+      ],
+      "patterns": ["catering"]
+    },
+    {
+      "canonical": "Ulaşım",
+      "category": "crew",
+      "aliases": [
+        "ulasim", "ulaşım", "tasimacılar", "tasimacilar",
+        "set araclar", "setaraclar", "servisler"
+      ],
+      "patterns": ["ula[sş][iı]m", "ta[sş][iı]mac[iı]"]
+    },
+    {
+      "canonical": "Güvenlik",
+      "category": "crew",
+      "aliases": [
+        "guvenlik", "güvenlik", "kosk guvenlik"
+      ],
+      "patterns": ["g[uü]venlik"]
+    },
+    {
+      "canonical": "Hukuk Danışmanı",
+      "category": "crew",
+      "aliases": [
+        "hukuk danismani", "hukuk danışmanı", "mali musavir",
+        "malimusavir", "mali isler", "mali müşavir"
+      ],
+      "patterns": ["hukuk\\s*dan[iı][sş]man", "mali\\s*(m[uü][sş]avir|isler)"]
+    },
+    {
+      "canonical": "İnsan Kaynakları",
+      "category": "crew",
+      "aliases": [
+        "insan kaynaklari", "insan kaynakları"
+      ],
+      "patterns": ["insan\\s*kaynak"]
+    },
+    {
+      "canonical": "Teşekkürler",
+      "category": "production",
+      "aliases": [
+        "tesekkurler", "teşekkürler", "ozel tesekkur", "ozel teşekkür",
+        "special thanks", "degerli katkilarindan dolayi",
+        "degerlikatkilarindan dolayi", "danismanlar"
+      ],
+      "patterns": ["te[sş]ekk[uü]r", "special\\s+thanks", "de[gğ]erli\\s*katk[iı]"]
     }
   ]
 }
