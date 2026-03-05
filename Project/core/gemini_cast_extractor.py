@@ -85,27 +85,35 @@ class GeminiCastExtractor:
         self._api_key = api_key
         self._model = model
         self._log_cb = log_cb
+        self.timed_out: bool = False
 
     def _log(self, msg: str) -> None:
         if self._log_cb:
             self._log_cb(msg)
 
-    def extract(self, ocr_lines: list[str], film_title: str = "") -> dict:
+    def extract(self, ocr_lines: list[str], film_title: str = "", max_lines: int = 200) -> dict:
         """OCR satırlarından cast/crew ayıkla.
 
         Args:
             ocr_lines: Ham OCR metin satırları listesi.
             film_title: Film/dizi başlığı (isteğe bağlı, log için).
+            max_lines: İşlenecek maksimum OCR satırı sayısı (varsayılan: 200).
 
         Returns:
             {"cast": [...], "crew": [...]} veya hata durumunda boş dict.
         """
+        self.timed_out = False
         if not ocr_lines:
             return {}
 
         if not self._api_key:
             self._log("  [Gemini] API key yok — atlanıyor")
             return {}
+
+        # Çok büyük OCR listesi → ilk max_lines satırla sınırla
+        if len(ocr_lines) > max_lines:
+            ocr_lines = ocr_lines[:max_lines]
+            self._log(f"  [Gemini] OCR satırı sınırlandı: {max_lines}")
 
         ocr_text = "\n".join(line.strip() for line in ocr_lines if line and line.strip())
         if not ocr_text:
@@ -117,6 +125,9 @@ class GeminiCastExtractor:
         else:
             self._log("  [Gemini] Cast ayıklama başlatılıyor...")
 
+        # Timeout tespiti için açık bayrak — log mesajı yerine doğrudan kontrol
+        _timed_out_flag: list[bool] = []
+
         try:
             response = _llm._gemini_generate(
                 prompt,
@@ -124,10 +135,14 @@ class GeminiCastExtractor:
                 model=self._model,
                 timeout=_TIMEOUT_SEC,
                 log_cb=self._log_cb,
+                timeout_flag=_timed_out_flag,
             )
         except Exception as e:
             self._log(f"  [Gemini] API hatası: {e}")
             return {}
+        finally:
+            if _timed_out_flag:
+                self.timed_out = True
 
         if not response:
             self._log("  [Gemini] Boş yanıt")

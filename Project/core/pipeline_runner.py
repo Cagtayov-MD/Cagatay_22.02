@@ -428,6 +428,8 @@ class PipelineRunner:
                         # Gemini cast extraction — daha önce (pre-TMDB) çalıştırılmadıysa çalıştır
                         if cdata.get("gemini_extracted"):
                             self._log("  [Gemini] Zaten çalıştı (pre-TMDB) — atlanıyor")
+                        elif cdata.get("gemini_timeout"):
+                            self._log("  [Gemini] Pre-TMDB timeout — ikinci deneme atlanıyor")
                         else:
                             self._run_gemini_cast_extract(ocr_lines, cdata)
 
@@ -830,6 +832,8 @@ class PipelineRunner:
             ],
             film_title=cdata.get("film_title", ""),
         )
+        if extractor.timed_out:
+            cdata["gemini_timeout"] = True
         if result and (result.get("cast") or result.get("crew")):
             self._log(
                 f"  [Gemini] Cast: {len(result.get('cast', []))} oyuncu, "

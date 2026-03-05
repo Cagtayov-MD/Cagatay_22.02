@@ -53,8 +53,15 @@ def _gemini_generate(
     base_url: str | None = None,
     timeout: int = _TIMEOUT_SEC,
     log_cb=None,
+    timeout_flag: list | None = None,
 ) -> str | None:
-    """Call Gemini generateContent endpoint and return text response."""
+    """Call Gemini generateContent endpoint and return text response.
+
+    Args:
+        timeout_flag: Optional mutable list; ``True`` is appended if a timeout
+                      occurs so callers can detect the condition without
+                      parsing log messages.
+    """
     api_key = api_key or _env("GEMINI_API_KEY")
     if not api_key:
         if log_cb:
@@ -114,6 +121,8 @@ def _gemini_generate(
             log_cb(f"  [LLM/Gemini] Bağlantı hatası: {e.reason}")
         return None
     except TimeoutError:
+        if timeout_flag is not None:
+            timeout_flag.append(True)
         if log_cb:
             log_cb(f"  [LLM/Gemini] Zaman aşımı ({timeout}s)")
         return None
