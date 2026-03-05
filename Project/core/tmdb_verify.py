@@ -525,6 +525,10 @@ class TMDBVerify:
                 if matched >= 1 and director_names and _director_matches_crew(credits):
                     self._log(f"  [TMDB] film adı + {matched} oyuncu + yönetmen eşleşti → %100 güven")
                     return r, kind
+                # cast yokken salt yönetmen eşleşmesi de yeterli
+                if matched == 0 and not cast_names and director_names and _director_matches_crew(credits):
+                    self._log(f"  [TMDB] film adı + yönetmen eşleşti (cast yok) → kabul")
+                    return r, kind
             # Bu başlık denemesinde eşleşme yoksa sonraki varyantı dene
 
         # ── Strateji 2: Oyuncularla ara ──
@@ -534,7 +538,8 @@ class TMDBVerify:
         # Oyuncular + yönetmenler birlikte aranır; şirket isimleri önceden elenir
         cast_names_set = set(cast_names)
         actor_candidates = [n for n in cast_names if not _looks_like_company(n)]
-        self._log(f"  [TMDB] Aranan oyuncular (filtreli): {actor_candidates[:5]}")
+        filtered_directors = [d for d in director_names if d not in cast_names_set][:5]
+        self._log(f"  [TMDB] Aranan kişiler (oyuncu+yönetmen): oyuncu={actor_candidates[:5]}, yönetmen={filtered_directors}")
         persons_to_search = actor_candidates[:20] + [d for d in director_names if d not in cast_names_set]
 
         for idx, actor in enumerate(persons_to_search):
@@ -595,7 +600,8 @@ class TMDBVerify:
         # En çok eşleşen yapıtı bul
         if work_matches:
             best = max(work_matches.values(), key=lambda x: x["count"])
-            if best["count"] >= self.MIN_ACTOR_MATCH:
+            min_match_threshold = 1 if not cast_names else self.MIN_ACTOR_MATCH
+            if best["count"] >= min_match_threshold:
                 # Credits ile kesin doğrula
                 credits = self._fetch_credits(best["kind"], best["entry"]["id"])
                 if credits:
@@ -608,7 +614,7 @@ class TMDBVerify:
                         if _fuzzy_match(d, tmdb_crew_names, threshold=82)
                     )
                     total_matched = matched + director_matched
-                    if total_matched >= self.MIN_ACTOR_MATCH:
+                    if total_matched >= min_match_threshold:
                         self._log(
                             f"  [TMDB] {matched} oyuncu + {director_matched} yönetmen "
                             f"eşleşti → %100 güven"

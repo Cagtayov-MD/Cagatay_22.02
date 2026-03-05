@@ -218,3 +218,163 @@ def test_strategy2_director_no_double_count_for_actor_director():
     assert entry is None, (
         "Tek kişiden çift sayım yapılmış olabilir; count 1 kalmalı ve eşleşme olmamalı."
     )
+
+
+# ── Strateji 1 + 2: cast boş, sadece yönetmen mevcut ─────────────────────────
+
+
+def test_strategy1_director_only_no_cast():
+    """
+    STRAT1-DIR-01: film_title + cast=[] + director → Strateji 1'de yönetmen eşleşmesiyle kabul edilmeli.
+
+    Senaryo: film_title="Teşkilat", cast=[], directors=["Ozan Bodur"]
+      - search_multi "Teşkilat" → id:119806 döner
+      - credits'te "Ozan Bodur" crew'da bulunuyor
+      → kabul edilmeli
+    """
+    from unittest.mock import patch
+    from core.tmdb_verify import TMDBVerify
+    import tempfile
+
+    tmp = tempfile.mkdtemp()
+    verifier = TMDBVerify(work_dir=tmp, api_key="test-key")
+
+    TV_ID = 119806
+    TV_ENTRY = {"id": TV_ID, "media_type": "tv", "name": "Teşkilat"}
+
+    def fake_search_multi(title):
+        return [TV_ENTRY]
+
+    def fake_fetch_credits(kind, mid):
+        if mid == TV_ID:
+            return {
+                "cast": [],
+                "crew": [{"name": "Ozan Bodur", "job": "Director"}],
+            }
+        return None
+
+    with patch.object(verifier.client, "search_multi", side_effect=fake_search_multi), \
+         patch.object(verifier, "_fetch_credits", side_effect=fake_fetch_credits), \
+         patch.object(verifier, "_load_cache", return_value=None), \
+         patch.object(verifier, "_save_cache"):
+
+        entry, kind = verifier._find_tmdb_entry(
+            film_title="Teşkilat",
+            cast_names=[],
+            director_names=["Ozan Bodur"],
+        )
+
+    assert entry is not None, (
+        "Strateji 1: film adı + yönetmen eşleşmesi (cast yok) kabul edilmeliydi, None döndü."
+    )
+    assert entry["id"] == TV_ID
+    assert kind == "tv"
+
+
+def test_strategy2_director_only_no_cast():
+    """
+    STRAT2-DIR-01: film_title yok, cast=[], sadece yönetmen → Strateji 2'de min_match_threshold=1 ile eşleşmeli.
+
+    Senaryo: film_title="", cast=[], directors=["Ozan Bodur"]
+      - search_person "Ozan Bodur" → id:5001 döner
+      - combined_credits crew'da id:119806 bulunuyor
+      - _fetch_credits credits'te "Ozan Bodur" crew'da var
+      → kabul edilmeli
+    """
+    from unittest.mock import patch
+    from core.tmdb_verify import TMDBVerify
+    import tempfile
+
+    tmp = tempfile.mkdtemp()
+    verifier = TMDBVerify(work_dir=tmp, api_key="test-key")
+
+    TV_ID = 119806
+    TV_ENTRY = {"id": TV_ID, "media_type": "tv", "name": "Teşkilat"}
+
+    def fake_search_person(name):
+        return [{"id": 5001, "name": name, "known_for": []}]
+
+    def fake_combined_credits(person_id):
+        if person_id == 5001:
+            return {"cast": [], "crew": [dict(TV_ENTRY, job="Director")]}
+        return {"cast": [], "crew": []}
+
+    def fake_fetch_credits(kind, mid):
+        if mid == TV_ID:
+            return {
+                "cast": [],
+                "crew": [{"name": "Ozan Bodur", "job": "Director"}],
+            }
+        return None
+
+    with patch.object(verifier.client, "search_person", side_effect=fake_search_person), \
+         patch.object(verifier.client, "get_person_combined_credits",
+                      side_effect=fake_combined_credits), \
+         patch.object(verifier, "_fetch_credits", side_effect=fake_fetch_credits), \
+         patch.object(verifier, "_load_cache", return_value=None), \
+         patch.object(verifier, "_save_cache"):
+
+        entry, kind = verifier._find_tmdb_entry(
+            film_title="",
+            cast_names=[],
+            director_names=["Ozan Bodur"],
+        )
+
+    assert entry is not None, (
+        "Strateji 2: cast boş + tek yönetmen eşleşmesi (min_match_threshold=1) kabul edilmeliydi, None döndü."
+    )
+    assert entry["id"] == TV_ID
+    assert kind == "tv"
+
+
+def test_strategy2_cast_present_still_uses_min_actor_match():
+    """
+    STRAT2-THRESHOLD-01: cast doluyken MIN_ACTOR_MATCH=3 eşiği korunmalı.
+
+    cast=[A, B] + director=[C] — sadece 2 eşleşme → min_match_threshold=3 aşılamaz → None beklenir.
+    """
+    from unittest.mock import patch
+    from core.tmdb_verify import TMDBVerify
+    import tempfile
+
+    tmp = tempfile.mkdtemp()
+    verifier = TMDBVerify(work_dir=tmp, api_key="test-key")
+
+    MOVIE_ID = 77
+    MOVIE_ENTRY = {"id": MOVIE_ID, "media_type": "movie", "title": "Some Film"}
+
+    def fake_search_person(name):
+        return [{"id": hash(name) & 0xFFFF, "name": name, "known_for": []}]
+
+    def fake_combined_credits(person_id):
+        actor_a_id = hash("Actor A") & 0xFFFF
+        actor_b_id = hash("Actor B") & 0xFFFF
+        if person_id in (actor_a_id, actor_b_id):
+            return {"cast": [MOVIE_ENTRY], "crew": []}
+        return {"cast": [], "crew": []}
+
+    def fake_fetch_credits(kind, mid):
+        if mid == MOVIE_ID:
+            return {
+                "cast": [{"name": "Actor A"}, {"name": "Actor B"}],
+                "crew": [],
+            }
+        return None
+
+    with patch.object(verifier.client, "search_person", side_effect=fake_search_person), \
+         patch.object(verifier.client, "get_person_combined_credits",
+                      side_effect=fake_combined_credits), \
+         patch.object(verifier, "_fetch_credits", side_effect=fake_fetch_credits), \
+         patch.object(verifier, "_load_cache", return_value=None), \
+         patch.object(verifier, "_save_cache"):
+
+        entry, kind = verifier._find_tmdb_entry(
+            film_title="",
+            cast_names=["Actor A", "Actor B"],
+            director_names=[],
+        )
+
+    # cast doluyken 2 eşleşme MIN_ACTOR_MATCH=3'ü karşılamaz → None beklenir
+    assert entry is None, (
+        "cast doluyken MIN_ACTOR_MATCH=3 eşiği korunmalı; 2 eşleşmeyle None dönmeliydi."
+    )
