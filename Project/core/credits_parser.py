@@ -264,6 +264,8 @@ class CreditsParser:
         # ── 2. OCR satırlarından sıralı ayrıştırma ────────────────────────
         current_category = "cast"
         current_role = ""
+        unrecognized_streak = 0  # ardışık tanınmayan satır sayacı (director sonrası)
+        NOISE_STREAK_LIMIT = 3   # bu kadar ardışık tanınmayan satır → noise bloğu
 
         for line in (ocr_lines or []):
             text = _get_text(line).strip()
@@ -277,6 +279,8 @@ class CreditsParser:
             # Rol başlığı tespiti
             cat = _detect_role_category(text)
             if cat:
+                # Tanınan bir kategori geldi — noise streak sıfırla
+                unrecognized_streak = 0
                 # İnline isim var mı kontrol et: "yonetmen → TULAY ERATALAY" gibi
                 inline_name = _extract_inline_name(text)
                 if inline_name and cat in ("crew", "director"):
@@ -303,6 +307,35 @@ class CreditsParser:
                     current_role = text.strip()
                     if cat == "company" and len(text.strip()) > 3:
                         production_companies.append(text.strip())
+                continue
+
+            # ── Sponsor/marka bloğu tespiti (director kategorisinde) ──────────
+            # "director" kategorisindeyken gelen ve tanınmayan satırlar sayılır.
+            # 3+ ardışık tanınmayan satır → bu blok reklam/sponsor, "noise" yap.
+            if current_category == "director" or current_category == "noise":
+                in_name_db = self._name_db and self._name_db.is_name(text)
+                if not in_name_db:
+                    # Tek-kelimelik tamamen büyük harf veya kısa bağlantılı kelime → direkt noise
+                    words = text.split()
+                    is_brand_like = (
+                        (len(words) == 1 and text.isupper() and len(text) > 3)
+                        or (len(words) == 1 and len(text) <= 3)
+                    )
+                    if is_brand_like:
+                        current_category = "noise"
+                        unrecognized_streak = NOISE_STREAK_LIMIT  # sayacı hemen doldur
+                        continue
+                    unrecognized_streak += 1
+                    if unrecognized_streak >= NOISE_STREAK_LIMIT:
+                        current_category = "noise"
+                else:
+                    # NameDB'de bulundu → gerçek bir isim, sayacı sıfırla
+                    unrecognized_streak = 0
+                    if current_category == "noise":
+                        current_category = "director"
+
+            # "noise" kategorisindeyken hiçbir listeye ekleme
+            if current_category == "noise":
                 continue
 
             # Layout pair'de zaten varsa atla
