@@ -451,10 +451,12 @@ class TMDBVerify:
                          director_names: List[str] = None) -> tuple:
         """
         Strateji:
-          1. Film adıyla search/multi → top 5 sonucu oyuncularla doğrula
+          1. Film adıyla search/multi → top 10 sonucu oyuncularla doğrula
+             (birden fazla başlık varyantı denenir; örn. "Madam" → "Madame")
              - film_adı + 1 oyuncu → %100 güven
              - film_adı + yönetmen (TMDB crew'unda) → %100 güven (cast yoksa)
-          2. Film adı yoksa her oyuncuyla search/person → known_for'u doğrula
+          2. Film adı yoksa her oyuncuyla search/person → combined_credits doğrula
+             (combined_credits başarısız olursa known_for fallback)
              - 3 oyuncu eşleşirse → %100 güven
              - yönetmenler de search_person ile aranır
         """

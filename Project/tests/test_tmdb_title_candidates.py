@@ -7,6 +7,7 @@ def test_madam_to_madame():
     result = _title_candidates("Madam Bovary")
     assert "Madame Bovary" in result, f"Madame Bovary varyantı bulunamadı: {result}"
     assert "Madam Bovary" in result
+    assert result[0] == "Madam Bovary"
 
 
 def test_no_duplicate():
