@@ -12,11 +12,14 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import requests
+
+_THROTTLE_INTERVAL = 0.15  # saniye — saniyede ~6 istek, 40 limitinin çok altında
 
 try:
     from rapidfuzz import fuzz, process as rf_process
@@ -76,11 +79,15 @@ class TMDBClient:
     BASE = "https://api.themoviedb.org/3"
 
     def __init__(self, api_key: str = "", bearer_token: str = "",
-                 language: str = "tr-TR", timeout: int = 15):
+                 language: str = "tr-TR", timeout: int = 15,
+                 log_cb=None):
         self.api_key  = (api_key or "").strip()
         self.bearer   = (bearer_token or "").strip()
         self.language = (language or "tr-TR").strip()
         self.timeout  = timeout
+        self._log     = log_cb or (lambda m: None)
+        self._last_request_time = 0.0
+        self._request_lock = threading.Lock()
 
     def enabled(self) -> bool:
         return bool(self.api_key or self.bearer)
@@ -98,71 +105,85 @@ class TMDBClient:
             p.update(extra)
         return p
 
+    def _throttle_sleep(self, extra: float = 0.0):
+        """Son istekten bu yana _THROTTLE_INTERVAL geçmediyse bekle."""
+        with self._request_lock:
+            now = time.time()
+            elapsed = now - self._last_request_time
+            wait = max(0.0, _THROTTLE_INTERVAL - elapsed) + extra
+            if wait > 0:
+                time.sleep(wait)
+            self._last_request_time = time.time()
+
+    def _request(self, url: str, params: dict) -> dict:
+        """Rate limit korumalı GET isteği. 429 gelirse Retry-After kadar bekler, max 3 deneme."""
+        for attempt in range(3):
+            self._throttle_sleep()
+            r = requests.get(url, headers=self._headers(), params=params, timeout=self.timeout)
+            if r.status_code == 429:
+                wait = int(r.headers.get("Retry-After", 10))
+                self._log(f"  [TMDB] Rate limit (429) — {wait}sn bekleniyor...")
+                self._throttle_sleep(wait)
+                continue
+            r.raise_for_status()
+            return r.json()
+        raise Exception("TMDB rate limit aşıldı, 3 denemede sonuç alınamadı")
+
     def search_multi(self, query: str) -> List[Dict[str, Any]]:
-        r = requests.get(f"{self.BASE}/search/multi",
-                         headers=self._headers(),
-                         params=self._params({"query": query, "page": "1"}),
-                         timeout=self.timeout)
-        r.raise_for_status()
-        return r.json().get("results") or []
+        return self._request(
+            f"{self.BASE}/search/multi",
+            self._params({"query": query, "page": "1"}),
+        ).get("results") or []
 
     def get_tv_credits(self, tv_id: int) -> Dict[str, Any]:
-        r = requests.get(f"{self.BASE}/tv/{tv_id}/credits",
-                         headers=self._headers(),
-                         params=self._params(),
-                         timeout=self.timeout)
-        r.raise_for_status()
-        return r.json()
+        return self._request(
+            f"{self.BASE}/tv/{tv_id}/credits",
+            self._params(),
+        )
 
     def get_movie_credits(self, movie_id: int) -> Dict[str, Any]:
-        r = requests.get(f"{self.BASE}/movie/{movie_id}/credits",
-                         headers=self._headers(),
-                         params=self._params(),
-                         timeout=self.timeout)
-        r.raise_for_status()
-        return r.json()
+        return self._request(
+            f"{self.BASE}/movie/{movie_id}/credits",
+            self._params(),
+        )
 
     def search_person(self, query: str) -> List[Dict[str, Any]]:
-        r = requests.get(f"{self.BASE}/search/person",
-                         headers=self._headers(),
-                         params=self._params({"query": query}),
-                         timeout=self.timeout)
-        r.raise_for_status()
-        return r.json().get("results") or []
+        return self._request(
+            f"{self.BASE}/search/person",
+            self._params({"query": query}),
+        ).get("results") or []
 
     def get_tv_details(self, tv_id: int) -> Dict[str, Any]:
-        r = requests.get(f"{self.BASE}/tv/{tv_id}",
-                         headers=self._headers(),
-                         params=self._params(),
-                         timeout=self.timeout)
-        r.raise_for_status()
-        return r.json()
+        return self._request(
+            f"{self.BASE}/tv/{tv_id}",
+            self._params(),
+        )
 
     def get_movie_details(self, movie_id: int) -> Dict[str, Any]:
-        r = requests.get(f"{self.BASE}/movie/{movie_id}",
-                         headers=self._headers(),
-                         params=self._params(),
-                         timeout=self.timeout)
-        r.raise_for_status()
-        return r.json()
+        return self._request(
+            f"{self.BASE}/movie/{movie_id}",
+            self._params(),
+        )
 
     def get_tv_keywords(self, tv_id: int) -> List[str]:
-        r = requests.get(f"{self.BASE}/tv/{tv_id}/keywords",
-                         headers=self._headers(),
-                         params=self._params(),
-                         timeout=self.timeout)
-        r.raise_for_status()
-        results = r.json().get("results") or []
+        results = self._request(
+            f"{self.BASE}/tv/{tv_id}/keywords",
+            self._params(),
+        ).get("results") or []
         return [kw.get("name", "") for kw in results if kw.get("name")]
 
     def get_movie_keywords(self, movie_id: int) -> List[str]:
-        r = requests.get(f"{self.BASE}/movie/{movie_id}/keywords",
-                         headers=self._headers(),
-                         params=self._params(),
-                         timeout=self.timeout)
-        r.raise_for_status()
-        kws = r.json().get("keywords") or []
+        kws = self._request(
+            f"{self.BASE}/movie/{movie_id}/keywords",
+            self._params(),
+        ).get("keywords") or []
         return [kw.get("name", "") for kw in kws if kw.get("name")]
+
+    def get_person_combined_credits(self, person_id: int) -> Dict[str, Any]:
+        return self._request(
+            f"{self.BASE}/person/{person_id}/combined_credits",
+            self._params(),
+        )
 
 
 class TMDBVerify:
@@ -178,7 +199,7 @@ class TMDBVerify:
                  log_cb=None):
         self.work_dir   = work_dir
         self.client     = TMDBClient(api_key=api_key, bearer_token=bearer_token,
-                                     language=language)
+                                     language=language, log_cb=log_cb)
         self._log       = log_cb or (lambda m: None)
         self._cache_dir = os.path.join(work_dir, ".cache")
         os.makedirs(self._cache_dir, exist_ok=True)
@@ -221,12 +242,16 @@ class TMDBVerify:
 
         film_title = (cdata.get("film_title") or "").strip()
 
-        cast_names = [
-            (row.get("actor_name") or row.get("actor") or "").strip()
+        cast_with_conf = [
+            (
+                (row.get("actor_name") or row.get("actor") or "").strip(),
+                float(row.get("confidence", 0.5)),
+            )
             for row in (cdata.get("cast") or [])
             if isinstance(row, dict)
         ]
-        cast_names = [n for n in cast_names if len(n) >= 3]
+        cast_with_conf.sort(key=lambda x: x[1], reverse=True)  # en güvenilir önce
+        cast_names = [n for n, _ in cast_with_conf if len(n) >= 3]
 
         # ── Yönetmen isimlerini çek ──────────────────────────────────────────
         director_names: List[str] = []
@@ -255,16 +280,7 @@ class TMDBVerify:
         if len(cast_names) > 500:
             self._log(f"  [TMDB] ⚠️ Anormal cast sayısı: {len(cast_names)} — muhtemelen OCR çöpü")
             self._log(f"  [TMDB] Sadece en güvenilir ilk 50 isim kullanılıyor")
-            cast_with_conf = []
-            for row in (cdata.get("cast") or []):
-                if not isinstance(row, dict):
-                    continue
-                name = (row.get("actor_name") or row.get("actor") or "").strip()
-                conf = float(row.get("confidence", 0.5))
-                if len(name) >= 3:
-                    cast_with_conf.append((name, conf))
-            cast_with_conf.sort(key=lambda x: x[1], reverse=True)
-            cast_names = [n for n, c in cast_with_conf[:50]]
+            cast_names = cast_names[:50]
 
         # ── İsim kalite filtresi: OCR çöpünü TMDB'ye göndermeden ele ──
         def _is_plausible_name(name: str) -> bool:
@@ -436,13 +452,13 @@ class TMDBVerify:
                     return r, kind
 
         # ── Strateji 2: Oyuncularla ara ──
-        self._log(f"  [TMDB] Film adıyla eşleşme yok, oyuncularla aranıyor...")
+        self._log(f"  [TMDB] Film adıyla eşleşme yok veya film adı yanlış, oyuncularla aranıyor...")
         self._log(f"  [TMDB] Aranan oyuncular: {cast_names[:5]}")
         work_matches: Dict[int, dict] = {}  # tmdb_id → {entry, kind, count}
 
         # Oyuncular + yönetmenler birlikte aranır
         cast_names_set = set(cast_names)
-        persons_to_search = list(cast_names[:8]) + [d for d in director_names if d not in cast_names_set]
+        persons_to_search = list(cast_names[:25]) + [d for d in director_names if d not in cast_names_set]
 
         for actor in persons_to_search:
             cache_key = f"search_person_{_norm(actor)}"
@@ -454,8 +470,31 @@ class TMDBVerify:
                 except Exception:
                     continue
 
-            for person in (persons or [])[:3]:
-                for work in (person.get("known_for") or []):
+            for person in (persons or [])[:2]:  # en iyi 2 eşleşme yeterli
+                person_id = person.get("id")
+                if not person_id:
+                    continue
+                cache_key_credits = f"person_combined_{person_id}"
+                person_credits = self._load_cache(cache_key_credits)
+                if person_credits is None:
+                    try:
+                        person_credits = self.client.get_person_combined_credits(person_id)
+                        self._save_cache(cache_key_credits, person_credits)
+                    except Exception:
+                        # combined_credits başarısız olursa known_for fallback
+                        for work in (person.get("known_for") or []):
+                            kind = work.get("media_type", "")
+                            if kind not in ("tv", "movie"):
+                                continue
+                            wid = work.get("id", 0)
+                            if wid:
+                                if wid not in work_matches:
+                                    work_matches[wid] = {"entry": work, "kind": kind, "count": 0}
+                                work_matches[wid]["count"] += 1
+                        continue
+
+                # combined_credits'ten cast bölümünü kullan
+                for work in (person_credits.get("cast") or []):
                     kind = work.get("media_type", "")
                     if kind not in ("tv", "movie"):
                         continue
