@@ -72,11 +72,21 @@ def _title_candidates(title: str) -> List[str]:
     """
     candidates = [title]
     words = title.split()
+
+    # Tüm büyük harfli başlık → title-case varyantı (örn. "MADAM BOVARY" → "Madam Bovary")
+    if title == title.upper() and any(c.isalpha() for c in title):
+        title_cased = title.title()
+        if title_cased != title:
+            candidates.append(title_cased)
+        # Bundan sonraki dönüşümleri title-case üzerinden de yap
+        words = title_cased.split()
+
     # "Madam" → "Madame" (Fransızca unvan düzeltmesi)
     new_words = ["Madame" if w.lower() == "madam" else w for w in words]
     variant = " ".join(new_words)
-    if variant != title:
+    if variant != title and variant not in candidates:
         candidates.append(variant)
+
     return list(dict.fromkeys(candidates))  # sıralı tekrarsız
 
 
@@ -352,8 +362,14 @@ class TMDBVerify:
                 return False
             if name.isupper() and ' ' not in name and len(name) > 12:
                 return False
-            noise_words = {'filme', 'filmer', 'cinema', 'telecinco', 'production', 'studio', 'channel'}
+            noise_words = {
+                'filme', 'filmer', 'cinema', 'telecinco', 'production', 'studio', 'channel',
+                'mk2', 'productions', 'musicales', 'musicale', 'editions', 'edition', 'sa', 'ltd',
+            }
             if name.lower().strip() in noise_words:
+                return False
+            # Şirket/organizasyon isimlerini reddet (çift güvence — company_filtered adımından sonra)
+            if _looks_like_company(name):
                 return False
             return True
 
