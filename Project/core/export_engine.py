@@ -758,11 +758,17 @@ class ExportEngine:
         L.append(sep)
         cast_list = cr.get("cast") or []
         if cast_list:
+            # Dinamik hizalama: en uzun oyuncu adına göre sütun genişliği belirle
+            max_actor_len = max(
+                (len(c.get("actor_name") or "") for c in cast_list),
+                default=20
+            )
+            col_width = max(max_actor_len + 1, 20)  # minimum 20 karakter genişlik
             for c in cast_list:
                 ch = c.get("character_name") or ""
                 ac = c.get("actor_name") or ""
                 if ch:
-                    L.append(f"  {ac}   --   {ch}")
+                    L.append(f"  {ac:<{col_width}}-- {ch}")
                 else:
                     L.append(f"  {ac}")
         else:
@@ -863,8 +869,16 @@ class ExportEngine:
         L.append("  BLOK 2 — OYUNCULAR")
         L.append(sep)
         if cr.get("cast"):
-            L.append(f"\n  {'Oyuncu Adı':22s}  --  {'Karakter Adı':<22s}  [Skor]")
-            L.append(f"  {'─'*63}")
+            # Dinamik hizalama: en uzun oyuncu adına göre sütun genişliği belirle
+            max_actor_len = max(
+                (len(c.get("actor_name") or "") for c in cr["cast"]),
+                default=20
+            )
+            col_width = max(max_actor_len + 1, 22)  # minimum 22 karakter, +1 for padding
+            char_col_width = 22
+            L.append(f"\n  {'Oyuncu Adı':<{col_width}}  --  {'Karakter Adı':<{char_col_width}}  [Skor]")
+            total_dash = col_width + char_col_width + 12  # 12 = "  " + icon + " " + "  --  " + "  "
+            L.append(f"  {'─' * min(total_dash, 63)}")
             for c in cr["cast"]:
                 ch = c.get("character_name") or ""
                 ac = c.get("actor_name") or ""
@@ -872,9 +886,10 @@ class ExportEngine:
                 score_str = f"[{score:.2f}]" if score is not None else ""
                 icon = self._verification_icon(c)
                 if ch:
-                    L.append(f"  {icon} {ac:22s}  --  {ch:<22s}  {score_str}")
+                    L.append(f"  {icon} {ac:<{col_width}}-- {ch:<{char_col_width}}  {score_str}")
                 else:
-                    L.append(f"  {icon} {ac:<46s}  {score_str}")
+                    no_char_width = col_width + char_col_width + 4  # combined width
+                    L.append(f"  {icon} {ac:<{no_char_width}}  {score_str}")
         else:
             L.append("\n  (Oyuncu verisi yok)")
 
