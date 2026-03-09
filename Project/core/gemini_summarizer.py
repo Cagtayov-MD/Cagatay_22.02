@@ -3,7 +3,7 @@ gemini_summarizer.py — Transcript'ten Türkçe özet çıkarma (Gemini 2.5 Fla
 
 summarize_transcript(transcript_text, api_key, log_cb) -> str | None
   - Transcript metnini Gemini'ye gönderir
-  - 8-12 cümlelik Türkçe özet döndürür
+  - Kısa spoiler+özet (max 2 cümle) döndürür
 """
 
 import core.llm_provider as _llm
@@ -24,7 +24,8 @@ _SYSTEM_PROMPT = (
     "- Örnek: 'Ahmetin babası bu bölümde öldü' gibi direkt bilgi ver\n"
     "- Kibar veya merak uyandırıcı ifadeler KULLANMA (örn: 'büyük zorluklar beklemektedir' KULLANMA)\n"
     "- Yalnızca transcriptteki bilgileri kullan, uydurma YAPMA\n"
-    "- Türkçe yaz"
+    "- Türkçe yaz\n"
+    "- Başlık kullanma, doğrudan içeriğe başla"
 )
 
 
@@ -34,7 +35,7 @@ def summarize_transcript(
     model: str = "gemini-2.5-flash",
     log_cb=None,
 ) -> str | None:
-    """Transcript metninden Gemini 2.5 Flash ile Türkçe özet üret.
+    """Transcript metninden Gemini 2.5 Flash ile Türkçe kısa spoiler+özet üret.
 
     Args:
         transcript_text: Ham transcript metni.
@@ -43,7 +44,7 @@ def summarize_transcript(
         log_cb: İsteğe bağlı log callback fonksiyonu.
 
     Returns:
-        8-12 cümlelik Türkçe özet string'i veya hata durumunda None.
+        Kısa spoiler+özet string'i (max 2 cümle) veya hata durumunda None.
     """
     if not transcript_text or not transcript_text.strip():
         return None
