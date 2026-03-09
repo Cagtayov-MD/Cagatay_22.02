@@ -76,6 +76,28 @@ def _extract_film_id(filename: str) -> str:
     _, film_id, _ = _extract_output_name(filename)
     return film_id
 
+def _extract_episode_from_id(film_id: str) -> str:
+    """Film ID'den bölüm bilgisi çıkar.
+
+    Expected format: YYYY-XXXX-B-SSSS-XX-X
+      - block[0]: yıl (4 hane)
+      - block[1]: seri no
+      - block[2]: karar bloğu (1=film, 0=dizi)
+      - block[3]: bölüm numarası (block[2]==0 ise geçerli)
+
+    3. blok = 1 → 'YOK' (film)
+    3. blok = 0 → 4. blok değeri (dizi bölümü)
+    """
+    parts = film_id.split('-')
+    if len(parts) < 4:
+        return 'YOK'
+    block3 = parts[2].strip()
+    if block3 == '1':
+        return 'YOK'
+    elif block3 == '0':
+        return parts[3].strip()
+    return 'YOK'
+
 
 # Türkçe'ye özgü karakterler (Latince'de bulunmayan)
 _TR_ONLY_CHARS = set('çğıöşüÇĞİÖŞÜ')
@@ -993,6 +1015,7 @@ class ExportEngine:
 
         # original_title: credits/TMDB'den gelen yabancı dil ismi
         original_title = (
+            cr.get("tmdb_original_title") or
             cr.get("original_title") or cr.get("original_name") or
             cr.get("film_title") or film_name_tr
         ).strip()
@@ -1013,6 +1036,8 @@ class ExportEngine:
         L.append(f"  {'FİLMİN ORJİNAL ADI':<{fw}}:     {original_title}")
         L.append(f"  {'FİLMİN ID':<{fw}}:     {film_id}")
         L.append(f"  {'YAPIM TARİHİ':<{fw}}:     {year}")
+        bolum = _extract_episode_from_id(film_id) if film_id else 'YOK'
+        L.append(f"  {'BÖLÜM':<{fw}}:     {bolum}")
         L.append(f"  {'ÇÖZÜNÜRLÜK':<{fw}}:     {resolution}")
         L.append(f"  {'FRAME':<{fw}}:     {fps_str}")
         L.append(f"  {'TOPLAM SÜRE':<{fw}}:     {duration}")
@@ -1066,7 +1091,7 @@ class ExportEngine:
             if (c.get("actor_name") or "").strip()
         ]
         if actor_names:
-            L.append(f"  {', '.join(actor_names)}")
+            L.append(f"  {' ; '.join(actor_names)}")
         else:
             L.append("  YOK")
 

@@ -120,6 +120,7 @@ class TMDBVerifyResult:
     year: int = 0
     keywords: List[str] = None
     genres: List[str] = None
+    original_title: str = ""
 
     def __post_init__(self):
         if self.cast is None:
@@ -434,16 +435,10 @@ class TMDBVerify:
             if (item.get("name") or "").strip()
         ]
 
-        if updated:
-            cdata["tmdb_verified"] = True
-            cdata["tmdb_title"]    = tmdb_title
-            cdata["tmdb_id"]       = tmdb_id
-            cdata["tmdb_type"]     = kind
-            cdata["film_title"]    = tmdb_title
-
         # TMDB keywords ve genres çek
         tmdb_keywords: List[str] = []
         tmdb_genres: List[str] = []
+        details = {}
         try:
             if kind == "tv":
                 details = self.client.get_tv_details(int(tmdb_id))
@@ -455,6 +450,21 @@ class TMDBVerify:
         except Exception as e:
             self._log(f"  [TMDB] Keywords/genres çekme hatası: {e}")
 
+        # original_title: TMDB'den orijinal dildeki film/dizi adı
+        original_title = ""
+        if details:
+            original_title = (details.get("original_title") or details.get("original_name") or "").strip()
+        if not original_title:
+            original_title = (tmdb_entry.get("original_title") or tmdb_entry.get("original_name") or "").strip()
+
+        if updated:
+            cdata["tmdb_verified"] = True
+            cdata["tmdb_title"]    = tmdb_title
+            cdata["tmdb_id"]       = tmdb_id
+            cdata["tmdb_type"]     = kind
+            cdata["film_title"]    = tmdb_title
+            cdata["tmdb_original_title"] = original_title
+
         return TMDBVerifyResult(
             updated=updated, reason="ok",
             hits=hits, misses=misses,
@@ -464,6 +474,7 @@ class TMDBVerify:
             year=tmdb_year,
             keywords=tmdb_keywords,
             genres=tmdb_genres,
+            original_title=original_title,
         )
 
     # ── TMDB'de eşleşme bul ─────────────────────────────────────────
