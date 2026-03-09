@@ -1,5 +1,5 @@
 """export_engine.py — Report schema uyumlu JSON + okunabilir TXT çıktı."""
-import json, os, re
+import json, os, re, unicodedata
 from datetime import datetime
 from pathlib import Path
 
@@ -33,6 +33,184 @@ _WORD_FUZZY_THRESHOLD = 70   # fuzz.ratio per-word minimum similarity
 _WRATIO_FALLBACK_THRESHOLD = 75  # WRatio fallback when word counts differ
 
 # ═══════════════════════════════════════════════════════════════════
+# ÇIKTI DOSYASI YARDIMCı FONKSİYONLARI
+# ═══════════════════════════════════════════════════════════════════
+
+# Regex: video dosya adındaki ID+İSİM pattern'i (ör: 2008-1410-1-0000-90-1_LEGEND)
+_ID_NAME_PATTERN = re.compile(
+    r'(\d{4}-\d{2,4}-\d+-\d{4}-\d+-\d+)_([A-Za-z][A-Za-z0-9_]*)'
+)
+
+
+def _extract_output_name(filename: str) -> str | None:
+    """Dosya adından ID+İSİM formatını çıkar.
+
+    Örnek:
+        "911102__asdsd-xx-(ÖNEMSİZ)-2008-1410-1-0000-90-1_LEGEND.mp4"
+        → "2008-1410-1-0000-90-1 LEGEND"
+    """
+    stem = Path(filename).stem
+    # Tüm eşleşmeler arasından SONUNCUSU alınır: dosya adındaki ID+İSİM kısmı
+    # her zaman adın sonunda yer aldığından en son eşleşme doğru olanıdır.
+    matches = list(_ID_NAME_PATTERN.finditer(stem))
+    if matches:
+        m = matches[-1]
+        id_part = m.group(1)
+        name_part = m.group(2).replace('_', ' ').strip()
+        return f"{id_part} {name_part}"
+    return None
+
+
+def _extract_film_id(filename: str) -> str:
+    """Dosya adından Film ID kısmını çıkar.
+
+    Örnek:
+        "...-2008-1410-1-0000-90-1_LEGEND.mp4" → "2008-1410-1-0000-90-1"
+    """
+    # ID+İSİM pattern'inden ID kısmını al
+    output_name = _extract_output_name(filename)
+    if output_name:
+        # "2008-1410-1-0000-90-1 LEGEND" → "2008-1410-1-0000-90-1"
+        return output_name.split(' ')[0]
+    # Fallback: sadece ID pattern'ini ara (isim kısmı olmayan dosyalar için)
+    stem = Path(filename).stem
+    m = re.search(r'(\d{4}-\d{2,4}-\d+-\d{4}-\d+-\d+)', stem)
+    return m.group(1) if m else ""
+
+
+def _to_upper_tr(text: str) -> str:
+    """Türkçe kurallara göre büyük harf. Diğer diller İngilizce kurala göre.
+
+    Türkçe: i→İ, ı→I, ş→Ş, ğ→Ğ, ö→Ö, ü→Ü, ç→Ç
+    Diğer diller: aksanlı harfler (é,è,ñ vb.) düz büyük harfe dönüşür.
+    """
+    # Türkçe özel dönüşümler (önce lowercase 'i' ve 'ı')
+    result = text.replace('i', 'İ').replace('ı', 'I')
+    result = result.upper()
+    # Türkçe büyük harf kümesi (bu karakterler korunacak)
+    turkish_uppers = frozenset('ÇĞİÖŞÜ')
+    cleaned = []
+    for ch in result:
+        if ch in turkish_uppers:
+            cleaned.append(ch)
+        elif not ch.isascii() and ch.isalpha():
+            # NFD decompose → base karakter al (aksansız)
+            decomposed = unicodedata.normalize('NFD', ch)
+            base = decomposed[0] if decomposed else ch
+            cleaned.append(base.upper())
+        else:
+            cleaned.append(ch)
+    return ''.join(cleaned)
+
+
+# 6 çıktı rolü (sıralı)
+_OUTPUT_ROLES = [
+    "YÖNETMEN",
+    "YAPIMCI",
+    "YÖNETMEN YARDIMCISI",
+    "KAMERAMAN",
+    "KURGU",
+    "SENARİST",
+]
+
+# Rol adlarını (küçük harf) → çıktı rolü adına map eden sözlük
+_ROLE_TO_OUTPUT: dict[str, str] = {
+    # Yönetmen
+    "yönetmen": "YÖNETMEN", "yonetmen": "YÖNETMEN",
+    "yöneten": "YÖNETMEN", "yoneten": "YÖNETMEN",
+    "director": "YÖNETMEN", "directed by": "YÖNETMEN",
+    "réalisateur": "YÖNETMEN", "réalisatrice": "YÖNETMEN",
+    "realisateur": "YÖNETMEN", "réalisation": "YÖNETMEN",
+    "regisseur": "YÖNETMEN", "regie": "YÖNETMEN",
+    "regia": "YÖNETMEN", "reżyser": "YÖNETMEN",
+    "rendező": "YÖNETMEN", "режиссёр": "YÖNETMEN",
+    "ein film von": "YÖNETMEN", "a film by": "YÖNETMEN",
+    "film by": "YÖNETMEN",
+    # Yapımcı
+    "yapımcı": "YAPIMCI", "yapimci": "YAPIMCI",
+    "yapım yönetmeni": "YAPIMCI",
+    "producer": "YAPIMCI", "produced by": "YAPIMCI",
+    "executive producer": "YAPIMCI",
+    "produzent": "YAPIMCI", "producteur": "YAPIMCI",
+    "productrice": "YAPIMCI", "produttore": "YAPIMCI",
+    "productor": "YAPIMCI", "продюсер": "YAPIMCI",
+    "yürütücü yapımcı": "YAPIMCI", "yurtucu yapimci": "YAPIMCI",
+    # Yönetmen Yardımcısı
+    "yönetmen yardımcısı": "YÖNETMEN YARDIMCISI",
+    "yonetmen yardimcisi": "YÖNETMEN YARDIMCISI",
+    "yardımcı yönetmen": "YÖNETMEN YARDIMCISI",
+    "yardimci yonetmen": "YÖNETMEN YARDIMCISI",
+    "assistant director": "YÖNETMEN YARDIMCISI",
+    "first assistant director": "YÖNETMEN YARDIMCISI",
+    "second assistant director": "YÖNETMEN YARDIMCISI",
+    "1st ad": "YÖNETMEN YARDIMCISI", "2nd ad": "YÖNETMEN YARDIMCISI",
+    "regiassistent": "YÖNETMEN YARDIMCISI",
+    "assistenzregisseur": "YÖNETMEN YARDIMCISI",
+    "reji asistani": "YÖNETMEN YARDIMCISI",
+    # Kameraman
+    "görüntü yönetmeni": "KAMERAMAN",
+    "goruntu yonetmeni": "KAMERAMAN",
+    "görüntü": "KAMERAMAN", "goruntu": "KAMERAMAN",
+    "cinematographer": "KAMERAMAN",
+    "director of photography": "KAMERAMAN",
+    "dop": "KAMERAMAN", "dp": "KAMERAMAN",
+    "kameramann": "KAMERAMAN", "kameraman": "KAMERAMAN",
+    "kamera": "KAMERAMAN", "camera": "KAMERAMAN",
+    "camera operator": "KAMERAMAN",
+    "directeur de la photographie": "KAMERAMAN",
+    "direttore della fotografia": "KAMERAMAN",
+    "operatör": "KAMERAMAN", "operatoru": "KAMERAMAN",
+    # Kurgu
+    "kurgu": "KURGU", "montaj": "KURGU",
+    "editor": "KURGU", "film editor": "KURGU",
+    "edited by": "KURGU", "editing": "KURGU",
+    "monteur": "KURGU", "monteuse": "KURGU",
+    "cutter": "KURGU", "schnitt": "KURGU",
+    "montaggio": "KURGU", "montage": "KURGU",
+    # Senarist
+    "senaryo": "SENARİST", "senarist": "SENARİST",
+    "screenwriter": "SENARİST", "screenplay": "SENARİST",
+    "writer": "SENARİST", "written by": "SENARİST",
+    "scénariste": "SENARİST", "scenariste": "SENARİST",
+    "drehbuchautor": "SENARİST",
+    "sceneggiatore": "SENARİST", "guionista": "SENARİST",
+    "сценарист": "SENARİST", "script": "SENARİST",
+    "story by": "SENARİST",
+}
+
+
+def _map_crew_to_roles(crew_data: list, directors: list) -> dict[str, list[str]]:
+    """Crew verilerini 6 çıktı rolüne dönüştür.
+
+    Returns:
+        dict mapping each output role name → list of person names.
+    """
+    result: dict[str, list[str]] = {role: [] for role in _OUTPUT_ROLES}
+
+    # Directors → YÖNETMEN
+    for d in (directors or []):
+        if d and d not in result["YÖNETMEN"]:
+            result["YÖNETMEN"].append(d)
+
+    # Crew entries → matching output role
+    for entry in (crew_data or []):
+        name = (entry.get("name") or "").strip()
+        if not name:
+            continue
+        role_raw = (
+            entry.get("role_tr") or entry.get("role") or entry.get("job") or ""
+        ).strip()
+        role_lower = role_raw.lower()
+        if not role_lower:
+            continue
+
+        output_role = _ROLE_TO_OUTPUT.get(role_lower)
+        if output_role and name not in result[output_role]:
+            result[output_role].append(name)
+
+    return result
+
+
 # İSİM VERİTABANI — TurkishNameDB (350K+) > ALL_NAMES (9K) fallback
 # ═══════════════════════════════════════════════════════════════════
 # ISSUE-09 FIX: Global singleton kaldırıldı.
@@ -734,106 +912,131 @@ class ExportEngine:
             "errors": [],
         }
 
-        film_title = (credits_data.get("film_title") or "").strip()
-        if film_title:
-            stem = film_title.replace(" ", "_")
-        else:
-            stem = Path(video_info.get("filename", "out")).stem
+        filename = video_info.get("filename", "out")
+        output_name = _extract_output_name(filename)
+        if not output_name:
+            # Fallback: film_title veya dosya adı stem'i
+            film_title = (credits_data.get("film_title") or "").strip()
+            if film_title:
+                output_name = film_title.replace(" ", "_")
+            else:
+                output_name = Path(filename).stem
         if ts is None:
             ts = datetime.now().strftime("%d%m%y-%H%M")
-        jp = self.out / f"{stem}_report.json"
-        tp = _safe_path(self.out / f"{stem}_{ts}.txt")
-        tr_p = _safe_path(self.out / f"{stem}-tscr_{ts}.txt")
+        jp = self.out / f"{output_name}_report.json"
+        tp = _safe_path(self.out / f"{output_name}_{ts}.txt")
+        tr_p = _safe_path(self.out / f"{output_name}_tscr.txt")
 
         with open(jp, "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
         self._write_report(report, tp, audio_result=audio_result)
         self._write_transcript(video_info, audio_result, tr_p)
-        user_tp = _safe_path(self.out / f"{stem}_{ts}_kullanici.txt")
+        user_tp = _safe_path(self.out / f"{output_name}.txt")
         self._write_user_report(report, user_tp, audio_result=audio_result)
         return str(jp), str(tp), str(tr_p), str(user_tp)
 
     def _write_user_report(self, r, path, audio_result: dict | None = None):
-        """Kullanıcıya yönelik temiz, sabit formatlı TXT raporu yaz."""
+        """Kullanıcıya yönelik temiz, sabit formatlı TXT raporu yaz.
+
+        Format:
+            ================================================================
+              FİLM / PROGRAM BİLGİLERİ
+            ================================================================
+              FİLMİN ADI            :     ...
+              ...
+            ================================================================
+              YAPIM EKİBİ
+            ================================================================
+              YÖNETMEN              AD SOYAD
+              ...
+            ================================================================
+              ÖZET
+            ================================================================
+              (SPOILER + ÖZET)
+              ...
+            ================================================================
+
+        Tüm metin BÜYÜK HARF (Türkçe kurallara göre).
+        """
         L = []
         sep = "=" * 64
         fi = r["file_info"]
         cr = r["credits"]
+        filename = fi.get("filename", "")
 
-        # Film/Program Bilgileri
+        # ── FİLM / PROGRAM BİLGİLERİ ─────────────────────────────────
         L.append(sep)
         L.append("  FİLM / PROGRAM BİLGİLERİ")
         L.append(sep)
-        film_title = r.get("film_title") or cr.get("film_title") or fi.get("filename", "")
-        L.append(f"  Ad            : {film_title}")
-        L.append(f"  Süre          : {fi.get('duration_human', '')}")
-        fps = fi.get("fps", 0)
+
+        film_title = (
+            r.get("film_title") or cr.get("film_title") or
+            Path(filename).stem or ""
+        ).strip()
+        original_title = (
+            cr.get("original_title") or cr.get("original_name") or film_title
+        )
+        film_id = _extract_film_id(filename)
+        year = str(cr.get("year") or "")
         resolution = fi.get("resolution", "")
-        L.append(f"  Çözünürlük    : {resolution} @ {fps} FPS")
-        total_frames = fi.get("total_frames")
-        if total_frames is not None:
-            L.append(f"  Kare Sayısı   : {total_frames}")
+        fps = fi.get("fps", 0)
+        fps_str = f"{fps} FRAME" if fps else ""
+        duration = fi.get("duration_human", "")
 
-        # Oyuncular
-        L.append(sep)
-        L.append("  OYUNCULAR")
-        L.append(sep)
-        cast_list = cr.get("cast") or []
-        if cast_list:
-            # Dinamik hizalama: en uzun oyuncu adına göre sütun genişliği belirle
-            max_actor_len = max(
-                (len(c.get("actor_name") or "") for c in cast_list),
-                default=20
-            )
-            col_width = max(max_actor_len + 1, 20)  # minimum 20 karakter genişlik
-            for c in cast_list:
-                ch = c.get("character_name") or ""
-                ac = c.get("actor_name") or ""
-                if ch:
-                    L.append(f"  {ac:<{col_width}}-- {ch}")
-                else:
-                    L.append(f"  {ac}")
-        else:
-            L.append("  (Oyuncu verisi yok)")
+        fw = 22  # field column width
+        L.append(f"  {'FİLMİN ADI':<{fw}}:     {film_title}")
+        L.append(f"  {'FİLMİN ORJİNAL ADI':<{fw}}:     {original_title}")
+        L.append(f"  {'FİLMİN ID':<{fw}}:     {film_id}")
+        L.append(f"  {'YAPIM TARİHİ':<{fw}}:     {year}")
+        L.append(f"  {'ÇÖZÜNÜRLÜK':<{fw}}:     {resolution}")
+        L.append(f"  {'FRAME':<{fw}}:     {fps_str}")
+        L.append(f"  {'TOPLAM SÜRE':<{fw}}:     {duration}")
 
-        # Yapım Ekibi
+        # ── YAPIM EKİBİ ──────────────────────────────────────────────
         L.append(sep)
         L.append("  YAPIM EKİBİ")
         L.append(sep)
+
         crew_list = cr.get("technical_crew") or cr.get("crew") or []
         directors = self._director_names(cr)
-        if directors or crew_list:
-            for d in directors:
-                L.append(f"  Yönetmen   :   {d}")
-            for t in crew_list:
-                role_txt = t.get("role_tr") or t.get("role") or t.get("job") or ""
-                L.append(f"  {role_txt}   :   {t.get('name', '')}")
-        else:
-            L.append("  (Ekip verisi yok)")
 
-        # Anahtar Sözcükler (sadece oyuncu isimleri)
-        L.append(sep)
-        L.append("  ANAHTAR SÖZCÜKLER")
-        L.append(sep)
-        actor_names = [c["actor_name"] for c in cast_list if c.get("actor_name")]
-        if actor_names:
-            L.append(f"  {', '.join(actor_names)}")
+        # Credits okundu mu? (herhangi bir veri varsa "okundu")
+        credits_read = bool(directors or crew_list or cr.get("cast"))
 
-        # Özet
+        role_map = _map_crew_to_roles(crew_list, directors)
+        rw = 22  # role column width
+        for role in _OUTPUT_ROLES:
+            names = role_map.get(role, [])
+            if not credits_read:
+                L.append(f"  {role:<{rw}}OKUNMADI")
+            elif not names:
+                L.append(f"  {role:<{rw}}YOK")
+            else:
+                L.append(f"  {role:<{rw}}{names[0]}")
+                for name in names[1:]:
+                    L.append(f"  {'':<{rw}}{name}")
+
+        # ── ÖZET ─────────────────────────────────────────────────────
         L.append(sep)
         L.append("  ÖZET")
         L.append(sep)
         summary = None
         if audio_result and isinstance(audio_result, dict):
-            summary = (audio_result.get("summary") or
-                       audio_result.get("summary_tr") or
-                       audio_result.get("ollama_summary"))
-        L.append(f"  {summary}" if summary else "  Özet oluşturulmadı.")
+            summary = (
+                audio_result.get("summary") or
+                audio_result.get("summary_tr") or
+                audio_result.get("ollama_summary")
+            )
+        if summary:
+            L.append("  (SPOILER + ÖZET)")
+            L.append(f"  {summary}")
+        else:
+            L.append("  ÖZET OLUŞTURULAMADI.")
 
-        # Footer
         L.append(sep)
-        L.append(f"  Oluşturulma: {r['generated_at']}")
-        L.append(sep)
+
+        # Tüm satırları BÜYÜK HARF'e çevir (Türkçe kurallara göre)
+        L = [_to_upper_tr(line) for line in L]
 
         with open(path, "w", encoding="utf-8-sig") as f:
             f.write("\n".join(L))
