@@ -1,5 +1,5 @@
 """export_engine.py — Report schema uyumlu JSON + okunabilir TXT çıktı."""
-import json, os, re
+import json, os, re, unicodedata
 from datetime import datetime
 from pathlib import Path
 
@@ -108,6 +108,136 @@ def _norm_key(s: str) -> str:
     s = _tr_ascii(s or "").lower()
     s = re.sub(r"[^a-z0-9]+", "", s)
     return s
+
+
+# ═══════════════════════════════════════════════════════════════════
+# BÜYÜK HARF — Türkçe ve diğer dil desteği
+# ═══════════════════════════════════════════════════════════════════
+# Türkçe'ye özgü karakterler (küçük harf); bunlar varsa kelime Türkçe sayılır
+_TR_MARKERS = frozenset('çğışüöÇĞŞÜÖİ')
+
+_TR_UPPER_MAP = {'ç': 'Ç', 'ğ': 'Ğ', 'ı': 'I', 'ş': 'Ş', 'ü': 'Ü', 'ö': 'Ö'}
+
+
+def _upper_char(c: str, is_tr: bool) -> str:
+    """Tek karakteri akıllı büyüt."""
+    if c == 'i':
+        return 'İ' if is_tr else 'I'
+    if c in _TR_UPPER_MAP:
+        return _TR_UPPER_MAP[c]
+    if c in 'ÇĞŞÜÖİI':
+        return c  # zaten büyük Türkçe harf
+    if c.isascii():
+        return c.upper()
+    # Türkçe olmayan aksanlı harf → aksanı kaldır, büyüt
+    nfd = unicodedata.normalize('NFD', c)
+    stripped = ''.join(ch for ch in nfd if unicodedata.category(ch) != 'Mn')
+    return stripped.upper() if stripped else c.upper()
+
+
+def _upper_smart(text: str) -> str:
+    """
+    Akıllı büyük harf dönüşümü.
+    - Türkçe karakteri olan kelimeler → Türkçe kurallara göre (i→İ, ı→I, ç→Ç …)
+    - Diğer kelimeler → İngilizce/ASCII kurallara göre (i→I, é→E …)
+    Boşluklar ve satır içi hizalama karakterleri korunur.
+    """
+    if not text:
+        return text
+    tokens = re.split(r'(\s+)', text)
+    result = []
+    for token in tokens:
+        if not token or not token.strip():
+            result.append(token)
+        else:
+            is_tr = any(c in _TR_MARKERS for c in token)
+            result.append(''.join(_upper_char(c, is_tr) for c in token))
+    return ''.join(result)
+
+
+def _extract_program_code(filename: str) -> str:
+    """Video dosya adından program kodunu ayıkla (örn. '2008-1410-1-0000-90-1')."""
+    stem = Path(filename).stem
+    m = re.search(r'(\d{4}-\d{4}-\d-\d{4}-\d{2}-\d)', stem)
+    return m.group(1) if m else ""
+
+
+# ═══════════════════════════════════════════════════════════════════
+# KULLANICI RAPORU — 6 KABUL EDİLEN ROL
+# ═══════════════════════════════════════════════════════════════════
+_USER_ROLES_ORDER = [
+    "Yönetmen",
+    "Yapımcı",
+    "Yönetmen Yardımcısı",
+    "Kameraman",
+    "Kurgu",
+    "Senarist",
+]
+
+# Ham eşleşme tablosu (normalize edilmiş anahtarlarla doldurulur aşağıda)
+_ROLE_TO_USER_CANONICAL_RAW = {
+    # Yönetmen
+    "yönetmen": "Yönetmen", "yonetmen": "Yönetmen",
+    "director": "Yönetmen", "directed by": "Yönetmen",
+    "regie": "Yönetmen", "réalisation": "Yönetmen", "realisation": "Yönetmen",
+    "regia": "Yönetmen", "regia di": "Yönetmen",
+    "dirección": "Yönetmen", "direccion": "Yönetmen",
+    "dirigido por": "Yönetmen", "dirigé par": "Yönetmen",
+    "film by": "Yönetmen", "a film by": "Yönetmen",
+    "ein film von": "Yönetmen", "réalisé par": "Yönetmen", "realise par": "Yönetmen",
+    # Yapımcı
+    "yapımcı": "Yapımcı", "yapimci": "Yapımcı",
+    "producer": "Yapımcı", "executive producer": "Yapımcı",
+    "yapım yönetmeni": "Yapımcı", "produzent": "Yapımcı",
+    "producteur": "Yapımcı", "produttore": "Yapımcı",
+    "productor": "Yapımcı", "produtor": "Yapımcı",
+    "yürütücü yapımcı": "Yapımcı", "yurtucu yapimci": "Yapımcı",
+    "koordinatör": "Yapımcı", "koordinator": "Yapımcı",
+    # Yönetmen Yardımcısı
+    "yönetmen yardımcısı": "Yönetmen Yardımcısı",
+    "yardımcı yönetmen": "Yönetmen Yardımcısı",
+    "yardimci yonetmen": "Yönetmen Yardımcısı",
+    "assistant director": "Yönetmen Yardımcısı",
+    "1st ad": "Yönetmen Yardımcısı", "2nd ad": "Yönetmen Yardımcısı",
+    "asistan yönetmen": "Yönetmen Yardımcısı",
+    "reji yardımcısı": "Yönetmen Yardımcısı",
+    "reji asistani": "Yönetmen Yardımcısı",
+    # Kameraman
+    "kameraman": "Kameraman",
+    "görüntü yönetmeni": "Kameraman", "goruntu yonetmeni": "Kameraman",
+    "cinematographer": "Kameraman",
+    "director of photography": "Kameraman",
+    "dop": "Kameraman", "d.o.p.": "Kameraman",
+    "kamera": "Kameraman",
+    "bildgestaltung": "Kameraman",
+    "directeur de la photographie": "Kameraman",
+    "direttore della fotografia": "Kameraman",
+    "director de fotografía": "Kameraman",
+    # Kurgu
+    "kurgu": "Kurgu", "montaj": "Kurgu",
+    "editor": "Kurgu", "edited by": "Kurgu",
+    "editing": "Kurgu", "film editing": "Kurgu",
+    "schnitt": "Kurgu", "montage": "Kurgu", "montaggio": "Kurgu",
+    "edición": "Kurgu", "edicion": "Kurgu",
+    # Senarist
+    "senaryo": "Senarist", "senarist": "Senarist",
+    "screenplay": "Senarist", "screenwriter": "Senarist",
+    "written by": "Senarist", "writer": "Senarist",
+    "drehbuch": "Senarist", "scénario": "Senarist", "scenario": "Senarist",
+    "sceneggiatura": "Senarist", "guión": "Senarist", "guion": "Senarist",
+    "roteiro": "Senarist", "écrit par": "Senarist", "script": "Senarist",
+    "story by": "Senarist", "histoire de": "Senarist",
+}
+
+# Normalize edilmiş arama tablosu
+_ROLE_CANONICAL_NORMALIZED: dict[str, str] = {
+    _norm_key(k): v for k, v in _ROLE_TO_USER_CANONICAL_RAW.items()
+}
+
+
+def _map_crew_to_user_role(role: str) -> str | None:
+    """Ekip rolünü 6 kullanıcı rolünden biriyle eşleştir. Eşleşme yoksa None."""
+    return _ROLE_CANONICAL_NORMALIZED.get(_norm_key(role))
 
 def _noise_score(actor: str) -> float:
     """
@@ -745,98 +875,136 @@ class ExportEngine:
         tp = _safe_path(self.out / f"{stem}_{ts}.txt")
         tr_p = _safe_path(self.out / f"{stem}-tscr_{ts}.txt")
 
+        # Kullanıcı raporu: "2008-1410-1-0000-90-1 LEGEND.TXT" formatı
+        prog_code = _extract_program_code(video_info.get("filename", ""))
+        film_upper = _upper_smart(film_title) if film_title else _upper_smart(stem.replace("_", " "))
+        if prog_code and film_upper:
+            user_filename = f"{prog_code} {film_upper}.TXT"
+        elif film_upper:
+            user_filename = f"{film_upper}.TXT"
+        else:
+            user_filename = f"{stem}_{ts}_kullanici.txt"
+        user_tp = _safe_path(self.out / user_filename)
+
         with open(jp, "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
         self._write_report(report, tp, audio_result=audio_result)
         self._write_transcript(video_info, audio_result, tr_p)
-        user_tp = _safe_path(self.out / f"{stem}_{ts}_kullanici.txt")
         self._write_user_report(report, user_tp, audio_result=audio_result)
         return str(jp), str(tp), str(tr_p), str(user_tp)
 
     def _write_user_report(self, r, path, audio_result: dict | None = None):
-        """Kullanıcıya yönelik temiz, sabit formatlı TXT raporu yaz."""
+        """
+        Kullanıcıya yönelik temiz rapor.
+        - Tüm metin büyük harf (Türkçe kurallara göre)
+        - Sadece 6 ekip rolü gösterilir (Yönetmen, Yapımcı, Yönetmen Yardımcısı,
+          Kameraman, Kurgu, Senarist)
+        - Film bilgileri: Ad, Orjinal Ad, ID, Yapım Yılı, Çözünürlük, Frame, Süre
+        - Özet: spoiler+özet karışık, max 2 cümle
+        """
         L = []
-        sep = "=" * 64
+        sep = _upper_smart("=" * 64)
         fi = r["file_info"]
         cr = r["credits"]
 
-        # Film/Program Bilgileri
-        L.append(sep)
-        L.append("  FİLM / PROGRAM BİLGİLERİ")
-        L.append(sep)
-        film_title = r.get("film_title") or cr.get("film_title") or fi.get("filename", "")
-        L.append(f"  Ad            : {film_title}")
-        L.append(f"  Süre          : {fi.get('duration_human', '')}")
-        fps = fi.get("fps", 0)
-        resolution = fi.get("resolution", "")
-        L.append(f"  Çözünürlük    : {resolution} @ {fps} FPS")
-        total_frames = fi.get("total_frames")
-        if total_frames is not None:
-            L.append(f"  Kare Sayısı   : {total_frames}")
+        film_title = (r.get("film_title") or cr.get("film_title") or
+                      Path(fi.get("filename", "")).stem)
+        prog_code  = _extract_program_code(fi.get("filename", ""))
+        year       = str(cr.get("year") or "")
+        resolution = (fi.get("resolution") or "").upper().replace("X", "X")
+        fps_val    = fi.get("fps", 0)
+        fps_str    = f"{int(fps_val) if float(fps_val) == int(fps_val) else fps_val}"
+        duration   = fi.get("duration_human", "")
 
-        # Oyuncular
+        # ── FİLM BİLGİLERİ ──────────────────────────────────────────
         L.append(sep)
-        L.append("  OYUNCULAR")
+        L.append(_upper_smart("  FİLM BİLGİLERİ"))
         L.append(sep)
-        cast_list = cr.get("cast") or []
-        if cast_list:
-            # Dinamik hizalama: en uzun oyuncu adına göre sütun genişliği belirle
-            max_actor_len = max(
-                (len(c.get("actor_name") or "") for c in cast_list),
-                default=20
-            )
-            col_width = max(max_actor_len + 1, 20)  # minimum 20 karakter genişlik
-            for c in cast_list:
-                ch = c.get("character_name") or ""
-                ac = c.get("actor_name") or ""
-                if ch:
-                    L.append(f"  {ac:<{col_width}}-- {ch}")
-                else:
-                    L.append(f"  {ac}")
-        else:
-            L.append("  (Oyuncu verisi yok)")
 
-        # Yapım Ekibi
-        L.append(sep)
-        L.append("  YAPIM EKİBİ")
-        L.append(sep)
-        crew_list = cr.get("technical_crew") or cr.get("crew") or []
-        directors = self._director_names(cr)
-        if directors or crew_list:
-            for d in directors:
-                L.append(f"  Yönetmen   :   {d}")
-            for t in crew_list:
-                role_txt = t.get("role_tr") or t.get("role") or t.get("job") or ""
-                L.append(f"  {role_txt}   :   {t.get('name', '')}")
-        else:
-            L.append("  (Ekip verisi yok)")
+        # Etiket sütun genişliği sabit
+        LW = 22  # etiket genişliği (karakter)
+        def _row(label: str, value: str) -> str:
+            return _upper_smart(f"  {label:<{LW}}: {value}")
 
-        # Anahtar Sözcükler (sadece oyuncu isimleri)
-        L.append(sep)
-        L.append("  ANAHTAR SÖZCÜKLER")
-        L.append(sep)
-        actor_names = [c["actor_name"] for c in cast_list if c.get("actor_name")]
-        if actor_names:
-            L.append(f"  {', '.join(actor_names)}")
+        L.append(_row("Filmin Adı",         film_title))
+        L.append(_row("Filmin Orjinal Adı", film_title))
+        L.append(_row("Filmin ID",          prog_code))
+        L.append(_row("Yapım Tarihi",       year))
+        L.append(_row("Çözünürlük",         resolution))
+        L.append(_row("Frame",              f"{fps_str} FRAME"))
+        L.append(_row("Toplam Süre",        duration))
 
-        # Özet
+        # ── YAPIM EKİBİ (sadece 6 rol) ──────────────────────────────
         L.append(sep)
-        L.append("  ÖZET")
+        L.append(_upper_smart("  YAPIM EKİBİ"))
         L.append(sep)
+        L.append("")
+
+        role_names = self._build_user_crew_section(cr)
+        # Rol etiketi sütun genişliği: en uzun rol adı = "Yönetmen Yardımcısı" (19)
+        RL = max(len(r_) for r_ in _USER_ROLES_ORDER)  # 19
+
+        has_crew = False
+        for role in _USER_ROLES_ORDER:
+            names = [n for n in role_names.get(role, []) if n]
+            if not names:
+                continue
+            has_crew = True
+            names_up = [_upper_smart(n) for n in names]
+            role_up  = _upper_smart(role)
+            # İlk isim rol etiketiyle aynı satırda
+            L.append(f"  {role_up:<{RL}} : {names_up[0]}")
+            # Sonraki isimler girinti ile, sonuncusu hariç hepsi ";" ile biter
+            indent = " " * (2 + RL + 3)
+            for idx, n in enumerate(names_up[1:], start=1):
+                is_last = (idx == len(names_up) - 1)
+                L.append(f"{indent}{n}{';' if not is_last else ''}")
+
+        if not has_crew:
+            L.append(_upper_smart("  (Ekip verisi yok)"))
+
+        # ── ÖZET ─────────────────────────────────────────────────────
+        L.append("")
+        L.append(sep)
+        L.append(_upper_smart("  ÖZET"))
+        L.append(sep)
+
         summary = None
         if audio_result and isinstance(audio_result, dict):
             summary = (audio_result.get("summary") or
                        audio_result.get("summary_tr") or
                        audio_result.get("ollama_summary"))
-        L.append(f"  {summary}" if summary else "  Özet oluşturulmadı.")
+        if summary:
+            L.append(_upper_smart(f"  {summary.strip()}"))
+        else:
+            L.append(_upper_smart("  ÖZET OLUŞTURULMADI."))
 
-        # Footer
-        L.append(sep)
-        L.append(f"  Oluşturulma: {r['generated_at']}")
         L.append(sep)
 
         with open(path, "w", encoding="utf-8-sig") as f:
             f.write("\n".join(L))
+
+    def _build_user_crew_section(self, cr: dict) -> dict:
+        """credits verisinden 6 kullanıcı rolüne isimleri topla."""
+        role_names: dict[str, list[str]] = {r: [] for r in _USER_ROLES_ORDER}
+
+        # Yönetmenler
+        for name in self._director_names(cr):
+            if name and name not in role_names["Yönetmen"]:
+                role_names["Yönetmen"].append(name)
+
+        # Teknik ekip
+        crew_list = cr.get("technical_crew") or cr.get("crew") or []
+        for t in crew_list:
+            name = (t.get("name") or "").strip()
+            role = (t.get("role_tr") or t.get("role") or t.get("job") or "").strip()
+            if not name or not role:
+                continue
+            canonical = _map_crew_to_user_role(role)
+            if canonical and name not in role_names[canonical]:
+                role_names[canonical].append(name)
+
+        return role_names
 
     def _write_report(self, r, path, audio_result: dict | None = None):
         L = []
