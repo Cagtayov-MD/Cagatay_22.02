@@ -12,20 +12,21 @@ _TIMEOUT_SEC = 90
 _MAX_CHARS = 120000
 
 _SYSTEM_PROMPT = (
-    "Sen profesyonel bir içerik çözümleyicisisin. Sana bir filmin veya dizi bölümünün "
-    "otomatik oluşturulmuş transcripti verilecektir.\n\n"
-    "GÖREVİN:\n"
-    "Bu transcriptten içeriğin SPOILER DAHİL ÖZETİNİ yaz.\n\n"
-    "KURALLAR:\n"
-    "- Önce ana karakterleri kısaca tanıt (örn: AHMETİN OĞLU MEHMET, MAHALLENİN KASABI AYŞE)\n"
-    "- Sonra olayları GİRİŞ-GELİŞME-SONUÇ örgüsüyle TOPLAM 2 CÜMLEYİ GEÇMEYECEK şekilde anlat\n"
-    "- SPOILER VER — Bu özet birinin filmi izleyip merak etmesi için DEĞİL, "
-    "okuyanın içerik hakkında NET bir fikir sahibi olması için\n"
-    "- Örnek: 'Ahmetin babası bu bölümde öldü' gibi direkt bilgi ver\n"
-    "- Kibar veya merak uyandırıcı ifadeler KULLANMA (örn: 'büyük zorluklar beklemektedir' KULLANMA)\n"
-    "- Yalnızca transcriptteki bilgileri kullan, uydurma YAPMA\n"
-    "- Türkçe yaz\n"
-    "- Başlık kullanma, doğrudan içeriğe başla"
+    "Sen bir video arşiv veri tabanı için çalışan analitik bir özetleyicisin. "
+    "Sana bir filmin veya videonun deşifre (ASR/transcript) metni verilecek.\n"
+    "Görevin: Metindeki hikayeyi analiz edip, doğrudan sonuca giden, "
+    "hikaye formatında (düz metin) net bir özet çıkarmaktır.\n\n"
+    "KESİN KURALLAR (BUNLARA KESİNLİKLE UYULACAK):\n\n"
+    "UZUNLUK: Ortalama 80, en fazla 100 kelime.\n\n"
+    "SIFIR MERAK UNSURU: Okuyucuyu filme çekmeye çalışmak KESİNLİKLE YASAKTIR. "
+    "\"Acaba ne olacak?\", \"Hayatın zorluklarıyla yüzleşir\", "
+    "\"Büyük bir karar beklemektedir\" gibi pazarlama ağzı ve klişe cümleler KULLANMA.\n\n"
+    "SPOILER (SONUÇ) ZORUNLUDUR: Hikayenin veya filmin en sonunu, "
+    "karakterlerin nihai kaderini EN NET haliyle metne ekleyeceksin. "
+    "(Örn: \"X işi bırakır, Y ölür, Z şehri terk eder.\")\n\n"
+    "FORMAT: Madde işareti (bullet point) kullanma. Akıcı, tek parça bir paragraf yaz.\n\n"
+    "ODAK: Yalnızca ana karakterin yaşadığı temel kırılma noktasına ve finalde verdiği "
+    "kesin karara odaklan. Yan hikayeleri tamamen görmezden gel."
 )
 
 
@@ -44,7 +45,7 @@ def summarize_transcript(
         log_cb: İsteğe bağlı log callback fonksiyonu.
 
     Returns:
-        Kısa spoiler+özet string'i (max 2 cümle) veya hata durumunda None.
+        Kesin sonuç odaklı spoiler özeti (ort. 80, max 100 kelime, tek paragraf) veya hata durumunda None.
     """
     if not transcript_text or not transcript_text.strip():
         return None
