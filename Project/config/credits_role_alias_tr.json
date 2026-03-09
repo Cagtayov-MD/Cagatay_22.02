@@ -110,6 +110,22 @@
       ]
     },
     {
+      "canonical": "Yönetmen Yardımcısı",
+      "category": "crew",
+      "aliases": [
+        "yönetmen yardımcısı", "yonetmen yardimcisi",
+        "yardımcı yönetmen", "yardimci yonetmen",
+        "assistant director", "first assistant director",
+        "second assistant director", "1st ad", "2nd ad",
+        "regiassistent", "assistenzregisseur",
+        "reji asistani", "reji koordinasyonu"
+      ],
+      "patterns": [
+        "\\byardımcı\\s+yönetmen\\b", "\\byardimci\\s+yonetmen\\b",
+        "\\bassistant\\s+director\\b", "\\b1st\\s+ad\\b", "\\b2nd\\s+ad\\b"
+      ]
+    },
+    {
       "canonical": "Yapım",
       "category": "production",
       "aliases": [
