@@ -36,71 +36,84 @@ _WRATIO_FALLBACK_THRESHOLD = 75  # WRatio fallback when word counts differ
 # ÇIKTI DOSYASI YARDIMCı FONKSİYONLARI
 # ═══════════════════════════════════════════════════════════════════
 
-# Regex: video dosya adındaki ID+İSİM pattern'i (ör: 2008-1410-1-0000-90-1_LEGEND)
-_ID_NAME_PATTERN = re.compile(
-    r'(\d{4}-\d{2,4}-\d+-\d{4}-\d+-\d+)_([A-Za-z][A-Za-z0-9_]*)'
-)
+# ID pattern: 4 rakam-2-4 rakam-1+ rakam-4 rakam-2-3 rakam-1+ rakam
+_ID_PATTERN = re.compile(r'(\d{4}-\d{2,4}-\d+-\d{4}-\d{2,3}-\d+)')
 
 
-def _extract_output_name(filename: str) -> str | None:
-    """Dosya adından ID+İSİM formatını çıkar.
+def _extract_output_name(filename: str) -> tuple[str, str, str]:
+    """Video dosya adından çıktı adı, film ID ve Türkçe film adı çıkar.
 
     Örnek:
-        "911102__asdsd-xx-(ÖNEMSİZ)-2008-1410-1-0000-90-1_LEGEND.mp4"
-        → "2008-1410-1-0000-90-1 LEGEND"
+        'evoArcadmin_TEST2_1949-0039-1-0000-00-1-KADIN_VE_DENİZCİ.mp4'
+        → ('1949-0039-1-0000-00-1 KADIN VE DENİZCİ', '1949-0039-1-0000-00-1', 'KADIN VE DENİZCİ')
     """
     stem = Path(filename).stem
-    # Tüm eşleşmeler arasından SONUNCUSU alınır: dosya adındaki ID+İSİM kısmı
-    # her zaman adın sonunda yer aldığından en son eşleşme doğru olanıdır.
-    matches = list(_ID_NAME_PATTERN.finditer(stem))
-    if matches:
-        m = matches[-1]
-        id_part = m.group(1)
-        name_part = m.group(2).replace('_', ' ').strip()
-        return f"{id_part} {name_part}"
-    return None
+    match = _ID_PATTERN.search(stem)
+
+    if not match:
+        return (stem, '', stem)
+
+    film_id = match.group(1)
+    after_id = stem[match.end():]
+    after_id = after_id.lstrip('-_')
+    film_name_tr = after_id.replace('_', ' ').replace('-', ' ').strip()
+
+    if film_name_tr:
+        output_name = f"{film_id} {film_name_tr}"
+    else:
+        output_name = film_id
+
+    return (output_name, film_id, film_name_tr)
 
 
 def _extract_film_id(filename: str) -> str:
     """Dosya adından Film ID kısmını çıkar.
 
     Örnek:
-        "...-2008-1410-1-0000-90-1_LEGEND.mp4" → "2008-1410-1-0000-90-1"
+        "evoArcadmin_TEST2_1949-0039-1-0000-00-1-KADIN_VE_DENİZCİ.mp4"
+        → "1949-0039-1-0000-00-1"
     """
-    # ID+İSİM pattern'inden ID kısmını al
-    output_name = _extract_output_name(filename)
-    if output_name:
-        # "2008-1410-1-0000-90-1 LEGEND" → "2008-1410-1-0000-90-1"
-        return output_name.split(' ')[0]
-    # Fallback: sadece ID pattern'ini ara (isim kısmı olmayan dosyalar için)
-    stem = Path(filename).stem
-    m = re.search(r'(\d{4}-\d{2,4}-\d+-\d{4}-\d+-\d+)', stem)
-    return m.group(1) if m else ""
+    _, film_id, _ = _extract_output_name(filename)
+    return film_id
+
+
+# Türkçe'ye özgü karakterler (Latince'de bulunmayan)
+_TR_ONLY_CHARS = set('çğıöşüÇĞİÖŞÜ')
+
+
+def _is_turkish_word(word: str) -> bool:
+    """Kelimede Türkçe'ye özgü karakter var mı?"""
+    return any(c in _TR_ONLY_CHARS for c in word)
+
+
+def _upper_word(word: str) -> str:
+    """Tek kelimeyi büyük harfe çevir (Türkçe veya İngilizce kurala göre)."""
+    if _is_turkish_word(word):
+        result = word.replace('i', 'İ').replace('ı', 'I')
+        result = result.replace('ç', 'Ç').replace('ğ', 'Ğ')
+        result = result.replace('ö', 'Ö').replace('ş', 'Ş').replace('ü', 'Ü')
+        return result.upper()
+    else:
+        upper = word.upper()
+        cleaned = []
+        for ch in upper:
+            if ch.isascii() or not ch.isalpha():
+                cleaned.append(ch)
+            else:
+                decomposed = unicodedata.normalize('NFD', ch)
+                base = ''.join(c for c in decomposed if unicodedata.category(c) != 'Mn')
+                cleaned.append(base if base else ch)
+        return ''.join(cleaned)
 
 
 def _to_upper_tr(text: str) -> str:
-    """Türkçe kurallara göre büyük harf. Diğer diller İngilizce kurala göre.
+    """Tüm metni büyük harfe çevir.
 
-    Türkçe: i→İ, ı→I, ş→Ş, ğ→Ğ, ö→Ö, ü→Ü, ç→Ç
-    Diğer diller: aksanlı harfler (é,è,ñ vb.) düz büyük harfe dönüşür.
+    Türkçe kelimeler Türkçe kuralla (i→İ, ı→I, vb.),
+    geri kalan her şey İngilizce kuralla (i→I, aksanlılar düz ASCII'ye).
     """
-    # Türkçe özel dönüşümler (önce lowercase 'i' ve 'ı')
-    result = text.replace('i', 'İ').replace('ı', 'I')
-    result = result.upper()
-    # Türkçe büyük harf kümesi (bu karakterler korunacak)
-    turkish_uppers = frozenset('ÇĞİÖŞÜ')
-    cleaned = []
-    for ch in result:
-        if ch in turkish_uppers:
-            cleaned.append(ch)
-        elif not ch.isascii() and ch.isalpha():
-            # NFD decompose → base karakter al (aksansız)
-            decomposed = unicodedata.normalize('NFD', ch)
-            base = decomposed[0] if decomposed else ch
-            cleaned.append(base.upper())
-        else:
-            cleaned.append(ch)
-    return ''.join(cleaned)
+    words = text.split(' ')
+    return ' '.join(_upper_word(w) for w in words)
 
 
 # 6 çıktı rolü (sıralı)
@@ -913,18 +926,11 @@ class ExportEngine:
         }
 
         filename = video_info.get("filename", "out")
-        output_name = _extract_output_name(filename)
+        output_name, film_id_parsed, film_name_tr_parsed = _extract_output_name(filename)
         if not output_name:
-            # Fallback: film_title veya dosya adı stem'i
-            film_title = (credits_data.get("film_title") or "").strip()
-            if film_title:
-                output_name = film_title.replace(" ", "_")
-            else:
-                output_name = Path(filename).stem
-        if ts is None:
-            ts = datetime.now().strftime("%d%m%y-%H%M")
+            output_name = Path(filename).stem
         jp = self.out / f"{output_name}_report.json"
-        tp = _safe_path(self.out / f"{output_name}_{ts}.txt")
+        tp = _safe_path(self.out / f"{output_name}_teknik.txt")
         tr_p = _safe_path(self.out / f"{output_name}_tscr.txt")
 
         with open(jp, "w", encoding="utf-8") as f:
@@ -932,28 +938,42 @@ class ExportEngine:
         self._write_report(report, tp, audio_result=audio_result)
         self._write_transcript(video_info, audio_result, tr_p)
         user_tp = _safe_path(self.out / f"{output_name}.txt")
-        self._write_user_report(report, user_tp, audio_result=audio_result)
+        self._write_user_report(
+            report, user_tp, audio_result=audio_result,
+            film_name_tr=film_name_tr_parsed, film_id=film_id_parsed,
+        )
         return str(jp), str(tp), str(tr_p), str(user_tp)
 
-    def _write_user_report(self, r, path, audio_result: dict | None = None):
+    def _write_user_report(self, r, path, audio_result: dict | None = None,
+                           film_name_tr: str = "", film_id: str = ""):
         """Kullanıcıya yönelik temiz, sabit formatlı TXT raporu yaz.
 
         Format:
             ================================================================
               FİLM / PROGRAM BİLGİLERİ
             ================================================================
-              FİLMİN ADI            :     ...
+              FİLMİN ADI            :     KADIN VE DENİZCİ
+              ...
+            ================================================================
+              OYUNCULAR
+            ================================================================
+              JANE WYMAN
               ...
             ================================================================
               YAPIM EKİBİ
             ================================================================
-              YÖNETMEN              AD SOYAD
+              YÖNETMEN              MICHAEL CURTIZ
               ...
+            ================================================================
+              ANAHTAR SÖZCÜKLER
+            ================================================================
+              JANE WYMAN, DENNIS MORGAN, ...
             ================================================================
               ÖZET
             ================================================================
               (SPOILER + ÖZET)
-              ...
+            ================================================================
+              OLUŞTURULMA: ...
             ================================================================
 
         Tüm metin BÜYÜK HARF (Türkçe kurallara göre).
@@ -964,33 +984,52 @@ class ExportEngine:
         cr = r["credits"]
         filename = fi.get("filename", "")
 
-        # ── FİLM / PROGRAM BİLGİLERİ ─────────────────────────────────
-        L.append(sep)
-        L.append("  FİLM / PROGRAM BİLGİLERİ")
-        L.append(sep)
+        # film_name_tr: dosya adından parse edilen Türkçe isim (generate'den gelir)
+        # Fallback: dosya adından yeniden çek
+        if not film_name_tr:
+            _, _parsed_id, film_name_tr = _extract_output_name(filename)
+            if not film_id:
+                film_id = _parsed_id
 
-        film_title = (
-            r.get("film_title") or cr.get("film_title") or
-            Path(filename).stem or ""
-        ).strip()
+        # original_title: credits/TMDB'den gelen yabancı dil ismi
         original_title = (
-            cr.get("original_title") or cr.get("original_name") or film_title
-        )
-        film_id = _extract_film_id(filename)
+            cr.get("original_title") or cr.get("original_name") or
+            cr.get("film_title") or film_name_tr
+        ).strip()
+
         year = str(cr.get("year") or "")
         resolution = fi.get("resolution", "")
         fps = fi.get("fps", 0)
         fps_str = f"{fps} FRAME" if fps else ""
         duration = fi.get("duration_human", "")
 
+        # ── FİLM / PROGRAM BİLGİLERİ ─────────────────────────────────
+        L.append(sep)
+        L.append("  FİLM / PROGRAM BİLGİLERİ")
+        L.append(sep)
+
         fw = 22  # field column width
-        L.append(f"  {'FİLMİN ADI':<{fw}}:     {film_title}")
+        L.append(f"  {'FİLMİN ADI':<{fw}}:     {film_name_tr}")
         L.append(f"  {'FİLMİN ORJİNAL ADI':<{fw}}:     {original_title}")
         L.append(f"  {'FİLMİN ID':<{fw}}:     {film_id}")
         L.append(f"  {'YAPIM TARİHİ':<{fw}}:     {year}")
         L.append(f"  {'ÇÖZÜNÜRLÜK':<{fw}}:     {resolution}")
         L.append(f"  {'FRAME':<{fw}}:     {fps_str}")
         L.append(f"  {'TOPLAM SÜRE':<{fw}}:     {duration}")
+
+        # ── OYUNCULAR ────────────────────────────────────────────────
+        L.append(sep)
+        L.append("  OYUNCULAR")
+        L.append(sep)
+
+        cast_list = cr.get("cast") or []
+        if cast_list:
+            for c in cast_list:
+                actor = (c.get("actor_name") or "").strip()
+                if actor:
+                    L.append(f"  {actor}")
+        else:
+            L.append("  YOK")
 
         # ── YAPIM EKİBİ ──────────────────────────────────────────────
         L.append(sep)
@@ -1001,7 +1040,7 @@ class ExportEngine:
         directors = self._director_names(cr)
 
         # Credits okundu mu? (herhangi bir veri varsa "okundu")
-        credits_read = bool(directors or crew_list or cr.get("cast"))
+        credits_read = bool(directors or crew_list or cast_list)
 
         role_map = _map_crew_to_roles(crew_list, directors)
         rw = 22  # role column width
@@ -1016,6 +1055,21 @@ class ExportEngine:
                 for name in names[1:]:
                     L.append(f"  {'':<{rw}}{name}")
 
+        # ── ANAHTAR SÖZCÜKLER ─────────────────────────────────────────
+        L.append(sep)
+        L.append("  ANAHTAR SÖZCÜKLER")
+        L.append(sep)
+
+        actor_names = [
+            (c.get("actor_name") or "").strip()
+            for c in cast_list
+            if (c.get("actor_name") or "").strip()
+        ]
+        if actor_names:
+            L.append(f"  {', '.join(actor_names)}")
+        else:
+            L.append("  YOK")
+
         # ── ÖZET ─────────────────────────────────────────────────────
         L.append(sep)
         L.append("  ÖZET")
@@ -1028,11 +1082,12 @@ class ExportEngine:
                 audio_result.get("ollama_summary")
             )
         if summary:
-            L.append("  (SPOILER + ÖZET)")
             L.append(f"  {summary}")
         else:
             L.append("  ÖZET OLUŞTURULAMADI.")
 
+        L.append(sep)
+        L.append(f"  OLUŞTURULMA: {r['generated_at']}")
         L.append(sep)
 
         # Tüm satırları BÜYÜK HARF'e çevir (Türkçe kurallara göre)
