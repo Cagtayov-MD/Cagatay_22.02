@@ -560,6 +560,7 @@ class PipelineRunner:
                                 transcript_text,
                                 api_key=gemini_api_key,
                                 log_cb=self._log,
+                                variant="en",
                             )
                             if summary:
                                 audio_result["summary"] = summary

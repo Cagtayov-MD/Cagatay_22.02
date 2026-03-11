@@ -131,11 +131,59 @@ def _upper_word(word: str) -> str:
 def _to_upper_tr(text: str) -> str:
     """Tüm metni büyük harfe çevir.
 
-    Türkçe kelimeler Türkçe kuralla (i→İ, ı→I, vb.),
-    geri kalan her şey İngilizce kuralla (i→I, aksanlılar düz ASCII'ye).
+    Varsayılan: Türkçe kuralla i→İ, ı→I dönüşümü (tüm metin için).
+    Türkçe'de bulunmayan aksanlı karakterler (é, è, ê vb.) → düz ASCII büyük harfe.
     """
-    words = text.split(' ')
-    return ' '.join(_upper_word(w) for w in words)
+    # Önce Türkçe i/ı dönüşümü (tüm metin için)
+    text = text.replace('i', 'İ').replace('ı', 'I')
+    # Sonra diğer Türkçe karakterler
+    text = text.replace('ç', 'Ç').replace('ğ', 'Ğ')
+    text = text.replace('ö', 'Ö').replace('ş', 'Ş').replace('ü', 'Ü')
+    # Genel upper() — kalan küçük harfler için
+    result = text.upper()
+    # Türkçe'de bulunmayan aksanlı karakterleri düz ASCII'ye çevir
+    cleaned = []
+    for ch in result:
+        if ch.isascii() or ch in 'ÇĞİÖŞÜ':
+            cleaned.append(ch)
+        elif ch.isalpha():
+            decomposed = unicodedata.normalize('NFD', ch)
+            base = ''.join(c for c in decomposed if unicodedata.category(c) != 'Mn')
+            cleaned.append(base if base else ch)
+        else:
+            cleaned.append(ch)
+    return ''.join(cleaned)
+
+
+def _wrap_max_words(text: str, max_words: int = 20, indent: str = "  ") -> str:
+    """Metni satır başına en fazla max_words kelimeyle böl.
+
+    20. kelimeden sonra noktalama işareti/rakam/işaret gelebilir,
+    ama 21. kelimenin başlangıcı alt satır olur.
+    Satırın başındaki boşluk korunur.
+    """
+    # Başlangıç boşluğunu koru
+    leading = len(text) - len(text.lstrip())
+    prefix = text[:leading]
+
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+
+    lines = []
+    i = 0
+    while i < len(words):
+        line_words = words[i:i + max_words]
+        line = ' '.join(line_words)
+        # 20. kelimeden sonra noktalama varsa, onu da bu satıra ekle
+        next_idx = i + max_words
+        while next_idx < len(words) and not words[next_idx][0].isalpha():
+            line += ' ' + words[next_idx]
+            next_idx += 1
+        lines.append(line)
+        i = next_idx
+
+    return prefix + ('\n' + indent).join(lines)
 
 
 # 6 çıktı rolü (sıralı)
@@ -977,23 +1025,23 @@ class ExportEngine:
               FİLMİN ADI            :     KADIN VE DENİZCİ
               ...
             ================================================================
-              OYUNCULAR
+              ÖZET
             ================================================================
-              JANE WYMAN
-              ...
-            ================================================================
-              YAPIM EKİBİ
-            ================================================================
-              YÖNETMEN              MICHAEL CURTIZ
-              ...
+              (SPOILER + ÖZET)
             ================================================================
               ANAHTAR SÖZCÜKLER
             ================================================================
               JANE WYMAN, DENNIS MORGAN, ...
-            ================================================================
-              ÖZET
-            ================================================================
-              (SPOILER + ÖZET)
+            ----
+              OYUNCULAR
+            ----
+              JANE WYMAN
+              ...
+            ------
+              CAST
+            ------
+              JANE WYMAN — HELEN WRIGHT
+              ...
             ================================================================
               OLUŞTURULMA: ...
             ================================================================
@@ -1002,6 +1050,8 @@ class ExportEngine:
         """
         L = []
         sep = "=" * 64
+        sep_short = "-" * 4
+        sep_long = "-" * 6
         fi = r["file_info"]
         cr = r["credits"]
         filename = fi.get("filename", "")
@@ -1042,43 +1092,35 @@ class ExportEngine:
         L.append(f"  {'FRAME':<{fw}}:     {fps_str}")
         L.append(f"  {'TOPLAM SÜRE':<{fw}}:     {duration}")
 
-        # ── OYUNCULAR ────────────────────────────────────────────────
-        L.append(sep)
-        L.append("  OYUNCULAR")
-        L.append(sep)
-
         cast_list = cr.get("cast") or []
-        if cast_list:
-            for c in cast_list:
-                actor = (c.get("actor_name") or "").strip()
-                if actor:
-                    L.append(f"  {actor}")
-        else:
-            L.append("  YOK")
 
-        # ── YAPIM EKİBİ ──────────────────────────────────────────────
+        # ── ÖZET ─────────────────────────────────────────────────────
         L.append(sep)
-        L.append("  YAPIM EKİBİ")
+        L.append("  ÖZET")
         L.append(sep)
-
-        crew_list = cr.get("technical_crew") or cr.get("crew") or []
-        directors = self._director_names(cr)
-
-        # Credits okundu mu? (herhangi bir veri varsa "okundu")
-        credits_read = bool(directors or crew_list or cast_list)
-
-        role_map = _map_crew_to_roles(crew_list, directors)
-        rw = 22  # role column width
-        for role in _OUTPUT_ROLES:
-            names = role_map.get(role, [])
-            if not credits_read:
-                L.append(f"  {role:<{rw}}OKUNMADI")
-            elif not names:
-                L.append(f"  {role:<{rw}}YOK")
+        summary = None
+        if audio_result and isinstance(audio_result, dict):
+            summary_raw = (
+                audio_result.get("summary") or
+                audio_result.get("summary_tr") or
+                audio_result.get("ollama_summary")
+            )
+            if isinstance(summary_raw, dict):
+                summary = summary_raw.get("en") or summary_raw.get("tr") or ""
             else:
-                L.append(f"  {role:<{rw}}{names[0]}")
-                for name in names[1:]:
-                    L.append(f"  {'':<{rw}}{name}")
+                summary = summary_raw
+
+        # Bölüm numaralı giriş ekle
+        episode_no = _extract_episode_from_id(film_id) if film_id else 'YOK'
+        if summary and episode_no not in ('YOK', '0000', '0', ''):
+            episode_int = episode_no.lstrip('0') or '0'
+            episode_prefix = f"{film_name_tr} dizisinin {episode_int}. bölümünde"
+            summary = episode_prefix + " " + summary
+
+        if summary:
+            L.append(f"  {summary}")
+        else:
+            L.append("  ÖZET OLUŞTURULAMADI.")
 
         # ── ANAHTAR SÖZCÜKLER ─────────────────────────────────────────
         L.append(sep)
@@ -1095,21 +1137,35 @@ class ExportEngine:
         else:
             L.append("  YOK")
 
-        # ── ÖZET ─────────────────────────────────────────────────────
-        L.append(sep)
-        L.append("  ÖZET")
-        L.append(sep)
-        summary = None
-        if audio_result and isinstance(audio_result, dict):
-            summary = (
-                audio_result.get("summary") or
-                audio_result.get("summary_tr") or
-                audio_result.get("ollama_summary")
-            )
-        if summary:
-            L.append(f"  {summary}")
+        # ── OYUNCULAR ────────────────────────────────────────────────
+        L.append(sep_short)
+        L.append("  OYUNCULAR")
+        L.append(sep_short)
+
+        if cast_list:
+            for c in cast_list:
+                actor = (c.get("actor_name") or "").strip()
+                if actor:
+                    L.append(f"  {actor}")
         else:
-            L.append("  ÖZET OLUŞTURULAMADI.")
+            L.append("  YOK")
+
+        # ── CAST ─────────────────────────────────────────────────────
+        L.append(sep_long)
+        L.append("  CAST")
+        L.append(sep_long)
+
+        if cast_list:
+            for c in cast_list:
+                actor = (c.get("actor_name") or "").strip()
+                char = (c.get("character_name") or "").strip()
+                if actor:
+                    if char:
+                        L.append(f"  {actor} \u2014 {char}")
+                    else:
+                        L.append(f"  {actor}")
+        else:
+            L.append("  YOK")
 
         L.append(sep)
         L.append(f"  OLUŞTURULMA: {r['generated_at']}")
@@ -1117,6 +1173,18 @@ class ExportEngine:
 
         # Tüm satırları BÜYÜK HARF'e çevir (Türkçe kurallara göre)
         L = [_to_upper_tr(line) for line in L]
+
+        # Satır başına max 20 kelime
+        L_wrapped = []
+        for line in L:
+            stripped = line.strip()
+            # Ayırıcı çizgi satırları (yalnızca = veya - içerenler) olduğu gibi bırakılır
+            is_separator = not stripped or stripped.strip('=') == '' or stripped.strip('-') == ''
+            if is_separator:
+                L_wrapped.append(line)
+            else:
+                L_wrapped.append(_wrap_max_words(line, max_words=20, indent="  "))
+        L = L_wrapped
 
         with open(path, "w", encoding="utf-8-sig") as f:
             f.write("\n".join(L))
