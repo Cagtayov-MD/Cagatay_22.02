@@ -1177,8 +1177,10 @@ class ExportEngine:
         # Satır başına max 20 kelime
         L_wrapped = []
         for line in L:
-            stripped = line.lstrip()
-            if stripped.startswith('=') or stripped.startswith('-'):
+            stripped = line.strip()
+            # Ayırıcı çizgi satırları (yalnızca = veya - içerenler) olduğu gibi bırakılır
+            is_separator = not stripped or stripped.strip('=') == '' or stripped.strip('-') == ''
+            if is_separator:
                 L_wrapped.append(line)
             else:
                 L_wrapped.append(_wrap_max_words(line, max_words=20, indent="  "))
