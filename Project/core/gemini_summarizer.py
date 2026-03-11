@@ -3,43 +3,16 @@ gemini_summarizer.py — Transcript'ten Türkçe özet çıkarma (Gemini 2.5 Fla
 
 summarize_transcript(transcript_text, api_key, log_cb) -> dict | None
   - Transcript metnini Gemini'ye gönderir
-  - İki varyant döndürür: {"tr": "..", "en": ".."}
-  - Hangisi daha iyi çalışırsa aktif bırakılır, diğeri devre dışı bırakılır
+  - İngilizce prompt ile Türkçe özet üretir: {"en": ".."}
 
 VARYANT SEÇİMİ:
-  - summarize_transcript(..., variant="tr")   -> sadece TR prompt
-  - summarize_transcript(..., variant="en")   -> sadece EN prompt
-  - summarize_transcript(..., variant="both") -> her ikisi (varsayılan, karşılaştırma için)
+  - summarize_transcript(..., variant="en") -> EN prompt (varsayılan)
 """
 
 import core.llm_provider as _llm
 
 _TIMEOUT_SEC = 90
 _MAX_CHARS = 120000
-
-# ─────────────────────────────────────────────────────────────────────────────
-# VARYANT TR — Tüm prompt Türkçe
-# ─────────────────────────────────────────────────────────────────────────────
-_SYSTEM_PROMPT_TR = (
-    "Sen bir video arşiv veri tabanı için çalışan analitik bir özetleyicisin. "
-    "Sana bir filmin veya videonun deşifre (ASR/transcript) metni verilecek.\n"
-    "Görevin: Metindeki hikayeyi analiz edip, doğrudan sonuca giden, "
-    "hikaye formatında (düz metin) net bir özet çıkarmaktır.\n\n"
-    "KESİN KURALLAR (BUNLARA KESİNLİKLE UYULACAK):\n\n"
-    "UZUNLUK: Ortalama 80, en fazla 100 kelime.\n\n"
-    "SIFIR MERAK UNSURU: Okuyucuyu filme çekmeye çalışmak KESİNLİKLE YASAKTIR. "
-    "\"Acaba ne olacak?\", \"Hayatın zorluklarıyla yüzleşir\", "
-    "\"Büyük bir karar beklemektedir\" gibi pazarlama ağzı ve klişe cümleler KULLANMA.\n\n"
-    "SPOILER (SONUÇ) ZORUNLUDUR: Hikayenin veya filmin en sonunu, "
-    "karakterlerin nihai kaderini EN NET haliyle metne ekleyeceksin. "
-    "(Örn: \"X işi bırakır, Y ölür, Z şehri terk eder.\")\n\n"
-    "FORMAT: Madde işareti (bullet point) kullanma. Akıcı, tek parça bir paragraf yaz.\n\n"
-    "ODAK: Yalnızca ana karakterin yaşadığı temel kırılma noktasına ve finalde verdiği "
-    "kesin karara odaklan. Yan hikayeleri tamamen görmezden gel.\n\n"
-    "KARİYERLER VE İSİMLER: Karakterleri tanıtma, kimseyi tanımla. "
-    "Olayları anlat, kişi künyesi yazma.\n\n"
-    "Türkçe yaz. Başlık kullanma, doğrudan hikayeyi anlatmaya başla."
-)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # VARYANT EN — İngilizce kurallar, Türkçe çıktı
@@ -88,7 +61,7 @@ def summarize_transcript(
     api_key: str = "",
     model: str = "gemini-2.5-flash",
     log_cb=None,
-    variant: str = "both",
+    variant: str = "en",
 ) -> dict | None:
     """Transcript metninden Gemini 2.5 Flash ile Türkçe özet üret.
 
@@ -97,14 +70,10 @@ def summarize_transcript(
         api_key: Gemini API anahtarı. Boşsa env'den okunur.
         model: Kullanılacak Gemini model adı.
         log_cb: İsteğe bağlı log callback fonksiyonu.
-        variant: "tr" | "en" | "both" (varsayılan: "both")
-                 "both" = her iki varyant çalışır, karşılaştırma için.
-                 Kazanan varyant belirlendikten sonra "tr" veya "en" seçilir.
+        variant: "en" (varsayılan) — İngilizce prompt ile Türkçe özet üretir.
 
     Returns:
-        variant="tr"   -> {"tr": "<özet>"}
         variant="en"   -> {"en": "<özet>"}
-        variant="both" -> {"tr": "<özet>", "en": "<özet>"}
         Hata durumunda None.
     """
     if not transcript_text or not transcript_text.strip():
@@ -114,30 +83,6 @@ def summarize_transcript(
     prompt = _FEW_SHOT + f"Transcript:\n{snippet}"
 
     results = {}
-
-    # ── Varyant TR ──────────────────────────────────────────────────────────
-    if variant in ("tr", "both"):
-        if log_cb:
-            log_cb("  [Summarizer] TR varyant özeti oluşturuluyor...")
-        try:
-            tr_result = _llm._gemini_generate(
-                prompt,
-                system=_SYSTEM_PROMPT_TR,
-                api_key=api_key or None,
-                model=model,
-                timeout=_TIMEOUT_SEC,
-                log_cb=log_cb,
-            )
-            if tr_result:
-                results["tr"] = tr_result
-                if log_cb:
-                    log_cb(f"  [Summarizer] TR özet alındı ({len(tr_result)} karakter)")
-            else:
-                if log_cb:
-                    log_cb("  [Summarizer] TR varyant boş yanıt döndü")
-        except Exception as e:
-            if log_cb:
-                log_cb(f"  [Summarizer] TR varyant API hatası: {e}")
 
     # ── Varyant EN ──────────────────────────────────────────────────────────
     if variant in ("en", "both"):
