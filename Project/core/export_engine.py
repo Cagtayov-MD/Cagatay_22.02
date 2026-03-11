@@ -109,8 +109,14 @@ def _is_turkish_word(word: str) -> bool:
 
 
 def _upper_word(word: str) -> str:
-    """Tek kelimeyi büyük harfe çevir (Türkçe veya İngilizce kurala göre)."""
-    if _is_turkish_word(word):
+    """Tek kelimeyi büyük harfe çevir (Türkçe veya İngilizce kurala göre).
+
+    Türkçe olarak kabul edilme kriterleri:
+    1. Kelimede Türkçe'ye özgü karakter var (ç, ğ, ı, ö, ş, ü, İ vb.)
+    2. VEYA kelime Türkçe isim veritabanında bulunuyor (_is_known_name)
+    Türkçe değilse İngilizce gramerle büyüt (i → I, aksanlı → ASCII).
+    """
+    if _is_turkish_word(word) or _is_known_name(word):
         result = word.replace('i', 'İ').replace('ı', 'I')
         result = result.replace('ç', 'Ç').replace('ğ', 'Ğ')
         result = result.replace('ö', 'Ö').replace('ş', 'Ş').replace('ü', 'Ü')
@@ -129,30 +135,17 @@ def _upper_word(word: str) -> str:
 
 
 def _to_upper_tr(text: str) -> str:
-    """Tüm metni büyük harfe çevir.
+    """Tüm metni büyük harfe çevir (kelime bazlı akıllı büyütme).
 
-    Varsayılan: Türkçe kuralla i→İ, ı→I dönüşümü (tüm metin için).
-    Türkçe'de bulunmayan aksanlı karakterler (é, è, ê vb.) → düz ASCII büyük harfe.
+    Her kelime için 'Türkçe isim mi?' kontrolü yapılır:
+    - Türkçe isimse  → Türkçe kural: i→İ, ı→I, ç→Ç, ğ→Ğ, ö→Ö, ş→Ş, ü→Ü
+    - Yabancı isimse → İngilizce kural: i→I, aksanlı karakterler → ASCII
+    Boşluk/format korunur.
     """
-    # Önce Türkçe i/ı dönüşümü (tüm metin için)
-    text = text.replace('i', 'İ').replace('ı', 'I')
-    # Sonra diğer Türkçe karakterler
-    text = text.replace('ç', 'Ç').replace('ğ', 'Ğ')
-    text = text.replace('ö', 'Ö').replace('ş', 'Ş').replace('ü', 'Ü')
-    # Genel upper() — kalan küçük harfler için
-    result = text.upper()
-    # Türkçe'de bulunmayan aksanlı karakterleri düz ASCII'ye çevir
-    cleaned = []
-    for ch in result:
-        if ch.isascii() or ch in 'ÇĞİÖŞÜ':
-            cleaned.append(ch)
-        elif ch.isalpha():
-            decomposed = unicodedata.normalize('NFD', ch)
-            base = ''.join(c for c in decomposed if unicodedata.category(c) != 'Mn')
-            cleaned.append(base if base else ch)
-        else:
-            cleaned.append(ch)
-    return ''.join(cleaned)
+    if not text:
+        return text
+    words = text.split(' ')
+    return ' '.join(_upper_word(w) if w else w for w in words)
 
 
 def _wrap_max_words(text: str, max_words: int = 20, indent: str = "  ") -> str:
