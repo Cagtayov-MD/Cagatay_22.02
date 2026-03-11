@@ -108,33 +108,72 @@ def _is_turkish_word(word: str) -> bool:
     return any(c in _TR_ONLY_CHARS for c in word)
 
 
-def _upper_word(word: str) -> str:
-    """Tek kelimeyi büyük harfe çevir (Türkçe veya İngilizce kurala göre).
+def _to_ascii_upper(word: str) -> str:
+    """Kelimeyi İngilizce/ASCII büyük harfe çevir."""
+    upper = word.upper()
+    cleaned = []
+    for ch in upper:
+        if ch.isascii() or not ch.isalpha():
+            cleaned.append(ch)
+        else:
+            decomposed = unicodedata.normalize('NFD', ch)
+            base = ''.join(c for c in decomposed if unicodedata.category(c) != 'Mn')
+            cleaned.append(base if base else ch)
+    return ''.join(cleaned)
 
-    Türkçe olarak kabul edilme kriterleri:
-    1. Kelimede Türkçe'ye özgü karakter var (ç, ğ, ı, ö, ş, ü, İ vb.)
-    2. VEYA kelime Türkçe isim veritabanında bulunuyor (_is_known_name)
-    Türkçe değilse İngilizce gramerle büyüt (i → I, aksanlı → ASCII).
+
+def _upper_word(word: str, protected_words: set[str] | None = None) -> str:
+    """Tek kelimeyi büyük harfe çevir.
+
+    Varsayılan davranış Türkçe büyük harf kuralıdır.
+    protected_words içinde olan kelimeler İngilizce/ASCII büyütülür.
     """
-    if _is_turkish_word(word) or _is_known_name(word):
-        result = word.replace('i', 'İ').replace('ı', 'I')
-        result = result.replace('ç', 'Ç').replace('ğ', 'Ğ')
-        result = result.replace('ö', 'Ö').replace('ş', 'Ş').replace('ü', 'Ü')
-        return result.upper()
-    else:
-        upper = word.upper()
-        cleaned = []
-        for ch in upper:
-            if ch.isascii() or not ch.isalpha():
-                cleaned.append(ch)
-            else:
-                decomposed = unicodedata.normalize('NFD', ch)
-                base = ''.join(c for c in decomposed if unicodedata.category(c) != 'Mn')
-                cleaned.append(base if base else ch)
-        return ''.join(cleaned)
+    raw = (word or "").strip()
+    token_for_check = raw.strip("'’`\"“”.,;:!?()[]{}")
+    base_for_check = token_for_check.split("'", 1)[0].split("’", 1)[0]
+
+    if protected_words and base_for_check.casefold() in protected_words:
+        return _to_ascii_upper(raw)
+
+    result = word.replace('i', 'İ').replace('ı', 'I')
+    result = result.replace('ç', 'Ç').replace('ğ', 'Ğ')
+    result = result.replace('ö', 'Ö').replace('ş', 'Ş').replace('ü', 'Ü')
+    return result.upper()
 
 
-def _to_upper_tr(text: str) -> str:
+def _collect_protected_words(*name_groups: list[str]) -> set[str]:
+    """Yabancı özel isimlerde ASCII korunacak kelimeleri topla."""
+    protected: set[str] = set()
+    for names in name_groups:
+        for full_name in names or []:
+            for token in re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿİıŞşĞğÜüÇçÖö]+", full_name or ""):
+                t = token.strip()
+                if not t:
+                    continue
+                # Türkçe isim/veri gibi görünenleri koruma listesine alma.
+                if _is_turkish_word(t) or _is_known_name(t):
+                    continue
+                protected.add(t.casefold())
+    return protected
+
+
+def _collect_summary_name_candidates(summary: str) -> set[str]:
+    """Özetten olası yabancı özel isim token'larını çıkar."""
+    if not summary:
+        return set()
+
+    candidates: set[str] = set()
+    for token in re.findall(r"\b[A-ZÇĞİÖŞÜ][A-Za-zÀ-ÖØ-öø-ÿİıŞşĞğÜüÇçÖö']*", summary):
+        base = token.split("'", 1)[0].strip()
+        if not base:
+            continue
+        if _is_turkish_word(base) or _is_known_name(base):
+            continue
+        candidates.add(base.casefold())
+    return candidates
+
+
+def _to_upper_tr(text: str, protected_words: set[str] | None = None) -> str:
     """Tüm metni büyük harfe çevir (kelime bazlı akıllı büyütme).
 
     Her kelime için 'Türkçe isim mi?' kontrolü yapılır:
@@ -145,7 +184,7 @@ def _to_upper_tr(text: str) -> str:
     if not text:
         return text
     words = text.split(' ')
-    return ' '.join(_upper_word(w) if w else w for w in words)
+    return ' '.join(_upper_word(w, protected_words=protected_words) if w else w for w in words)
 
 
 def _wrap_max_words(text: str, max_words: int = 20, indent: str = "  ") -> str:
@@ -1031,9 +1070,9 @@ class ExportEngine:
               JANE WYMAN
               ...
             ------
-              CAST
+              YAPIM EKİBİ
             ------
-              JANE WYMAN — HELEN WRIGHT
+              YÖNETMEN: PETER WEIR
               ...
             ================================================================
               OLUŞTURULMA: ...
@@ -1086,6 +1125,20 @@ class ExportEngine:
         L.append(f"  {'TOPLAM SÜRE':<{fw}}:     {duration}")
 
         cast_list = cr.get("cast") or []
+        actor_names = [
+            (c.get("actor_name") or "").strip()
+            for c in cast_list
+            if (c.get("actor_name") or "").strip()
+        ]
+        director_names = self._director_names(cr)
+        crew_roles = _map_crew_to_roles(cr.get("technical_crew") or cr.get("crew") or [], director_names)
+
+        # Özel isimler: Türkçe olmayan adlar ASCII/İngilizce karakterle korunur.
+        protected_words = _collect_protected_words(
+            actor_names,
+            director_names,
+            [name for names in crew_roles.values() for name in names],
+        )
 
         # ── ÖZET ─────────────────────────────────────────────────────
         L.append(sep)
@@ -1111,6 +1164,7 @@ class ExportEngine:
             summary = episode_prefix + " " + summary
 
         if summary:
+            protected_words.update(_collect_summary_name_candidates(summary))
             L.append(f"  {summary}")
         else:
             L.append("  ÖZET OLUŞTURULAMADI.")
@@ -1120,11 +1174,6 @@ class ExportEngine:
         L.append("  ANAHTAR SÖZCÜKLER")
         L.append(sep)
 
-        actor_names = [
-            (c.get("actor_name") or "").strip()
-            for c in cast_list
-            if (c.get("actor_name") or "").strip()
-        ]
         if actor_names:
             L.append(f"  {' ; '.join(actor_names)}")
         else:
@@ -1143,20 +1192,17 @@ class ExportEngine:
         else:
             L.append("  YOK")
 
-        # ── CAST ─────────────────────────────────────────────────────
+        # ── YAPIM EKİBİ ───────────────────────────────────────────────
         L.append(sep_long)
-        L.append("  CAST")
+        L.append("  YAPIM EKİBİ")
         L.append(sep_long)
 
-        if cast_list:
-            for c in cast_list:
-                actor = (c.get("actor_name") or "").strip()
-                char = (c.get("character_name") or "").strip()
-                if actor:
-                    if char:
-                        L.append(f"  {actor} \u2014 {char}")
-                    else:
-                        L.append(f"  {actor}")
+        has_crew_output = any(crew_roles.get(role) for role in _OUTPUT_ROLES)
+        if has_crew_output:
+            for role in _OUTPUT_ROLES:
+                names = crew_roles.get(role) or []
+                for name in names:
+                    L.append(f"  {role:<20}: {name}")
         else:
             L.append("  YOK")
 
@@ -1165,7 +1211,7 @@ class ExportEngine:
         L.append(sep)
 
         # Tüm satırları BÜYÜK HARF'e çevir (Türkçe kurallara göre)
-        L = [_to_upper_tr(line) for line in L]
+        L = [_to_upper_tr(line, protected_words=protected_words) for line in L]
 
         # Satır başına max 20 kelime
         L_wrapped = []
