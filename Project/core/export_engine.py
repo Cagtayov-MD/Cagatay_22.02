@@ -187,6 +187,90 @@ def _to_upper_tr(text: str, protected_words: set[str] | None = None) -> str:
     return ' '.join(_upper_word(w, protected_words=protected_words) if w else w for w in words)
 
 
+def _upper_word_turkish(word: str) -> str:
+    """Kelimeyi Türkçe kural ile büyüt: i→İ, ı→I, ç→Ç, ğ→Ğ, ö→Ö, ş→Ş, ü→Ü."""
+    result = word.replace('i', 'İ').replace('ı', 'I')
+    result = result.replace('ç', 'Ç').replace('ğ', 'Ğ')
+    result = result.replace('ö', 'Ö').replace('ş', 'Ş').replace('ü', 'Ü')
+    return result.upper()
+
+
+def _upper_word_english(word: str) -> str:
+    """Kelimeyi İngilizce kural ile büyüt: aksanlı karakterler → ASCII."""
+    upper = word.upper()
+    cleaned = []
+    for ch in upper:
+        if ch.isascii() or not ch.isalpha():
+            cleaned.append(ch)
+        else:
+            decomposed = unicodedata.normalize('NFD', ch)
+            base = ''.join(c for c in decomposed if unicodedata.category(c) != 'Mn')
+            cleaned.append(base if base else ch)
+    return ''.join(cleaned)
+
+
+def _collect_foreign_nouns(cast_list: list) -> set:
+    """cast_list'ten yabancı özel isim token'larını topla.
+
+    Her actor_name ve character_name token'ı kontrol edilir:
+    - _is_known_name() True ise → Türkçe isim, atla
+    - Yalnızca ASCII harflerden oluşuyorsa → yabancı özel isim olarak kaydet
+
+    Apostroflu ekler temizlenir: "KAREN'IN" → "KAREN"
+
+    Returns:
+        Yabancı özel isimlerin BÜYÜK HARF setini döndürür.
+    """
+    foreign: set[str] = set()
+    for entry in cast_list:
+        for field in ('actor_name', 'character_name'):
+            raw = (entry.get(field) or '').strip()
+            if not raw:
+                continue
+            for token in raw.split():
+                # Apostroflu eki temizle: "Karen'in" → "Karen"
+                base = re.split(r"['']", token)[0]
+                base = re.sub(r"[^a-zA-ZçğıöşüÇĞİÖŞÜ]", "", base)
+                if not base:
+                    continue
+                if _is_known_name(base):
+                    continue
+                # Yalnızca ASCII harfler → yabancı özel isim
+                if all(ch.isascii() for ch in base):
+                    foreign.add(base.upper())
+    return foreign
+
+
+def _to_upper_tr_ozet(text: str, foreign_nouns: set) -> str:
+    """Özet metnini büyüt: varsayılan Türkçe kural, yabancı isimler İngilizce kural.
+
+    LLM çıktısında Türkçe kelimeler bazen ASCII harflerle yazılır (örn. "kariyer"
+    yerine "kariyer"). Bu fonksiyon TÜM kelimeleri varsayılan olarak Türkçe kuralıyla
+    büyütür. Yalnızca cast_list'ten tespit edilen yabancı özel isimler (KAREN, CHRIS
+    vb.) İngilizce kural alır.
+
+    Args:
+        text:          Özet satırı.
+        foreign_nouns: _collect_foreign_nouns() çıktısı (büyük harf set).
+    """
+    if not text:
+        return text
+    words = text.split(' ')
+    result = []
+    for word in words:
+        if not word:
+            result.append(word)
+            continue
+        # Apostroflu eki temizleyerek kök kelimeyi bul: "Karen'in" → "KAREN"
+        base = re.split(r"['']", word)[0]
+        base_upper = re.sub(r"[^a-zA-ZçğıöşüÇĞİÖŞÜ]", "", base).upper()
+        if base_upper in foreign_nouns:
+            result.append(_upper_word_english(word))
+        else:
+            result.append(_upper_word_turkish(word))
+    return ' '.join(result)
+
+
 def _wrap_max_words(text: str, max_words: int = 20, indent: str = "  ") -> str:
     """Metni satır başına en fazla max_words kelimeyle böl.
 
@@ -1140,6 +1224,9 @@ class ExportEngine:
             [name for names in crew_roles.values() for name in names],
         )
 
+        # Yabancı özel isimleri özet işleme için topla
+        foreign_nouns = _collect_foreign_nouns(cast_list)
+
         # ── ÖZET ─────────────────────────────────────────────────────
         L.append(sep)
         L.append("  ÖZET")
@@ -1163,11 +1250,14 @@ class ExportEngine:
             episode_prefix = f"{film_name_tr} dizisinin {episode_int}. bölümünde"
             summary = episode_prefix + " " + summary
 
+        # Özet satırlarının başlangıç indeksini işaretle (farklı uppercase kuralı)
+        ozet_content_start = len(L)
         if summary:
             protected_words.update(_collect_summary_name_candidates(summary))
             L.append(f"  {summary}")
         else:
             L.append("  ÖZET OLUŞTURULAMADI.")
+        ozet_content_end = len(L)
 
         # ── ANAHTAR SÖZCÜKLER ─────────────────────────────────────────
         L.append(sep)
@@ -1180,9 +1270,9 @@ class ExportEngine:
             L.append("  YOK")
 
         # ── OYUNCULAR ────────────────────────────────────────────────
-        L.append(sep_short)
+        L.append(sep)
         L.append("  OYUNCULAR")
-        L.append(sep_short)
+        L.append(sep)
 
         if cast_list:
             for c in cast_list:
@@ -1192,26 +1282,56 @@ class ExportEngine:
         else:
             L.append("  YOK")
 
-        # ── YAPIM EKİBİ ───────────────────────────────────────────────
-        L.append(sep_long)
+        # ── YAPIM EKİBİ ──────────────────────────────────────────────
+        L.append(sep)
         L.append("  YAPIM EKİBİ")
-        L.append(sep_long)
+        L.append(sep)
 
-        has_crew_output = any(crew_roles.get(role) for role in _OUTPUT_ROLES)
-        if has_crew_output:
-            for role in _OUTPUT_ROLES:
-                names = crew_roles.get(role) or []
-                for name in names:
-                    L.append(f"  {role:<20}: {name}")
-        else:
+        role_col = 20  # rol sütunu genişliği
+        has_crew = False
+
+        # Yönetmen(ler)
+        if cr.get("directors"):
+            dir_names = self._director_names(cr)
+            if dir_names:
+                has_crew = True
+                for i, name in enumerate(dir_names):
+                    role_label = "YÖNETMEN" if i == 0 else ""
+                    L.append(f"  {role_label:<{role_col}}{name}")
+
+        # Teknik ekip — role bazlı grupla
+        crew_list = cr.get("technical_crew") or cr.get("crew") or []
+        if crew_list:
+            has_crew = True
+            # Rol sırasını koru; aynı role sahip ardışık girişleri grupla
+            current_role = None
+            for t in crew_list:
+                role_txt = (t.get('role_tr') or t.get('role') or t.get('job') or '').strip()
+                name_txt = (t.get('name') or '').strip()
+                if not name_txt:
+                    continue
+                if role_txt != current_role:
+                    current_role = role_txt
+                    L.append(f"  {role_txt:<{role_col}}{name_txt}")
+                else:
+                    L.append(f"  {'':<{role_col}}{name_txt}")
+
+        if not has_crew:
             L.append("  YOK")
 
         L.append(sep)
         L.append(f"  OLUŞTURULMA: {r['generated_at']}")
         L.append(sep)
 
-        # Tüm satırları BÜYÜK HARF'e çevir (Türkçe kurallara göre)
-        L = [_to_upper_tr(line, protected_words=protected_words) for line in L]
+        # Tüm satırları BÜYÜK HARF'e çevir:
+        # - Özet satırları: Türkçe kural varsayılan, yabancı isimler İngilizce kural
+        # - Diğer satırlar: mevcut kelime bazlı akıllı büyütme
+        L = [
+            _to_upper_tr_ozet(line, foreign_nouns)
+            if ozet_content_start <= i < ozet_content_end
+            else _to_upper_tr(line)
+            for i, line in enumerate(L)
+        ]
 
         # Satır başına max 20 kelime
         L_wrapped = []
