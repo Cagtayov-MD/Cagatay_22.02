@@ -1,0 +1,38 @@
+name: VİTOS Pipeline - Headless Test
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:   # Manuel tetikleme butonu da olsun
+
+jobs:
+  run-pipeline:
+    runs-on: self-hosted   # İş yeri PC'sindeki runner
+
+    steps:
+
+      - name: Repo'yu çek
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pipeline'ı çalıştır
+        shell: cmd
+        env:
+          HEADLESS: "1"
+          SCOPE: "video+audio"
+          FIRST_MIN: "1.0"
+          LAST_MIN: "1.0"
+        run: |
+          cd F:\REPO_GitHub\Cagatay_22.02
+          python main.py D:\test.mp4
+
+      - name: Çıktıları commit et ve push et
+        shell: cmd
+        run: |
+          cd F:\REPO_GitHub\Cagatay_22.02
+          git config user.name "vitos-runner"
+          git config user.email "vitos@runner.local"
+          git add test/
+          git diff --cached --quiet || git commit -m "test/ output guncellendi [skip ci]"
+          git push
