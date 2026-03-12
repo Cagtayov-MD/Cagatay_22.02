@@ -25,7 +25,7 @@ jobs:
           LAST_MIN: "1.0"
         run: |
           cd F:\REPO_GitHub\Cagatay_22.02
-          python main.py D:\test.mp4
+          C:\Users\cagataykonuralp\AppData\Local\Programs\Python\Python310\python.exe main.py D:\test.mp4
 
       - name: Çıktıları commit et ve push et
         shell: cmd
