@@ -3,11 +3,11 @@ name: VİTOS Pipeline - Headless Test
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:   # Manuel tetikleme butonu da olsun
+  workflow_dispatch:
 
 jobs:
   run-pipeline:
-    runs-on: self-hosted   # İş yeri PC'sindeki runner
+    runs-on: self-hosted
 
     steps:
 
@@ -17,22 +17,39 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pipeline'ı çalıştır
-        shell: cmd
+        shell: pwsh
         env:
           HEADLESS: "1"
           SCOPE: "video+audio"
           FIRST_MIN: "1.0"
           LAST_MIN: "1.0"
         run: |
-          cd F:\REPO_GitHub\Cagatay_22.02
-          C:\Users\cagataykonuralp\AppData\Local\Programs\Python\Python310\python.exe main.py D:\test.mp4
+          $ErrorActionPreference = "Stop"
+
+          # Audio bridge env variable'ları
+          $repoRoot = "F:\REPO_GitHub\Cagatay_22.02\Project"
+          $env:AUDIO_WORKER_SCRIPT = Join-Path $repoRoot "core\audio_worker.py"
+          $env:VENV_AUDIO_PYTHON   = "F:\Root\venv_audio\Scripts\python.exe"
+
+          # Ana venv'i aktive et
+          . "F:\Root\venv\Scripts\Activate.ps1"
+
+          # Proje klasörüne gir ve çalıştır
+          Set-Location "F:\REPO_GitHub\Cagatay_22.02\Project"
+          python main.py D:\test.mp4
 
       - name: Çıktıları commit et ve push et
-        shell: cmd
+        shell: pwsh
         run: |
-          cd F:\REPO_GitHub\Cagatay_22.02
+          $ErrorActionPreference = "Stop"
+          Set-Location "F:\REPO_GitHub\Cagatay_22.02"
           git config user.name "vitos-runner"
           git config user.email "vitos@runner.local"
           git add test/
-          git diff --cached --quiet || git commit -m "test/ output guncellendi [skip ci]"
-          git push
+          $diff = git diff --cached --name-only
+          if ($diff) {
+            git commit -m "test/ output guncellendi [skip ci]"
+            git push
+          } else {
+            Write-Host "Yeni cikti yok, commit atlandi."
+          }
