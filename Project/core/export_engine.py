@@ -127,12 +127,28 @@ def _upper_word(word: str, protected_words: set[str] | None = None) -> str:
 
     Varsayılan davranış Türkçe büyük harf kuralıdır.
     protected_words içinde olan kelimeler İngilizce/ASCII büyütülür.
+
+    Ek kural: Türkçe'ye özgü karakter içermeyen, saf ASCII alfabetik
+    ve isim veritabanında bulunmayan kelimeler yabancı isim sayılır
+    ve İngilizce/ASCII kuralla büyütülür (i→I, é→E vb.).
+    Örnek:  collins → COLLINS  (İngilizce, i→I)
+            irfan   → İRFAN    (Türkçe, DB'de var, i→İ)
+            ivan    → IVAN     (Yabancı, DB'de yok, i→I)
     """
     raw = (word or "").strip()
-    token_for_check = raw.strip("'’`\"“”.,;:!?()[]{}")
+    token_for_check = raw.strip("''`\""".,;:!?()[]{}")
     base_for_check = token_for_check.split("'", 1)[0].split("’", 1)[0]
 
     if protected_words and base_for_check.casefold() in protected_words:
+        return _to_ascii_upper(raw)
+
+    # Yabancı isim tespiti:
+    # Türkçe'ye özgü karakter YOK + saf ASCII harf + isim DB'de YOK → İngilizce kural
+    if (base_for_check
+            and not _is_turkish_word(raw)
+            and base_for_check.isascii()
+            and base_for_check.isalpha()
+            and not _is_known_name(base_for_check)):
         return _to_ascii_upper(raw)
 
     result = word.replace('i', 'İ').replace('ı', 'I')
@@ -1283,6 +1299,10 @@ class ExportEngine:
             L.append("  YOK")
 
         # ── YAPIM EKİBİ ──────────────────────────────────────────────
+        # Sadece 6 sabit rol gösterilir (_OUTPUT_ROLES sırasıyla).
+        # Aynı roldeki birden fazla isim alt alta hizalanır:
+        #   YAPIMCI             AHMET
+        #                       MEHMET
         L.append(sep)
         L.append("  YAPIM EKİBİ")
         L.append(sep)
@@ -1290,31 +1310,14 @@ class ExportEngine:
         role_col = 20  # rol sütunu genişliği
         has_crew = False
 
-        # Yönetmen(ler)
-        if cr.get("directors"):
-            dir_names = self._director_names(cr)
-            if dir_names:
-                has_crew = True
-                for i, name in enumerate(dir_names):
-                    role_label = "YÖNETMEN" if i == 0 else ""
-                    L.append(f"  {role_label:<{role_col}}{name}")
-
-        # Teknik ekip — role bazlı grupla
-        crew_list = cr.get("technical_crew") or cr.get("crew") or []
-        if crew_list:
+        for role_name in _OUTPUT_ROLES:
+            names = crew_roles.get(role_name, [])
+            if not names:
+                continue
             has_crew = True
-            # Rol sırasını koru; aynı role sahip ardışık girişleri grupla
-            current_role = None
-            for t in crew_list:
-                role_txt = (t.get('role_tr') or t.get('role') or t.get('job') or '').strip()
-                name_txt = (t.get('name') or '').strip()
-                if not name_txt:
-                    continue
-                if role_txt != current_role:
-                    current_role = role_txt
-                    L.append(f"  {role_txt:<{role_col}}{name_txt}")
-                else:
-                    L.append(f"  {'':<{role_col}}{name_txt}")
+            for i, name in enumerate(names):
+                role_label = role_name if i == 0 else ""
+                L.append(f"  {role_label:<{role_col}}{name}")
 
         if not has_crew:
             L.append("  YOK")
