@@ -27,34 +27,60 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          # Audio bridge env variable'ları
           $repoRoot = "F:\REPO_GitHub\Cagatay_22.02\Project"
           $env:AUDIO_WORKER_SCRIPT = Join-Path $repoRoot "core\audio_worker.py"
           $env:VENV_AUDIO_PYTHON   = "F:\Root\venv_audio\Scripts\python.exe"
 
-          # Ana venv'i aktive et
           . "F:\Root\venv\Scripts\Activate.ps1"
 
-          # Proje klasörüne gir ve çalıştır
           Set-Location "F:\REPO_GitHub\Cagatay_22.02\Project"
           python main.py D:\test.mp4
 
-      - name: Çıktıları commit et ve push et
+      - name: Kullanıcı raporunu F:\Sonuclar'a kopyala
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          # Safe directory iznini ver
-          git config --global --add safe.directory F:/REPO_GitHub/Cagatay_22.02
+          # En son oluşturulan klasörü bul (D:\DATABASE\FilmDizi altında)
+          $latest = Get-ChildItem "D:\DATABASE\FilmDizi" -Directory | 
+                    Sort-Object LastWriteTime -Descending | 
+                    Select-Object -First 1
 
+          if (-not $latest) { throw "D:\DATABASE\FilmDizi altında klasör bulunamadı" }
+
+          # Kullanıcı raporunu bul (.txt uzantılı, _teknik içermeyen)
+          $rapor = Get-ChildItem $latest.FullName -Filter "*.txt" | 
+                   Where-Object { $_.Name -notlike "*teknik*" -and $_.Name -notlike "*tscr*" } |
+                   Select-Object -First 1
+
+          if (-not $rapor) { throw "Kullanıcı raporu bulunamadı: $($latest.FullName)" }
+
+          # F:\Sonuclar klasörünü oluştur (yoksa)
+          New-Item -ItemType Directory -Force "F:\Sonuclar" | Out-Null
+
+          # Kopyala
+          Copy-Item $rapor.FullName "F:\Sonuclar\$($rapor.Name)" -Force
+          Write-Host "Rapor kopyalandı: F:\Sonuclar\$($rapor.Name)"
+
+          # GitHub test/ klasörüne de kopyala
+          New-Item -ItemType Directory -Force "F:\REPO_GitHub\Cagatay_22.02\test" | Out-Null
+          Copy-Item $rapor.FullName "F:\REPO_GitHub\Cagatay_22.02\test\$($rapor.Name)" -Force
+          Write-Host "GitHub test/ klasörüne kopyalandı"
+
+      - name: GitHub'a push et
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          git config --global --add safe.directory F:/REPO_GitHub/Cagatay_22.02
           Set-Location "F:\REPO_GitHub\Cagatay_22.02"
           git config user.name "vitos-runner"
           git config user.email "vitos@runner.local"
           git add test/
           $diff = git status --porcelain
           if ($diff) {
-            git commit -m "test/ output guncellendi [skip ci]"
+            git commit -m "test/ kullanici raporu guncellendi [skip ci]"
             git push
           } else {
-            Write-Host "Yeni cikti yok, commit atlandi."
+            Write-Host "Yeni rapor yok, commit atlandi."
           }
