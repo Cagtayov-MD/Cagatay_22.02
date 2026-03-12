@@ -1299,10 +1299,6 @@ class ExportEngine:
             L.append("  YOK")
 
         # ── YAPIM EKİBİ ──────────────────────────────────────────────
-        # Sadece 6 sabit rol gösterilir (_OUTPUT_ROLES sırasıyla).
-        # Aynı roldeki birden fazla isim alt alta hizalanır:
-        #   YAPIMCI             AHMET
-        #                       MEHMET
         L.append(sep)
         L.append("  YAPIM EKİBİ")
         L.append(sep)
@@ -1310,13 +1306,15 @@ class ExportEngine:
         role_col = 20  # rol sütunu genişliği
         has_crew = False
 
-        for role_name in _OUTPUT_ROLES:
-            names = crew_roles.get(role_name, [])
+        # Sadece 6 belirli rol gösterilir (_OUTPUT_ROLES sırasına göre)
+        # crew_roles: her output rolü → isimler listesi
+        for output_role in _OUTPUT_ROLES:
+            names = crew_roles.get(output_role) or []
             if not names:
                 continue
             has_crew = True
             for i, name in enumerate(names):
-                role_label = role_name if i == 0 else ""
+                role_label = output_role if i == 0 else ""
                 L.append(f"  {role_label:<{role_col}}{name}")
 
         if not has_crew:
