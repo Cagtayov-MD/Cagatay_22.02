@@ -23,6 +23,7 @@ jobs:
           SCOPE: "video+audio"
           FIRST_MIN: "1.0"
           LAST_MIN: "1.0"
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           $ErrorActionPreference = "Stop"
 
@@ -42,11 +43,15 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+
+          # Safe directory iznini ver
+          git config --global --add safe.directory F:/REPO_GitHub/Cagatay_22.02
+
           Set-Location "F:\REPO_GitHub\Cagatay_22.02"
           git config user.name "vitos-runner"
           git config user.email "vitos@runner.local"
           git add test/
-          $diff = git diff --cached --name-only
+          $diff = git status --porcelain
           if ($diff) {
             git commit -m "test/ output guncellendi [skip ci]"
             git push
