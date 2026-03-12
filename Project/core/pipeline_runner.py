@@ -553,27 +553,21 @@ class PipelineRunner:
                     transcript_text = str(raw_transcript) if raw_transcript else ""
                 if transcript_text.strip():
                     gemini_api_key = get_gemini_api_key()
-                    try:
-                        from core.compare_summarizers import compare_summaries, format_comparison
-                        cmp_result = compare_summaries(
-                            transcript_text,
-                            gemini_api_key=gemini_api_key or "",
-                            gemini_model=self.config.get("gemini_model", "gemini-2.5-flash"),
-                            ollama_url=self.config.get("ollama_url", "http://localhost:11434"),
-                            ollama_model=self.config.get("ollama_model", "qwen2.5:7b"),
-                            log_cb=self._log,
-                        )
-                        # Gemini özeti geriye dönük uyumluluk için "summary" anahtarında sakla
-                        if cmp_result.get("gemini"):
-                            audio_result["summary"] = {"en": cmp_result["gemini"]}
-                        elif cmp_result.get("local"):
-                            # Gemini yoksa local modeli yedek olarak kullan
-                            audio_result["summary"] = {"en": cmp_result["local"]}
-                        # Tam karşılaştırma sonucunu ayrı anahtarda sakla
-                        audio_result["summary_comparison"] = cmp_result
-                        self._log("\n" + format_comparison(cmp_result))
-                    except Exception as _sum_e:
-                        self._log(f"  [Summarizer] Özet hatası (pipeline etkilenmedi): {_sum_e}")
+                    if gemini_api_key:
+                        try:
+                            from core.gemini_summarizer import summarize_transcript
+                            summary = summarize_transcript(
+                                transcript_text,
+                                api_key=gemini_api_key,
+                                log_cb=self._log,
+                                variant="en",
+                            )
+                            if summary:
+                                audio_result["summary"] = summary
+                        except Exception as _sum_e:
+                            self._log(f"  [Summarizer] Özet hatası (pipeline etkilenmedi): {_sum_e}")
+                    else:
+                        self._log("  [Summarizer] Gemini API key yok — özet atlanıyor")
 
             # ══ EXPORT ════════════════════════════════════════════
             self._log(f"\n[EXPORT]")
