@@ -219,3 +219,9 @@ Project/data/email_counter.txt
 *.pyc
 *.pyc
 >>>>>>> Stashed changes
+
+**/__pycache__/
+**/*.pyc
+*.lnk
+test/*.mp4
+test/*.wav
