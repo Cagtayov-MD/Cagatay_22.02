@@ -230,7 +230,7 @@ class MainWindow(QMainWindow):
         icerik_row = QHBoxLayout()
         icerik_row.addWidget(QLabel("İçerik:"))
         self.content_combo = QComboBox()
-        self.content_combo.addItems(["FilmDizi", "Spor", "StudyoProgram", "MuzikProgram", "KisaHaber"])
+        self.content_combo.addItems(["FilmDizi", "FilmDiziQwen", "Spor", "StudyoProgram", "MuzikProgram", "KisaHaber"])
         self.content_combo.currentTextChanged.connect(self._on_profile_changed)
         icerik_row.addWidget(self.content_combo)
         lay.addLayout(icerik_row)
