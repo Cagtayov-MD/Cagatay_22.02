@@ -102,6 +102,64 @@ def _extract_episode_from_id(film_id: str) -> str:
 # Türkçe'ye özgü karakterler (Latince'de bulunmayan)
 _TR_ONLY_CHARS = set('çğıöşüÇĞİÖŞÜ')
 
+# Saf ASCII olup asla özel isim olmayan yaygın Türkçe fonksiyonel kelimeler.
+# Bu kelimeler "saf ASCII + DB'de yok → yabancı" heuristic'inden muaftır.
+# NOT: Türkçe'ye özgü karakter içeren kelimeler (için, güzel, öyle vb.)
+# zaten _is_turkish_word() ile Türkçe olarak tanınır — burada sadece
+# saf ASCII olan ve "i" harfi içeren kelimeler kritiktir (i→İ vs i→I farkı).
+# "i" İÇERMEYEN saf ASCII kelimeler bu sette olmak ZORUNDA DEĞİL —
+# onlar zaten Türkçe/İngilizce kuralda aynı sonucu verir.
+_TR_SAFEGUARD_ASCII = frozenset({
+    # ── Bağlaçlar, edatlar, ekler ──
+    "ile", "ise", "bile", "mi", "ki", "de", "da",
+    "gibi", "diye", "beri", "iken", "hani",
+    # ── Zamirler, belirleyiciler ──
+    "bir", "biri", "birisi", "biz", "siz", "kim", "kimi", "kimin",
+    "ni", "in", "nin", "sin", "din",
+    "kendi", "kendini", "kendisi", "kendine",
+    "birbirine", "birine", "birinin", "birden",
+    "herkesin", "kimsenin", "hikim",
+    # ── Sayılar, zarflar, sıfatlar ──
+    "ilk", "iki", "iyi", "bin",
+    "peki", "yine", "dahi", "biraz", "hissi",
+    "ileri", "geri", "derin",
+    # ── Yaygın fiil kökleri ve çekimleri (saf ASCII + i içeren) ──
+    # -di geçmiş zaman
+    "gitti", "geldi", "bildi", "verdi", "istedi", "giydi",
+    "dedi", "yedi", "kesti", "girdi", "bitti",
+    # -ip zarf-fiil
+    "gidip", "gelip", "bilip", "verip", "isteyip",
+    # -iyor şimdiki zaman
+    "gidiyor", "geliyor", "biliyor", "veriyor", "istiyor",
+    "diyor", "yiyor",
+    # -ir geniş zaman
+    "gelir", "gider", "bilir", "verir", "ister",
+    "edir", "yaratir",
+    # -en/-an sıfat-fiil
+    "giden", "gelen", "bilen", "veren", "isteyen",
+    "eden", "dinen",
+    # -erek zarf-fiil
+    "giderek", "gelerek", "bilerek", "vererek", "isteyerek",
+    # -arak zarf-fiil (a içerir ama bazıları i de içerir)
+    "birlikte",
+    # Diğer yaygın çekimler
+    "gidecek", "gelecek", "bilecek", "verecek", "isteyecek",
+    "gidebilir", "gelebilir", "bilebilir", "verebilir",
+    "gitsin", "gelsin", "bilsin", "versin", "istesin",
+    "gitse", "gelse", "bilse", "verse", "istese",
+    # ── Yaygın isimler/kavramlar (asla özel isim olmayan) ──
+    "insan", "insanlar",
+    "hayatini", "evini", "isini", "yerini", "elini",
+    "gizli", "gizlice", "hisseder",
+    "ilgili", "ilgisi", "ilgi",
+    "ziyaret", "siyasi", "siyaset",
+    "hitap", "dikkat", "niyet", "hisler",
+    "fikir", "fikri", "fikrin",
+    "bilinir", "belirsiz", "kesin",
+    "kisinin", "kisiyi", "kisiye",
+    "metin", "yetkin",
+})
+
 
 def _is_turkish_word(word: str) -> bool:
     """Kelimede Türkçe'ye özgü karakter var mı?"""
@@ -125,32 +183,29 @@ def _to_ascii_upper(word: str) -> str:
 def _upper_word(word: str, protected_words: set[str] | None = None) -> str:
     """Tek kelimeyi büyük harfe çevir.
 
-    Varsayılan davranış Türkçe büyük harf kuralıdır.
-    protected_words içinde olan kelimeler İngilizce/ASCII büyütülür.
+    Karar sırası:
+    1. protected_words'te → İngilizce/ASCII kural
+    2. Aksanlı Latin karakter (é, ñ, ê) → kesinlikle yabancı → İngilizce
+    3. Diğer tüm kelimeler → Türkçe kural (varsayılan)
 
-    Ek kural: Türkçe'ye özgü karakter içermeyen, saf ASCII alfabetik
-    ve isim veritabanında bulunmayan kelimeler yabancı isim sayılır
-    ve İngilizce/ASCII kuralla büyütülür (i→I, é→E vb.).
-    Örnek:  collins → COLLINS  (İngilizce, i→I)
-            irfan   → İRFAN    (Türkçe, DB'de var, i→İ)
-            ivan    → IVAN     (Yabancı, DB'de yok, i→I)
+    NOT: Yabancı isimler cast/crew'dan _collect_protected_words ile tespit edilip
+    protected_words'e eklendiğinde İngilizce büyütülür.
+    Özet kısmında ise _to_upper_tr_ozet akıllı heuristic kullanır.
     """
     raw = (word or "").strip()
     token_for_check = raw.strip("''`\""".,;:!?()[]{}")
-    base_for_check = token_for_check.split("'", 1)[0].split("’", 1)[0]
+    base_for_check = token_for_check.split("'", 1)[0].split("'", 1)[0]
 
+    # 1. protected_words → İngilizce kural
     if protected_words and base_for_check.casefold() in protected_words:
         return _to_ascii_upper(raw)
 
-    # Yabancı isim tespiti:
-    # Türkçe'ye özgü karakter YOK + saf ASCII harf + isim DB'de YOK → İngilizce kural
-    if (base_for_check
-            and not _is_turkish_word(raw)
-            and base_for_check.isascii()
-            and base_for_check.isalpha()
-            and not _is_known_name(base_for_check)):
+    # 2. Aksanlı Latince karakter (é, ñ, ê) → kesinlikle yabancı
+    if any(c not in _TR_ONLY_CHARS and not c.isascii() and c.isalpha()
+           for c in base_for_check):
         return _to_ascii_upper(raw)
 
+    # 3. VARSAYILAN: Türkçe kural
     result = word.replace('i', 'İ').replace('ı', 'I')
     result = result.replace('ç', 'Ç').replace('ğ', 'Ğ')
     result = result.replace('ö', 'Ö').replace('ş', 'Ş').replace('ü', 'Ü')
@@ -192,9 +247,9 @@ def _collect_summary_name_candidates(summary: str) -> set[str]:
 def _to_upper_tr(text: str, protected_words: set[str] | None = None) -> str:
     """Tüm metni büyük harfe çevir (kelime bazlı akıllı büyütme).
 
-    Her kelime için 'Türkçe isim mi?' kontrolü yapılır:
-    - Türkçe isimse  → Türkçe kural: i→İ, ı→I, ç→Ç, ğ→Ğ, ö→Ö, ş→Ş, ü→Ü
-    - Yabancı isimse → İngilizce kural: i→I, aksanlı karakterler → ASCII
+    Her kelime için kontrol:
+    - protected_words'te ise → İngilizce kural: i→I, aksanlı → ASCII
+    - Değilse → Türkçe kural: i→İ, ı→I, ç→Ç, ğ→Ğ, ö→Ö, ş→Ş, ü→Ü
     Boşluk/format korunur.
     """
     if not text:
@@ -246,24 +301,64 @@ def _collect_foreign_nouns(cast_list: list) -> set:
             for token in raw.split():
                 # Apostroflu eki temizle: "Karen'in" → "Karen"
                 base = re.split(r"['']", token)[0]
-                base = re.sub(r"[^a-zA-ZçğıöşüÇĞİÖŞÜ]", "", base)
+                base = re.sub(r"[^a-zA-ZÀ-ÖØ-öø-ÿçğıöşüÇĞİÖŞÜ]", "", base)
                 if not base:
                     continue
                 if _is_known_name(base):
                     continue
-                # Yalnızca ASCII harfler → yabancı özel isim
-                if all(ch.isascii() for ch in base):
-                    foreign.add(base.upper())
+                # Aksanlı dahil tüm Latin harfleri ASCII'ye normalize et → yabancı isim
+                ascii_form = _to_ascii_upper(base)
+                if ascii_form and not _is_turkish_word(base):
+                    foreign.add(ascii_form)
     return foreign
+
+
+# Yaygın Türkçe ek kalıpları (3+ karakter — kısa ekler foreign name ile çakışabilir)
+# Aglutinatif yapı: "dizisinin", "hayatini", "gidiyordu" gibi kelimeler bu eklerle biter.
+_TR_SUFFIX_PATTERNS = (
+    # İsim hal ekleri + iyelik
+    "inin", "sinin", "sine", "sini", "sinde", "sinden",
+    "inin", "nini", "nina", "ninda", "nindan",
+    # Çoğul + hal
+    "leri", "lerini", "lerine", "lerinde", "lerinden",
+    "lari", "larini", "larina", "larinda", "larindan",
+    # Fiil çekimleri
+    "iyor", "iyordu", "iyorlar",
+    "ecek", "ecekti",
+    "meli", "meli",
+    "arak", "erek",
+    "ince", "iken",
+    "dikten", "tikten",
+    # İsim yapım ekleri
+    "sinin", "siyle", "siyla",
+)
+
+
+def _has_turkish_suffix(word: str) -> bool:
+    """Kelime bilinen Türkçe ek kalıbıyla bitiyor mu?
+    Aglutinatif yapıdaki Türkçe kelimeleri yabancı isimden ayırır.
+    """
+    lower = word.lower()
+    if len(lower) < 5:  # çok kısa kelimeler ek kontrolüne girmez
+        return False
+    return any(lower.endswith(s) for s in _TR_SUFFIX_PATTERNS)
 
 
 def _to_upper_tr_ozet(text: str, foreign_nouns: set) -> str:
     """Özet metnini büyüt: varsayılan Türkçe kural, yabancı isimler İngilizce kural.
 
-    LLM çıktısında Türkçe kelimeler bazen ASCII harflerle yazılır (örn. "kariyer"
-    yerine "kariyer"). Bu fonksiyon TÜM kelimeleri varsayılan olarak Türkçe kuralıyla
-    büyütür. Yalnızca cast_list'ten tespit edilen yabancı özel isimler (KAREN, CHRIS
-    vb.) İngilizce kural alır.
+    Karar sırası (her kelime için):
+    1. foreign_nouns'ta (cast'tan) → İngilizce kural
+    2. Aksanlı Latin karakter (é, ñ, ê) → kesinlikle yabancı → İngilizce
+    3. Türkçe'ye özgü karakter var → Türkçe kural
+    4. Türkçe isim DB'sinde var → Türkçe kural
+    5. Safeguard kelimeler → Türkçe kural
+    6. Türkçe ek kalıbı var → Türkçe kural
+    7. İlk harf büyük + saf ASCII + DB'de yok → yabancı isim → İngilizce
+    8. Diğer → Türkçe kural (varsayılan)
+
+    NOT: Adım 7'de sadece büyük harfle başlayan kelimeler yabancı sayılır.
+    LLM çıktısında özel isimler büyük harfle başlar: "Ivan geldi" vs "gitti".
 
     Args:
         text:          Özet satırı.
@@ -277,11 +372,45 @@ def _to_upper_tr_ozet(text: str, foreign_nouns: set) -> str:
         if not word:
             result.append(word)
             continue
-        # Apostroflu eki temizleyerek kök kelimeyi bul: "Karen'in" → "KAREN"
+        # Apostroflu eki temizleyerek kök kelimeyi bul
         base = re.split(r"['']", word)[0]
-        base_upper = re.sub(r"[^a-zA-ZçğıöşüÇĞİÖŞÜ]", "", base).upper()
-        if base_upper in foreign_nouns:
+        base_cleaned = re.sub(r"[^a-zA-ZÀ-ÖØ-öø-ÿçğıöşüÇĞİÖŞÜ]", "", base)
+        base_ascii = _to_ascii_upper(base_cleaned)
+
+        # 1. foreign_nouns'ta → İngilizce
+        if base_ascii in foreign_nouns:
             result.append(_upper_word_english(word))
+
+        # 2. Aksanlı Latin karakter → kesinlikle yabancı
+        elif any(c not in _TR_ONLY_CHARS and not c.isascii() and c.isalpha()
+                 for c in base_cleaned):
+            result.append(_upper_word_english(word))
+
+        # 3. Türkçe'ye özgü karakter var → Türkçe kural
+        elif _is_turkish_word(word):
+            result.append(_upper_word_turkish(word))
+
+        # 4. Türkçe isim DB'sinde var → Türkçe kural
+        elif _is_known_name(base_cleaned):
+            result.append(_upper_word_turkish(word))
+
+        # 5. Safeguard Türkçe kelimeler → Türkçe kural
+        elif base_cleaned.lower() in _TR_SAFEGUARD_ASCII:
+            result.append(_upper_word_turkish(word))
+
+        # 6. Türkçe ek kalıbı var → Türkçe kural (dizisinin, hayatini vb.)
+        elif _has_turkish_suffix(base_cleaned):
+            result.append(_upper_word_turkish(word))
+
+        # 7. İlk harf büyük + saf ASCII + DB'de yok → yabancı isim
+        #    LLM çıktısında özel isimler büyük harfle başlar.
+        elif (base_cleaned
+                and base_cleaned[0].isupper()
+                and base_cleaned.isascii()
+                and base_cleaned.isalpha()):
+            result.append(_upper_word_english(word))
+
+        # 8. Varsayılan: Türkçe kural
         else:
             result.append(_upper_word_turkish(word))
     return ' '.join(result)
@@ -318,18 +447,30 @@ def _wrap_max_words(text: str, max_words: int = 20, indent: str = "  ") -> str:
     return prefix + ('\n' + indent).join(lines)
 
 
-# 6 çıktı rolü (sıralı)
+# ═══════════════════════════════════════════════════════════════════
+# 7 ÇIKTI ROLÜ (kullanıcı istenen sıra)
+# ═══════════════════════════════════════════════════════════════════
 _OUTPUT_ROLES = [
-    "YÖNETMEN",
     "YAPIMCI",
+    "YÖNETMEN",
     "YÖNETMEN YARDIMCISI",
-    "KAMERAMAN",
+    "GÖRÜNTÜ YÖNETMENİ",
+    "SENARYO",
+    "KAMERA",
     "KURGU",
-    "SENARİST",
 ]
 
 # Rol adlarını (küçük harf) → çıktı rolü adına map eden sözlük
 _ROLE_TO_OUTPUT: dict[str, str] = {
+    # Yapımcı
+    "yapımcı": "YAPIMCI", "yapimci": "YAPIMCI",
+    "yapım yönetmeni": "YAPIMCI",
+    "producer": "YAPIMCI", "produced by": "YAPIMCI",
+    "executive producer": "YAPIMCI",
+    "produzent": "YAPIMCI", "producteur": "YAPIMCI",
+    "productrice": "YAPIMCI", "produttore": "YAPIMCI",
+    "productor": "YAPIMCI", "продюсер": "YAPIMCI",
+    "yürütücü yapımcı": "YAPIMCI", "yurtucu yapimci": "YAPIMCI",
     # Yönetmen
     "yönetmen": "YÖNETMEN", "yonetmen": "YÖNETMEN",
     "yöneten": "YÖNETMEN", "yoneten": "YÖNETMEN",
@@ -341,15 +482,6 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "rendező": "YÖNETMEN", "режиссёр": "YÖNETMEN",
     "ein film von": "YÖNETMEN", "a film by": "YÖNETMEN",
     "film by": "YÖNETMEN",
-    # Yapımcı
-    "yapımcı": "YAPIMCI", "yapimci": "YAPIMCI",
-    "yapım yönetmeni": "YAPIMCI",
-    "producer": "YAPIMCI", "produced by": "YAPIMCI",
-    "executive producer": "YAPIMCI",
-    "produzent": "YAPIMCI", "producteur": "YAPIMCI",
-    "productrice": "YAPIMCI", "produttore": "YAPIMCI",
-    "productor": "YAPIMCI", "продюсер": "YAPIMCI",
-    "yürütücü yapımcı": "YAPIMCI", "yurtucu yapimci": "YAPIMCI",
     # Yönetmen Yardımcısı
     "yönetmen yardımcısı": "YÖNETMEN YARDIMCISI",
     "yonetmen yardimcisi": "YÖNETMEN YARDIMCISI",
@@ -362,19 +494,29 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "regiassistent": "YÖNETMEN YARDIMCISI",
     "assistenzregisseur": "YÖNETMEN YARDIMCISI",
     "reji asistani": "YÖNETMEN YARDIMCISI",
-    # Kameraman
-    "görüntü yönetmeni": "KAMERAMAN",
-    "goruntu yonetmeni": "KAMERAMAN",
-    "görüntü": "KAMERAMAN", "goruntu": "KAMERAMAN",
-    "cinematographer": "KAMERAMAN",
-    "director of photography": "KAMERAMAN",
-    "dop": "KAMERAMAN", "dp": "KAMERAMAN",
-    "kameramann": "KAMERAMAN", "kameraman": "KAMERAMAN",
-    "kamera": "KAMERAMAN", "camera": "KAMERAMAN",
-    "camera operator": "KAMERAMAN",
-    "directeur de la photographie": "KAMERAMAN",
-    "direttore della fotografia": "KAMERAMAN",
-    "operatör": "KAMERAMAN", "operatoru": "KAMERAMAN",
+    # Görüntü Yönetmeni (Director of Photography / Cinematographer)
+    "görüntü yönetmeni": "GÖRÜNTÜ YÖNETMENİ",
+    "goruntu yonetmeni": "GÖRÜNTÜ YÖNETMENİ",
+    "görüntü": "GÖRÜNTÜ YÖNETMENİ", "goruntu": "GÖRÜNTÜ YÖNETMENİ",
+    "cinematographer": "GÖRÜNTÜ YÖNETMENİ",
+    "director of photography": "GÖRÜNTÜ YÖNETMENİ",
+    "dop": "GÖRÜNTÜ YÖNETMENİ", "dp": "GÖRÜNTÜ YÖNETMENİ",
+    "directeur de la photographie": "GÖRÜNTÜ YÖNETMENİ",
+    "direttore della fotografia": "GÖRÜNTÜ YÖNETMENİ",
+    # Senaryo
+    "senaryo": "SENARYO", "senarist": "SENARYO",
+    "screenwriter": "SENARYO", "screenplay": "SENARYO",
+    "writer": "SENARYO", "written by": "SENARYO",
+    "scénariste": "SENARYO", "scenariste": "SENARYO",
+    "drehbuchautor": "SENARYO",
+    "sceneggiatore": "SENARYO", "guionista": "SENARYO",
+    "сценарист": "SENARYO", "script": "SENARYO",
+    "story by": "SENARYO",
+    # Kamera (Camera Operator / Kameraman)
+    "kameraman": "KAMERA", "kamera": "KAMERA",
+    "camera": "KAMERA", "camera operator": "KAMERA",
+    "kameramann": "KAMERA",
+    "operatör": "KAMERA", "operatoru": "KAMERA",
     # Kurgu
     "kurgu": "KURGU", "montaj": "KURGU",
     "editor": "KURGU", "film editor": "KURGU",
@@ -382,20 +524,11 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "monteur": "KURGU", "monteuse": "KURGU",
     "cutter": "KURGU", "schnitt": "KURGU",
     "montaggio": "KURGU", "montage": "KURGU",
-    # Senarist
-    "senaryo": "SENARİST", "senarist": "SENARİST",
-    "screenwriter": "SENARİST", "screenplay": "SENARİST",
-    "writer": "SENARİST", "written by": "SENARİST",
-    "scénariste": "SENARİST", "scenariste": "SENARİST",
-    "drehbuchautor": "SENARİST",
-    "sceneggiatore": "SENARİST", "guionista": "SENARİST",
-    "сценарист": "SENARİST", "script": "SENARİST",
-    "story by": "SENARİST",
 }
 
 
 def _map_crew_to_roles(crew_data: list, directors: list) -> dict[str, list[str]]:
-    """Crew verilerini 6 çıktı rolüne dönüştür.
+    """Crew verilerini 7 çıktı rolüne dönüştür.
 
     Returns:
         dict mapping each output role name → list of person names.
@@ -802,9 +935,7 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
         })
 
     # ── GRUP 2: Karakter ismi olmayanlar — fuzzy clustering ──
-    # Exact key yerine RapidFuzz WRatio >= 75 ile kümeleme yapılır.
-    # Bu sayede "Ali Ozoqwz", "Ali Ozogwz" vb. OCR varyantları aynı bucket'a düşer.
-    clusters: list[dict] = []  # her cluster: {actor_variants, confidences, verified, seen_counts}
+    clusters: list[dict] = []
 
     for row in no_char_rows:
         a = row["actor_name"]
@@ -817,7 +948,6 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
         matched = False
         if _HAS_RAPIDFUZZ:
             for cluster in clusters:
-                # Mevcut cluster'daki varyantlarla kelime bazlı karşılaştır
                 for existing in cluster["actor_variants"]:
                     if _words_fuzzy_match(a, existing):
                         cluster["actor_variants"].append(a)
@@ -830,7 +960,6 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
                     break
 
         if not matched:
-            # Fuzzy yok veya eşleşme bulunamadı — exact key ile dene
             key = _norm_key(a)
             found_exact = False
             for cluster in clusters:
@@ -862,8 +991,6 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
         is_verified = any(cluster.get("verified") or [])
         total_seen = sum(cluster.get("seen_counts") or [1])
 
-        # Seen count + noise score tabanlı filtreleme:
-        # Tek frame'de görülmüş, çok bozuk, düşük confidence → çıkar
         if (total_seen <= 1
                 and _noise_score(actor) >= 8
                 and best_conf < 0.90):
@@ -877,7 +1004,6 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
             "is_llm_verified": is_verified,
         })
 
-    # Birleştir: önce karakter bilgisi olanlar, sonra olmayanlar
     out = char_based + no_char_based
 
     def _sort_key(r):
@@ -889,7 +1015,6 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
 
     out.sort(key=_sort_key)
 
-    # Çöp filtresi: doğrulanmamış ve düşük confidence → çıkar
     final = []
     for row in out:
         verified = (row.get("is_verified_name", False)
@@ -899,20 +1024,15 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
         actor = (row.get("actor_name") or "").strip()
         char = (row.get("character_name") or "").strip()
 
-        # Kısa çöp: actor_name 3 karakterden kısa ve karakter ismi yoksa → çıkar
         if not char and len(actor) < 3:
             continue
 
-        # Tamamen küçük harf tek kelime → OCR gürültüsü (oulon, nibeu, etiol)
         if not char and actor and ' ' not in actor and actor.islower():
             continue
 
         if verified or conf >= 0.70:
             final.append(row)
 
-    # ── Post-merge fuzzy sweep ──
-    # Final listedeki actor_name'leri birbirleriyle karşılaştır.
-    # WRatio >= 75 olanları birleştir (en yüksek confidence'lıyı tut).
     if _HAS_RAPIDFUZZ and len(final) > 1:
         merged_flags = [False] * len(final)
         merged_out = []
@@ -924,31 +1044,26 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
                 if merged_flags[j]:
                     continue
                 a_j = final[j].get("actor_name", "")
-                # Sadece aynı karakter ismine sahip veya ikisi de karakter ismi olmayanları birleştir
                 char_i = row_i.get("character_name", "")
                 char_j = final[j].get("character_name", "")
                 if char_i != char_j:
                     continue
                 if a_i and a_j and _words_fuzzy_match(a_i, a_j):
-                    # En yüksek confidence'lı olanı tut
                     if final[j].get("confidence", 0) > row_i.get("confidence", 0):
                         final[i] = final[j]
                         row_i = final[i]
                         a_i = row_i.get("actor_name", "")
                     merged_flags[j] = True
-                    # verified ise işaretle
                     if final[j].get("is_verified_name") or final[j].get("is_llm_verified"):
                         final[i]["is_verified_name"] = True
                         final[i]["is_llm_verified"] = True
             merged_out.append(final[i])
         final = merged_out
 
-    # ── Çok-kişi birleşim tespiti: 3+ büyük harf kelime → ayır ──
     expanded = []
     for row in final:
         actor = (row.get("actor_name") or "").strip()
         words = actor.split()
-        # 3+ kelime, hepsi büyük harfle başlıyor VE toplam uzunluk > 20
         if (len(words) >= 3
                 and all(w and w[0].isupper() for w in words)
                 and len(actor) > 20):
@@ -968,8 +1083,7 @@ def _canonicalize_cast(cast: list[dict]) -> list[dict]:
     return final
 
 def _canonicalize_crew(crew: list[dict]) -> list[dict]:
-    # Rol bazlı grupla, sonra her rol grubu içinde isim fuzzy clustering yap
-    role_groups: dict[str, list[dict]] = {}  # norm_role_key → entries
+    role_groups: dict[str, list[dict]] = {}
     for row in crew or []:
         name = (row.get("name") or "").strip()
         role = (row.get("role") or row.get("job") or "").strip()
@@ -982,8 +1096,7 @@ def _canonicalize_crew(crew: list[dict]) -> list[dict]:
 
     out = []
     for entries in role_groups.values():
-        # Her rol grubunda isimleri fuzzy cluster'la
-        clusters: list[dict] = []  # {"name_variants": [...], "role_variants": [...]}
+        clusters: list[dict] = []
         for entry in entries:
             name = entry["name"]
             role = entry["role"]
@@ -1000,7 +1113,6 @@ def _canonicalize_crew(crew: list[dict]) -> list[dict]:
                     if matched:
                         break
             if not matched:
-                # Exact key fallback
                 name_key = _norm_key(name)
                 for cluster in clusters:
                     if cluster.get("exact_key") == name_key:
@@ -1030,8 +1142,6 @@ class ExportEngine:
         self.out = Path(output_dir)
         self.out.mkdir(parents=True, exist_ok=True)
 
-        # ISSUE-09 FIX: Instance değişken — thread-safe, test izolasyonu sağlar.
-        # Global singleton kaldırıldı; her ExportEngine kendi name_db'sine sahip.
         if name_db is not None:
             self._name_db = name_db
         elif _HAS_NAME_DB:
@@ -1044,11 +1154,8 @@ class ExportEngine:
         else:
             self._name_db = None
 
-        # Modül-level global'i güncelle (geriye dönük uyumluluk)
-        # BUG-K5 FIX: _is_known_name() ve _correct_name() bu global'i kullanıyor.
-        # Güncellemezse 356k NameDB yerine ~300 isimlik ALL_NAMES fallback devreye girer.
         global _NAME_DB
-        _NAME_DB = self._name_db  # None olsa bile ata — tutarlılık
+        _NAME_DB = self._name_db
 
     def generate(self, video_info, credits_data, ocr_lines, stage_stats,
                  profile, scope, first_min, last_min, keywords=None, logos=None,
@@ -1058,9 +1165,6 @@ class ExportEngine:
         total_sec = sum(s.get("duration_sec", 0) for s in stage_stats.values())
         dur = video_info.get("duration_seconds", 1)
 
-        # Final çıktı temizliği (dedup + en iyi varyant seçimi)
-        # TMDB kaynaklı veriyi canonicalize'dan geçirme — zaten temiz ve sıralı
-        # verification_status veya frame alanı ile TMDB kaynağı kontrol edilir
         try:
             is_tmdb = (
                 credits_data.get("verification_status") == "tmdb_verified"
@@ -1071,11 +1175,9 @@ class ExportEngine:
                     credits_data['cast'] = _canonicalize_cast(credits_data['cast'])
                 if credits_data.get('crew'):
                     credits_data['crew'] = _canonicalize_crew(credits_data['crew'])
-            # technical_crew her durumda crew ile senkron tutulur
             if credits_data.get('crew') and 'technical_crew' not in credits_data:
                 credits_data['technical_crew'] = list(credits_data['crew'])
         except Exception as e:
-            # Log canonicalization errors but continue with uncanonicalized data
             import logging
             logging.warning(f"Credits canonicalization failed: {e}")
 
@@ -1148,54 +1250,18 @@ class ExportEngine:
 
     def _write_user_report(self, r, path, audio_result: dict | None = None,
                            film_name_tr: str = "", film_id: str = ""):
-        """Kullanıcıya yönelik temiz, sabit formatlı TXT raporu yaz.
-
-        Format:
-            ================================================================
-              FİLM / PROGRAM BİLGİLERİ
-            ================================================================
-              FİLMİN ADI            :     KADIN VE DENİZCİ
-              ...
-            ================================================================
-              ÖZET
-            ================================================================
-              (SPOILER + ÖZET)
-            ================================================================
-              ANAHTAR SÖZCÜKLER
-            ================================================================
-              JANE WYMAN, DENNIS MORGAN, ...
-            ----
-              OYUNCULAR
-            ----
-              JANE WYMAN
-              ...
-            ------
-              YAPIM EKİBİ
-            ------
-              YÖNETMEN: PETER WEIR
-              ...
-            ================================================================
-              OLUŞTURULMA: ...
-            ================================================================
-
-        Tüm metin BÜYÜK HARF (Türkçe kurallara göre).
-        """
+        """Kullanıcıya yönelik temiz, sabit formatlı TXT raporu yaz."""
         L = []
         sep = "=" * 64
-        sep_short = "-" * 4
-        sep_long = "-" * 6
         fi = r["file_info"]
         cr = r["credits"]
         filename = fi.get("filename", "")
 
-        # film_name_tr: dosya adından parse edilen Türkçe isim (generate'den gelir)
-        # Fallback: dosya adından yeniden çek
         if not film_name_tr:
             _, _parsed_id, film_name_tr = _extract_output_name(filename)
             if not film_id:
                 film_id = _parsed_id
 
-        # original_title: credits/TMDB'den gelen yabancı dil ismi
         original_title = (
             cr.get("tmdb_original_title") or
             cr.get("original_title") or cr.get("original_name") or
@@ -1213,7 +1279,7 @@ class ExportEngine:
         L.append("  FİLM / PROGRAM BİLGİLERİ")
         L.append(sep)
 
-        fw = 22  # field column width
+        fw = 22
         L.append(f"  {'FİLMİN ADI':<{fw}}:     {film_name_tr}")
         L.append(f"  {'FİLMİN ORJİNAL ADI':<{fw}}:     {original_title}")
         L.append(f"  {'FİLMİN ID':<{fw}}:     {film_id}")
@@ -1259,14 +1325,13 @@ class ExportEngine:
             else:
                 summary = summary_raw
 
-        # Bölüm numaralı giriş ekle
+        # FIX: Bölüm numaralı giriş — sonuna " ; " eklendi
         episode_no = _extract_episode_from_id(film_id) if film_id else 'YOK'
         if summary and episode_no not in ('YOK', '0000', '0', ''):
             episode_int = episode_no.lstrip('0') or '0'
-            episode_prefix = f"{film_name_tr} dizisinin {episode_int}. bölümünde"
+            episode_prefix = f"{film_name_tr} dizisinin {episode_int}. bölümünde ;"
             summary = episode_prefix + " " + summary
 
-        # Özet satırlarının başlangıç indeksini işaretle (farklı uppercase kuralı)
         ozet_content_start = len(L)
         if summary:
             protected_words.update(_collect_summary_name_candidates(summary))
@@ -1304,33 +1369,28 @@ class ExportEngine:
         L.append(sep)
 
         role_col = 20  # rol sütunu genişliği
-        has_crew = False
 
-        # Sadece 6 belirli rol gösterilir (_OUTPUT_ROLES sırasına göre)
-        # crew_roles: her output rolü → isimler listesi
+        # FIX: 7 rol her zaman gösterilir, veri yoksa "VERİ YOK" yazılır
         for output_role in _OUTPUT_ROLES:
             names = crew_roles.get(output_role) or []
-            if not names:
-                continue
-            has_crew = True
-            for i, name in enumerate(names):
-                role_label = output_role if i == 0 else ""
-                L.append(f"  {role_label:<{role_col}}{name}")
-
-        if not has_crew:
-            L.append("  YOK")
+            if names:
+                for i, name in enumerate(names):
+                    role_label = output_role if i == 0 else ""
+                    L.append(f"  {role_label:<{role_col}}{name}")
+            else:
+                L.append(f"  {output_role:<{role_col}}VERİ YOK")
 
         L.append(sep)
         L.append(f"  OLUŞTURULMA: {r['generated_at']}")
         L.append(sep)
 
-        # Tüm satırları BÜYÜK HARF'e çevir:
-        # - Özet satırları: Türkçe kural varsayılan, yabancı isimler İngilizce kural
-        # - Diğer satırlar: mevcut kelime bazlı akıllı büyütme
+        # FIX: Tüm satırları BÜYÜK HARF'e çevir — protected_words HER YERDE kullanılır
+        # Özet satırları: _to_upper_tr_ozet (foreign_nouns bazlı)
+        # Diğer satırlar: _to_upper_tr (protected_words bazlı) — varsayılan Türkçe
         L = [
             _to_upper_tr_ozet(line, foreign_nouns)
             if ozet_content_start <= i < ozet_content_end
-            else _to_upper_tr(line)
+            else _to_upper_tr(line, protected_words=protected_words)
             for i, line in enumerate(L)
         ]
 
@@ -1338,7 +1398,6 @@ class ExportEngine:
         L_wrapped = []
         for line in L:
             stripped = line.strip()
-            # Ayırıcı çizgi satırları (yalnızca = veya - içerenler) olduğu gibi bırakılır
             is_separator = not stripped or stripped.strip('=') == '' or stripped.strip('-') == ''
             if is_separator:
                 L_wrapped.append(line)
@@ -1357,7 +1416,6 @@ class ExportEngine:
         p  = r["processing"]
         cr = r["credits"]
 
-        # ═══ BLOK 1 — VİDEO BİLGİLERİ ═══
         L.append(sep)
         L.append("  BLOK 1 — VİDEO BİLGİLERİ")
         L.append(sep)
@@ -1369,7 +1427,6 @@ class ExportEngine:
         L.append(f"  Icerik     : {p.get('content_type','?')}")
         L.append(f"  OCR Motor  : {p.get('ocr_engine','?')}")
 
-        # ASR motor bilgisi
         asr_model = "—"
         if audio_result and isinstance(audio_result, dict):
             asr_engine = audio_result.get("asr_engine") or "ASR"
@@ -1378,7 +1435,6 @@ class ExportEngine:
         else:
             L.append(f"  ASR Motor  : —")
 
-        # Pipeline stages
         L.append(f"\n{sep2}")
         L.append("  PIPELINE")
         L.append(sep2)
@@ -1386,7 +1442,6 @@ class ExportEngine:
             ico = "[OK]" if s["status"] in ("ok", "completed") else "[--]" if s["status"] == "skipped" else "[!!]"
             L.append(f"  {ico} {s['name']:24s} {s['duration_sec']:8.1f}s")
 
-        # Audio stage bilgileri de pipeline'a ekle
         if audio_result and isinstance(audio_result, dict) and audio_result.get("status") == "ok":
             stages_map = audio_result.get("stages") or {}
             if isinstance(stages_map, dict):
@@ -1397,20 +1452,18 @@ class ExportEngine:
                         ico = "[OK]" if st in ("ok", "completed") else "[--]" if st == "skipped" else "[!!]"
                         L.append(f"  {ico} {'AUDIO_' + stage_name.upper():24s} {dur:8.1f}s")
 
-        # ═══ BLOK 2 — OYUNCULAR ═══
         L.append(f"\n{sep}")
         L.append("  BLOK 2 — OYUNCULAR")
         L.append(sep)
         if cr.get("cast"):
-            # Dinamik hizalama: en uzun oyuncu adına göre sütun genişliği belirle
             max_actor_len = max(
                 (len(c.get("actor_name") or "") for c in cr["cast"]),
                 default=20
             )
-            col_width = max(max_actor_len + 1, 22)  # minimum 22 karakter, +1 for padding
+            col_width = max(max_actor_len + 1, 22)
             char_col_width = 22
             L.append(f"\n  {'Oyuncu Adı':<{col_width}}  --  {'Karakter Adı':<{char_col_width}}  [Skor]")
-            total_dash = col_width + char_col_width + 12  # 12 = "  " + icon + " " + "  --  " + "  "
+            total_dash = col_width + char_col_width + 12
             L.append(f"  {'─' * min(total_dash, 63)}")
             for c in cr["cast"]:
                 ch = c.get("character_name") or ""
@@ -1421,26 +1474,23 @@ class ExportEngine:
                 if ch:
                     L.append(f"  {icon} {ac:<{col_width}}-- {ch:<{char_col_width}}  {score_str}")
                 else:
-                    no_char_width = col_width + char_col_width + 4  # combined width
+                    no_char_width = col_width + char_col_width + 4
                     L.append(f"  {icon} {ac:<{no_char_width}}  {score_str}")
         else:
             L.append("\n  (Oyuncu verisi yok)")
 
-        # ═══ BLOK 3 — YAPIM EKİBİ ═══
         L.append(f"\n{sep}")
         L.append("  BLOK 3 — YAPIM EKİBİ")
         L.append(sep)
 
-        # Önce yönetmenler
         if cr.get("directors"):
             dir_names = self._director_names(cr)
             if dir_names:
                 L.append(f"\n  Yönetmen   : {', '.join(dir_names)}")
 
-        # Teknik ekip
         crew_list = cr.get("technical_crew") or cr.get("crew") or []
         if crew_list:
-            L.append(f"\n  {'─' * 63}")  # indented crew separator (63 dashes)
+            L.append(f"\n  {'─' * 63}")
             for t in crew_list:
                 role_txt = t.get('role_tr') or t.get('role') or t.get('job') or ''
                 L.append(f"  {role_txt:14s}: {t.get('name','')}")
@@ -1448,12 +1498,10 @@ class ExportEngine:
         if not cr.get("directors") and not crew_list:
             L.append("\n  (Ekip verisi yok)")
 
-        # ═══ BLOK 4 — ÖZET ═══
         L.append(f"\n{sep}")
         L.append("  BLOK 4 — ÖZET")
         L.append(sep)
 
-        # Spor profili: Maç Bilgileri BLOK 4 içinde gösterilir
         match_data = r.get("match_data")
         if match_data or p.get("content_type") == "Spor":
             if match_data:
@@ -1479,7 +1527,6 @@ class ExportEngine:
             else:
                 L.append("\n  (Mac verisi bulunamadi)")
         else:
-            # Gemini özeti varsa göster; yoksa "aktif değil" mesajı
             summary = None
             if audio_result and isinstance(audio_result, dict):
                 summary = audio_result.get("summary") or audio_result.get("summary_tr") or audio_result.get("ollama_summary")
@@ -1488,7 +1535,6 @@ class ExportEngine:
             else:
                 L.append("\n  Özet oluşturma aktif değil")
 
-        # Footer
         L.append(f"\n{sep}")
         L.append(f"  Olusturulma: {r['generated_at']}")
         L.append(sep)
@@ -1536,7 +1582,6 @@ class ExportEngine:
         with open(path, "w", encoding="utf-8-sig") as f:
             f.write("\n".join(L))
 
-    # Keep _write_txt as an alias for backward compatibility
     def _write_txt(self, r, path):
         self._write_report(r, path)
 
@@ -1544,14 +1589,14 @@ class ExportEngine:
     def _verification_icon(cast_entry: dict) -> str:
         """Doğrulama kaynağına göre ikon döndür."""
         if cast_entry.get("frame") == "tmdb":
-            return "◆"  # TMDB doğrulanmış
+            return "◆"
         method = cast_entry.get("match_method", "")
         if method == "exact_db":
             return "✓"
         if method in ("fuzzy", "phonetic", "parts", "hardcoded"):
             return "~"
         if cast_entry.get("is_llm_verified"):
-            return "L"  # LLM onaylı
+            return "L"
         if cast_entry.get("is_verified_name"):
             return "✓"
         return "?"
