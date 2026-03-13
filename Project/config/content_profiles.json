@@ -26,6 +26,20 @@
     "match_parse_enabled": true,
     "parse_segments": ["first_10", "last_10"]
   },
+  "FilmDiziQwen": {
+    "scope": "video_only",
+    "first_segment_minutes": 2,
+    "last_segment_minutes": 7,
+    "text_filter_threshold": 0.23,
+    "text_filter_mser_min_boxes": 3,
+    "text_filter_max_per_segment": 135,
+    "audio_stages": ["extract", "transcribe"],
+    "whisper_model": "large-v3",
+    "whisper_language": "tr",
+    "ocr_enabled": true,
+    "ocr_engine": "qwen",
+    "match_parse_enabled": false
+  },
   "StudyoProgram": {
     "_placeholder": true
   },

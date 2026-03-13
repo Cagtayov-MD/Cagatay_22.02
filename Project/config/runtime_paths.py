@@ -74,4 +74,8 @@ def get_tmdb_api_key() -> str:
 
 
 def get_gemini_api_key() -> str:
-    return os.environ.get("GEMINI_API_KEY", "").strip()
+    env_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
+    if env_key:
+        return env_key
+    keys = load_api_keys()
+    return str(keys.get("gemini_api_key") or keys.get("google_api_key") or "").strip()

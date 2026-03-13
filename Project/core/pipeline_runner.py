@@ -25,6 +25,7 @@ from config.runtime_paths import get_tmdb_api_key, get_gemini_api_key, resolve_n
 from core.frame_extractor import FrameExtractor
 from core.text_filter import TextFilter
 from core.ocr_engine import OCREngine
+from core.qwen_ocr_engine import QwenOCREngine
 from core.credits_parser import CreditsParser
 from core.export_engine import ExportEngine
 from core.turkish_name_db import TurkishNameDB
@@ -218,13 +219,27 @@ class PipelineRunner:
                 self._ffmpeg, self._ffprobe, log_cb=self._log)
 
             self._log(f"\n  PaddleOCR başlatılıyor...")
-            self._ocr_engine = OCREngine(
-                use_gpu=self.config.get("use_gpu", True),
-                lang=self.config.get("ocr_languages", ["en"])[0],
-                cfg=self.config,
-                log_cb=self._log,
-                name_db=self._name_db,
-            )
+            _ocr_engine_type = (
+                (content_profile or {}).get("ocr_engine") or
+                self.config.get("ocr_engine", "paddle")
+            ).lower()
+
+            if _ocr_engine_type == "qwen":
+                self._log(f"  [OCR] Motor: Qwen2.5-VL (VLM tabanlı)")
+                self._ocr_engine = QwenOCREngine(
+                    cfg=self.config,
+                    log_cb=self._log,
+                    name_db=self._name_db,
+                    ollama_url=self.config.get("ollama_url", "http://localhost:11434"),
+                )
+            else:
+                self._ocr_engine = OCREngine(
+                    use_gpu=self.config.get("use_gpu", True),
+                    lang=self.config.get("ocr_languages", ["en"])[0],
+                    cfg=self.config,
+                    log_cb=self._log,
+                    name_db=self._name_db,
+                )
 
             # ══ [1/6] INGEST ═══════════════════════════════════
             self._log(f"\n[1/6] INGEST")
