@@ -55,7 +55,7 @@ class TranscribeStage:
         if opts is None:
             opts = {}
         # Extract direct kwargs that mirror option keys (legacy calling convention)
-        for key in ("whisper_model", "whisper_language", "compute_type", "batch_size"):
+        for key in ("whisper_model", "whisper_language", "compute_type", "batch_size", "beam_size", "tmdb_cast"):
             if key in kwargs and key not in opts:
                 opts[key] = kwargs[key]
 
@@ -64,6 +64,36 @@ class TranscribeStage:
             opts=opts,
             diarization=diarization,
         )
+
+    def _build_initial_prompt(self, opts: dict) -> str:
+        """
+        TMDB cast listesinden Whisper initial_prompt oluştur.
+        Yabancı isimlerin fonetik bozulmasını önlemek için kullanılır.
+        Örnek: "Bu filmde şu isimler geçmektedir: Michael, Jessica, Robert."
+        """
+        cast = opts.get("tmdb_cast") or []
+        if not cast:
+            return ""
+        names = []
+        for entry in cast:
+            actor = (entry.get("actor_name") or entry.get("name") or "").strip()
+            char = (entry.get("character_name") or entry.get("character") or "").strip()
+            if actor:
+                names.append(actor)
+            if char:
+                names.append(char)
+        # Tekrarları kaldır, boşları filtrele, max 20 isim
+        seen = set()
+        unique = []
+        for n in names:
+            if n and n not in seen:
+                seen.add(n)
+                unique.append(n)
+            if len(unique) >= 20:
+                break
+        if not unique:
+            return ""
+        return "Bu filmde şu isimler geçmektedir: " + ", ".join(unique) + "."
 
     def _transcribe(self, audio_path: str, opts: dict, diarization=None) -> dict:
         t0 = time.time()
@@ -117,6 +147,10 @@ class TranscribeStage:
                     _model_cache["key"] = cache_key
                     _model_cache["model"] = fw_model
 
+            initial_prompt = self._build_initial_prompt(opts)
+            if initial_prompt:
+                self._log(f"  [Whisper] initial_prompt: {initial_prompt[:80]}...")
+
             raw_segments, info = fw_model.transcribe(
                 audio_path,
                 language=language,
@@ -124,10 +158,10 @@ class TranscribeStage:
                 word_timestamps=True,
                 vad_filter=True,
                 vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=200),
+                initial_prompt=initial_prompt if initial_prompt else None,
             )
 
             self._log(f"  [Whisper] Dil: {info.language} (olasilik: {info.language_probability:.2f})")
-
             segments = []
             for seg in raw_segments:
                 words = []

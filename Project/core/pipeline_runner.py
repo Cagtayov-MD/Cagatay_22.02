@@ -698,7 +698,7 @@ class PipelineRunner:
             "hf_token":     self.config.get("hf_token", ""),
             "ffmpeg":       self._ffmpeg,
             "ollama_url":   self.config.get("ollama_url", "http://localhost:11434"),
-            "tmdb_cast":    [],
+            "tmdb_cast":    self.config.get("tmdb_cast", []),
             "stages": stages,
             "options": {
                 "denoise_enabled":  "denoise" in stages,
@@ -709,7 +709,7 @@ class PipelineRunner:
                 "compute_type":     self.config.get("compute_type"),
                 "max_speakers":     self.config.get("max_speakers", 10),
                 "ollama_model":     self.config.get("ollama_model", "llama3.1:8b"),
-                "batch_size":       self.config.get("batch_size", 16),
+                "beam_size":        self.config.get("beam_size", 5),
             },
         }
 
