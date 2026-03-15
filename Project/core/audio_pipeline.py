@@ -3,7 +3,7 @@ audio_pipeline.py — Ses pipeline orkestratör.
 
 Her stage'i sırayla çalıştırır, VRAM yönetimi yapar.
 Stage sırası (Film/Dizi):
-  [A] EXTRACT → [B] DENOISE → [C] DIARIZE → [D] TRANSCRIBE → [E] POST_PROCESS
+  [A] EXTRACT → [B] DİL TESPİTİ → [C] DENOISE → [D] DIARIZE → [E] TRANSCRIBE → [F] POST_PROCESS
 
 Stage'ler arası veri JSON ile taşınır (dict).
 Herhangi bir stage patlarsa pipeline durur ama mevcut sonuçlar korunur.
@@ -19,6 +19,7 @@ from audio.stages.denoise import DenoiseStage
 from audio.stages.diarize import DiarizeStage
 from audio.stages.transcribe import TranscribeStage
 from audio.stages.post_process import PostProcessStage
+from audio.stages.detect_language import LanguageDetectionStage
 
 
 class AudioPipeline:
@@ -27,7 +28,7 @@ class AudioPipeline:
     Film/Dizi: DF3 → PyAnnote → faster-whisper → Ollama
     """
 
-    VERSION = "1.0"
+    VERSION = "1.1"
 
     def __init__(self, config: dict, log_cb=None):
         self.config = config
@@ -47,7 +48,7 @@ class AudioPipeline:
         options = self.config.get("options", {})
         stages_to_run = self.config.get(
             "stages",
-            ["extract", "denoise", "diarize", "transcribe", "post_process"]
+            ["extract", "detect_language", "denoise", "diarize", "transcribe", "post_process"]
         )
 
         audio_dir = str(Path(work_dir) / "audio_work")
@@ -65,6 +66,9 @@ class AudioPipeline:
             "speakers": {},
             "transcript": [],
             "summary_tr": "",
+            "detected_language": "unknown",
+            "language_is_turkish": False,
+            "detected_language_samples": [],
             "stages": {},
         }
 
@@ -101,12 +105,44 @@ class AudioPipeline:
             result["duration_sec"] = extract_result["duration_sec"]
 
         # ══════════════════════════════════════════════════════
-        # [B] DENOISE
+        # [B] DİL TESPİTİ
+        # ══════════════════════════════════════════════════════
+        language_is_turkish = True  # default: Türkçe varsay (mevcut davranışı koru)
+
+        if "detect_language" in stages_to_run and wav_16k:
+            self._log(f"\n[B] DİL TESPİTİ")
+            lang_detector = LanguageDetectionStage(
+                ffmpeg_path=ffmpeg, log_cb=self._log
+            )
+            lang_result = lang_detector.run(
+                video_path, audio_dir,
+                duration_sec=result.get("duration_sec", 0.0)
+            )
+            result["stages"]["detect_language"] = {
+                "duration_sec": lang_result["stage_time_sec"],
+                "status": lang_result["status"],
+                "detected_language": lang_result["detected_language"],
+                "confidence": lang_result["confidence"],
+                "decision_logic": lang_result.get("decision_logic", ""),
+            }
+            result["detected_language"] = lang_result["detected_language"]
+            result["language_is_turkish"] = lang_result["language_is_turkish"]
+            result["detected_language_samples"] = lang_result.get("samples", [])
+            language_is_turkish = lang_result["language_is_turkish"]
+
+            if not language_is_turkish:
+                self._log(
+                    f"  [DİL TESPİTİ] Türkçe değil ({lang_result['detected_language'].upper()}) "
+                    f"— TRANSCRIBE ve POST_PROCESS atlanacak"
+                )
+
+        # ══════════════════════════════════════════════════════
+        # [C] DENOISE
         # ══════════════════════════════════════════════════════
         clean_wav = wav_16k  # default: denoise yapılmazsa 16k kullan
 
         if "denoise" in stages_to_run and wav_48k:
-            self._log(f"\n[B] DENOISE")
+            self._log(f"\n[C] DENOISE")
             denoise = DenoiseStage(log_cb=self._log)
             clean_48k = str(Path(audio_dir) / "audio_clean_48k.wav")
             denoise_result = denoise.run(
@@ -128,12 +164,12 @@ class AudioPipeline:
                 clean_wav = wav_16k
 
         # ══════════════════════════════════════════════════════
-        # [C] DIARIZE
+        # [D] DIARIZE
         # ══════════════════════════════════════════════════════
         diarize_result = {"segments": []}
 
         if "diarize" in stages_to_run and clean_wav:
-            self._log(f"\n[C] DIARIZE")
+            self._log(f"\n[D] DIARIZE")
             diarize = DiarizeStage(log_cb=self._log)
             diarize_result = diarize.run(
                 clean_wav,
@@ -147,12 +183,12 @@ class AudioPipeline:
             }
 
         # ══════════════════════════════════════════════════════
-        # [D] TRANSCRIBE
+        # [E] TRANSCRIBE
         # ══════════════════════════════════════════════════════
         transcribe_result = {"segments": []}
 
-        if "transcribe" in stages_to_run and clean_wav:
-            self._log(f"\n[D] TRANSCRIBE")
+        if "transcribe" in stages_to_run and clean_wav and language_is_turkish:
+            self._log(f"\n[E] TRANSCRIBE")
             transcribe = TranscribeStage(log_cb=self._log)
             # BUG-01 FIX: hf_token transcribe.run() çağrısından kaldırıldı.
             # DiarizeStage [C] zaten PyAnnote'u çalıştırdı ve diarize_result
@@ -178,12 +214,18 @@ class AudioPipeline:
                 "status": transcribe_result["status"],
                 "segments": transcribe_result.get("total_segments", 0),
             }
+        elif "transcribe" in stages_to_run and not language_is_turkish:
+            result["stages"]["transcribe"] = {
+                "status": "skipped",
+                "reason": f"non_turkish_language: {result.get('detected_language', 'unknown')}",
+                "duration_sec": 0.0,
+            }
 
         # ══════════════════════════════════════════════════════
-        # [E] POST_PROCESS
+        # [F] POST_PROCESS
         # ══════════════════════════════════════════════════════
-        if "post_process" in stages_to_run and transcribe_result.get("segments"):
-            self._log(f"\n[E] POST_PROCESS")
+        if "post_process" in stages_to_run and transcribe_result.get("segments") and language_is_turkish:
+            self._log(f"\n[F] POST_PROCESS")
             post = PostProcessStage(log_cb=self._log)
             # Pre-check Ollama availability to fail fast
             ollama_url = self.config.get("ollama_url", "http://localhost:11434")
