@@ -207,6 +207,7 @@ class AudioPipeline:
                     "whisper_language": options.get("whisper_language", "tr"),
                     "compute_type": options.get("compute_type"),
                     "beam_size": options.get("beam_size", 5),  # beam_size olarak duzeltildi; eskiden batch_size: 16 geliyordu
+                    "tmdb_cast": self.config.get("tmdb_cast", []),  # cast isimlerini Whisper'a initial_prompt olarak geçir
                 },
             )
             result["stages"]["transcribe"] = {

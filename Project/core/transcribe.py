@@ -58,6 +58,10 @@ except ImportError:
                 self._log(f"  [Whisper] Yuklendi (VRAM: {VRAMManager.get_usage()})")
                 self._log('  [Whisper] Transkripsiyon basliyor...')
 
+                initial_prompt = self._build_initial_prompt(opts)
+                if initial_prompt:
+                    self._log(f"  [Whisper] initial_prompt: {initial_prompt[:80]}...")
+
                 raw_segments, info = fw_model.transcribe(
                     audio_path,
                     language=language,
@@ -65,6 +69,7 @@ except ImportError:
                     word_timestamps=True,
                     vad_filter=True,
                     vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=200),
+                    initial_prompt=initial_prompt if initial_prompt else None,
                 )
 
                 self._log(f"  [Whisper] Dil: {info.language} (olasilik: {info.language_probability:.2f})")
@@ -136,6 +141,34 @@ except ImportError:
                     del fw_model
                 VRAMManager.release()
                 self._log(f"  [Whisper] Model bosaltildi (VRAM: {VRAMManager.get_usage()})")
+
+        def _build_initial_prompt(self, opts: dict) -> str:
+            """
+            TMDB cast listesinden Whisper initial_prompt oluştur.
+            Yabancı isimlerin fonetik bozulmasını önlemek için kullanılır.
+            """
+            cast = opts.get('tmdb_cast') or []
+            if not cast:
+                return ''
+            names = []
+            for entry in cast:
+                actor = (entry.get('actor_name') or entry.get('name') or '').strip()
+                char = (entry.get('character_name') or entry.get('character') or '').strip()
+                if actor:
+                    names.append(actor)
+                if char:
+                    names.append(char)
+            seen = set()
+            unique = []
+            for n in names:
+                if n and n not in seen:
+                    seen.add(n)
+                    unique.append(n)
+                if len(unique) >= 20:
+                    break
+            if not unique:
+                return ''
+            return 'Bu filmde şu isimler geçmektedir: ' + ', '.join(unique) + '.'
 
         def _resolve_compute_type(self, raw_compute_type, device):
             default_type = 'float16' if device == 'cuda' else 'int8'
