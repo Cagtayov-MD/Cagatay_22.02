@@ -64,20 +64,21 @@ class PostProcessStage:
         model = opts.get("ollama_model") or None  # None → provider default
         tmdb_cast = opts.get("tmdb_cast", [])
 
-        # For Ollama provider: validate URL and check availability
-        if provider == "ollama":
-            if not self._validate_ollama_url(base_url):
-                self._log(f"  [PostProcess] Geçersiz ollama_url={base_url!r} — post-process atlanıyor")
-                processed = self._mark_low_confidence(segments) if segments else []
-                return {
-                    "status": "skipped",
-                    "segments": processed,
-                    "corrections": 0,
-                    "summary_tr": "",
-                    "stage_time_sec": round(time.time() - t0, 2),
-                    "error": "invalid_ollama_url",
-                }
+        # Validate ollama_url regardless of provider to fail-fast on misconfiguration
+        if not self._validate_ollama_url(base_url):
+            self._log(f"  [PostProcess] Geçersiz ollama_url={base_url!r} — post-process atlanıyor")
+            processed = self._mark_low_confidence(segments) if segments else []
+            return {
+                "status": "skipped",
+                "segments": processed,
+                "corrections": 0,
+                "summary_tr": "",
+                "stage_time_sec": round(time.time() - t0, 2),
+                "error": "invalid_ollama_url",
+            }
 
+        # For Ollama provider: also check availability
+        if provider == "ollama":
             if not self._check_ollama(base_url):
                 self._log("  [PostProcess] Ollama bağlantısı yok — düzeltme atlanıyor")
                 processed = self._mark_low_confidence(segments) if segments else []
@@ -182,7 +183,7 @@ class PostProcessStage:
             "açıklama ekleme."
         )
 
-        response = self._chat(prompt, system, provider, base_url, model)
+        response = self._chat(prompt, system, base_url, model, provider=provider)
         if not response:
             return texts
 
@@ -234,7 +235,7 @@ class PostProcessStage:
         )
         return self._chat(
             f"Transcript:\n{transcript[:120000]}", system,
-            provider, base_url, model
+            base_url, model, provider=provider
         )
 
     def _resolve_speakers(self, segments: list, tmdb_cast: list):
@@ -332,17 +333,18 @@ class PostProcessStage:
             return False
 
     def _chat(self, prompt: str, system: str,
-              provider: str, base_url: str, model: str | None) -> str:
+              base_url: str, model: str | None, provider: str | None = None) -> str:
         """LLM API çağrısı (Gemini veya Ollama)."""
+        _provider = provider or "ollama"
         kwargs = {}
-        if provider == "ollama":
+        if _provider == "ollama":
             kwargs["ollama_url"] = base_url
         if model:
             kwargs["model"] = model
         result = _llm.generate(
             prompt,
             system=system or None,
-            provider=provider,
+            provider=_provider,
             log_cb=self._log,
             timeout=30,
             **kwargs,

@@ -228,48 +228,41 @@ class TestPostProcessSystemValidation:
 
     def test_bug_post_01_invalid_url_validation_error(self):
         """
-        🔴 BUG-POST-01: Invalid URL validation logic error (YENİ!)
+        ✅ BUG-POST-01 DÜZELTİLDİ: URL validation artık provider'dan bağımsız çalışıyor.
 
-        SORUN: URL validation sadece provider=="ollama" iken çalışıyor.
-        Default provider (gemini) kullanıldığında geçersiz ollama_url
-        parametresi görmezden geliniyor.
+        DÜZELTME: ollama_url doğrulaması provider=="ollama" şartı kaldırılarak
+        her zaman çalışır hale getirildi.
 
-        Bu test BAŞARISIZ olmalı - hata hala mevcut!
+        Bu test DÜZELTİLMİŞ davranışı doğrular.
         """
         from core.post_process import PostProcessStage
 
         stage = PostProcessStage()
         segments = [{"start": 0.0, "end": 1.0, "text": "test", "confidence": 0.9, "speaker": ""}]
 
-        # Geçersiz URL geçilince status="skipped" dönmeli
+        # Geçersiz URL geçilince status="skipped" dönmeli (provider ne olursa olsun)
         result = stage.run(segments, ollama_url="not_a_url")
-
-        # BEKLENEN (test spec'e göre):
-        # assert result["status"] == "skipped"
-        # assert result["error"] == "invalid_ollama_url"
-
-        # GERÇEK (mevcut bug):
-        # Provider default "gemini" olduğunda URL check yapılmıyor!
-        # status="ok" dönüyor, error yok
-
-        pytest.xfail("BUG-POST-01: Default provider URL validation yapmıyor")
+        assert result["status"] == "skipped"
+        assert result["error"] == "invalid_ollama_url"
 
     def test_bug_post_02_chat_signature_mismatch_error(self, monkeypatch):
         """
-        🔴 BUG-POST-02: _chat method signature mismatch (YENİ!)
+        ✅ BUG-POST-02 DÜZELTİLDİ: _chat method signature restored to 4-arg API
 
-        SORUN: _chat metodu 5 parametre alıyor:
-          _chat(prompt, system, provider, base_url, model)
+        DÜZELTME: _chat imzası eski haline (4 parametre) döndürüldü:
+          _chat(prompt, system, base_url, model, provider=None)
 
-        Ama eski testler 4 parametre ile çağırıyor:
-          _chat(prompt, system, base_url, model)  ❌ 'provider' eksik
+        Önceki kırık imza:
+          _chat(prompt, system, provider, base_url, model)  ← 'provider' ekstra/zorunluydu
 
-        Bu test BAŞARISIZ olmalı - signature uyumsuz!
+        Bu test DÜZELTİLMİŞ davranışı doğrular.
         """
         import urllib.error
         from core.post_process import PostProcessStage
 
         stage = PostProcessStage()
+        logs = []
+        stage._log = logs.append
 
         def raise_http(*args, **kwargs):
             raise urllib.error.HTTPError(
@@ -279,17 +272,8 @@ class TestPostProcessSystemValidation:
 
         monkeypatch.setattr("urllib.request.urlopen", raise_http)
 
-        # ESKİ SIGNATURE (4 parametre) - BAŞARISIZ OLMALI:
-        try:
-            result = stage._chat("prompt", "system", "http://localhost:11434", "llama3.1:8b")
-            pytest.fail("Signature mismatch tespit edilmeliydi!")
-        except TypeError as e:
-            assert "missing 1 required positional argument: 'model'" in str(e)
-
-        # YENİ SIGNATURE (5 parametre) - BAŞARILI OLMALI:
-        logs = []
-        stage._log = logs.append
-        result = stage._chat("prompt", "system", "ollama", "http://localhost:11434", "llama3.1:8b")
+        # DÜZELTME: 4 parametre ile çağrı artık çalışmalı:
+        result = stage._chat("prompt", "system", "http://localhost:11434", "llama3.1:8b")
         assert result == ""
         assert any("500" in m for m in logs)
 
