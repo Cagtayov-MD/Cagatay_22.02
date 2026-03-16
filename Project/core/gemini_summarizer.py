@@ -1,5 +1,5 @@
 """
-gemini_summarizer.py — Transcript'ten Türkçe özet çıkarma (Gemini 2.5 Flash).
+gemini_summarizer.py — Transcript'ten Türkçe özet çıkarma (Gemini 2.5 Pro).
 
 summarize_transcript(transcript_text, api_key, log_cb) -> dict | None
   - Transcript metnini Gemini'ye gönderir
@@ -59,11 +59,11 @@ _FEW_SHOT = (
 def summarize_transcript(
     transcript_text: str,
     api_key: str = "",
-    model: str = "gemini-2.5-flash",
+    model: str = "gemini-2.5-pro",
     log_cb=None,
     variant: str = "en",
 ) -> dict | None:
-    """Transcript metninden Gemini 2.5 Flash ile Türkçe özet üret.
+    """Transcript metninden Gemini 2.5 Pro ile Türkçe özet üret.
 
     Args:
         transcript_text: Ham transcript metni.

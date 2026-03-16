@@ -1,5 +1,5 @@
 """
-gemini_cast_extractor.py — Gemini 2.5 Flash ile cast/crew ayıklama.
+gemini_cast_extractor.py — Cast/crew ayıklama için Gemini 2.5 Flash kullanır.
 
 TMDB eşleşmediğinde, PaddleOCR + 8'li filtre sonrası temizlenmiş
 OCR metin listesini Gemini API'ye gönderir. Gemini metin bazlı olarak:
@@ -76,7 +76,7 @@ CREW kuralları:
 """
 
 class GeminiCastExtractor:
-    """Gemini 2.5 Flash ile OCR metinden cast/crew ayıkla."""
+    """Cast/crew ayıklama için Gemini 2.5 Flash kullanır; OCR metinden kişi isimlerini ayıklar."""
 
     def __init__(self, api_key: str, model: str = "gemini-2.5-flash", log_cb=None):
         self._api_key = api_key
