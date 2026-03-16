@@ -530,6 +530,10 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
 def _map_crew_to_roles(crew_data: list, directors: list) -> dict[str, list[str]]:
     """Crew verilerini 7 çıktı rolüne dönüştür.
 
+    NOT: İsim doğrulaması artık burada değil — pipeline_runner'da
+    NameVerifier tarafından yapılıyor. Bu fonksiyon sadece rol eşleştirmesi yapar.
+    NameVerifier çalışmamışsa (eski pipeline), veri olduğu gibi geçer.
+
     Returns:
         dict mapping each output role name → list of person names.
     """
@@ -1297,7 +1301,12 @@ class ExportEngine:
             if (c.get("actor_name") or "").strip()
         ]
         director_names = self._director_names(cr)
-        crew_roles = _map_crew_to_roles(cr.get("technical_crew") or cr.get("crew") or [], director_names)
+
+        # NameVerifier tarafından doğrulanmış crew_roles varsa onu kullan
+        if cr.get("_verified_crew_roles"):
+            crew_roles = cr["_verified_crew_roles"]
+        else:
+            crew_roles = _map_crew_to_roles(cr.get("technical_crew") or cr.get("crew") or [], director_names)
 
         # Özel isimler: Türkçe olmayan adlar ASCII/İngilizce karakterle korunur.
         protected_words = _collect_protected_words(
@@ -1379,6 +1388,15 @@ class ExportEngine:
                     L.append(f"  {role_label:<{role_col}}{name}")
             else:
                 L.append(f"  {output_role:<{role_col}}VERİ YOK")
+
+        # ── DOĞRULAMA LOGU (verification log) ──────────────────────
+        _vlog_text = cr.get("_verification_log_text", "")
+        if _vlog_text:
+            L.append(sep)
+            L.append("  DOĞRULAMA LOGU")
+            L.append(sep)
+            for vline in _vlog_text.splitlines():
+                L.append(f"  {vline}" if vline.strip() else "")
 
         L.append(sep)
         L.append(f"  OLUŞTURULMA: {r['generated_at']}")

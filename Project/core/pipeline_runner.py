@@ -32,7 +32,15 @@ from core.turkish_name_db import TurkishNameDB
 from core.qwen_verifier import QwenVerifier
 from core.llm_cast_filter import LLMCastFilter
 from core.vlm_reader import VLMReader
+from core.name_verify import NameVerifier
 from utils.stats_logger import StatsLogger
+
+# OneOCR — opsiyonel (sadece Windows 11)
+try:
+    from core.oneocr_engine import OneOCREngine
+    _HAS_ONEOCR = True
+except ImportError:
+    _HAS_ONEOCR = False
 
 
 _BLOK2_FUZZY_THRESHOLD = 85  # BLOK2 dedup: iki satır bu eşiğin üzerindeyse aynı kabul edilir
@@ -218,13 +226,30 @@ class PipelineRunner:
             self._extractor = FrameExtractor(
                 self._ffmpeg, self._ffprobe, log_cb=self._log)
 
-            self._log(f"\n  PaddleOCR başlatılıyor...")
+            self._log(f"\n  OCR motoru başlatılıyor...")
             _ocr_engine_type = (
                 (content_profile or {}).get("ocr_engine") or
                 self.config.get("ocr_engine", "paddle")
             ).lower()
 
-            if _ocr_engine_type == "qwen":
+            if _ocr_engine_type == "oneocr":
+                if _HAS_ONEOCR:
+                    self._log(f"  [OCR] Motor: OneOCR (Windows Snipping Tool)")
+                    self._ocr_engine = OneOCREngine(
+                        cfg=self.config,
+                        log_cb=self._log,
+                        name_db=self._name_db,
+                    )
+                else:
+                    self._log(f"  [OCR] OneOCR kurulu değil — PaddleOCR'a fallback")
+                    self._ocr_engine = OCREngine(
+                        use_gpu=self.config.get("use_gpu", True),
+                        lang=self.config.get("ocr_languages", ["en"])[0],
+                        cfg=self.config,
+                        log_cb=self._log,
+                        name_db=self._name_db,
+                    )
+            elif _ocr_engine_type == "qwen":
                 self._log(f"  [OCR] Motor: Qwen2.5-VL (VLM tabanlı)")
                 self._ocr_engine = QwenOCREngine(
                     cfg=self.config,
@@ -233,6 +258,7 @@ class PipelineRunner:
                     ollama_url=self.config.get("ollama_url", "http://localhost:11434"),
                 )
             else:
+                self._log(f"  [OCR] Motor: PaddleOCR (GPU)")
                 self._ocr_engine = OCREngine(
                     use_gpu=self.config.get("use_gpu", True),
                     lang=self.config.get("ocr_languages", ["en"])[0],
@@ -382,101 +408,103 @@ class PipelineRunner:
                     cdata["_gemini_suggested_title"] = gemini_title
                     self._log(f"  [Anchor] Gemini başlığı '{gemini_title}' → dosya adı anchor'ı korundu: '{film_title_from_filename}'")
 
-                # ══ [6/6] TMDB_VERIFY ══════════════════════════════
-                # TMDB önce çalışsın — eşleşirse cast TMDB'den gelecek, LLM gereksiz
-                self._log(f"\n[6/6] TMDB_VERIFY")
+                # ══ [6/6] NAME_VERIFY — Katmanlı İsim Doğrulama ══════
+                # TMDB artık kutsal kaynak değil, doğrulama katmanlarından biri.
+                # Film merkezli değil, kişi merkezli doğrulama.
+                # Katmanlar: Blacklist → NameDB → TMDB Person Search
+                self._log(f"\n[6/6] NAME_VERIFY")
                 t = time.time()
-                self.stats.start_stage("TMDB_VERIFY")
+                self.stats.start_stage("NAME_VERIFY")
+
+                # TMDB client hazırla (person search için)
+                _tmdb_client = None
+                _tmdb_enabled = bool((content_profile or {}).get("tmdb_enabled", True))
+                if _tmdb_enabled:
+                    try:
+                        from core.tmdb_verify import TMDBClient
+                        _tmdb_api_key = get_tmdb_api_key()
+                        if _tmdb_api_key:
+                            _tmdb_client = TMDBClient(
+                                api_key=_tmdb_api_key,
+                                language="tr-TR",
+                                log_cb=self._log,
+                            )
+                    except Exception as e:
+                        self._log(f"  [TMDB] Client başlatılamadı: {e}")
+
+                # NameVerifier oluştur
+                verifier = NameVerifier(
+                    name_db=self._name_db,
+                    tmdb_client=_tmdb_client,
+                    log_cb=self._log,
+                )
+
+                # ── Yapım Ekibi doğrulama ──
+                from core.export_engine import _map_crew_to_roles, _OUTPUT_ROLES
+                director_names_raw = []
+                for d in (cdata.get("directors") or []):
+                    if isinstance(d, str):
+                        director_names_raw.append(d.strip())
+                    elif isinstance(d, dict):
+                        director_names_raw.append(str(d.get("name", "")).strip())
+
+                crew_roles = _map_crew_to_roles(
+                    cdata.get("technical_crew") or cdata.get("crew") or [],
+                    director_names_raw)
+                crew_roles = verifier.verify_crew(crew_roles)
+
+                # Doğrulanmış crew verisini cdata'ya geri yaz
+                cdata["_verified_crew_roles"] = crew_roles
+
+                # ── Oyuncu listesi doğrulama ──
+                if cdata.get("cast"):
+                    cdata["cast"] = verifier.verify_cast(cdata.get("cast", []))
+                    cdata["total_actors"] = len(cdata["cast"])
+
+                # ── Verification log kaydet ──
+                cdata["_verification_log"] = verifier.get_log()
+                cdata["_verification_log_text"] = verifier.get_log_text()
+
+                verify_elapsed = time.time() - t
+                self._stage("NAME_VERIFY", verify_elapsed,
+                            status="completed")
+                self._log(f"  OK: İsim doğrulama tamamlandı ({verify_elapsed:.1f}s)")
+
+                # ══ ESKI TMDB FILM ARAMASINI KORU (opsiyonel, eski profiller için) ══
+                # FilmDiziONEOCR profili: tmdb_enabled=false → atla
+                # FilmDizi profili: tmdb_enabled=true → eski film araması hala çalışır
                 tmdb_matched = False
-                if content_profile and content_profile.get("match_parse_enabled"):
-                    # Spor profili: TMDB yerine MATCH_PARSE çalıştır (ileride implement edilecek)
-                    self._log(f"  [MATCH_PARSE] Profil={profile_name} — match_parse_enabled=True (skipped, ileride implement edilecek)")
-                    self._stage("TMDB_VERIFY", 0.0, status="skipped", reason="match_parse_enabled")
-                    tmdb_result = None
-                else:
-                    # Dosya adından gelen başlık her zaman öncelikli
+                tmdb_result = None
+                if _tmdb_enabled and not (content_profile or {}).get("match_parse_enabled"):
                     if film_title_from_filename:
                         cdata["film_title"] = film_title_from_filename
-                        self._log(f"  [TMDB] Dosya adı anchor başlığı: '{film_title_from_filename}'")
-                    elif not cdata.get("film_title"):
-                        self._log(f"  [TMDB] film_title yok ve dosya adından çıkarılamadı")
-
-                    tmdb_result = self._run_tmdb(cdata, work_dir)
-                    self._stage("TMDB_VERIFY", time.time() - t,
-                                status=tmdb_result.reason,
-                                hits=tmdb_result.hits,
-                                misses=tmdb_result.misses,
-                                updated=tmdb_result.updated,
-                                matched_title=tmdb_result.matched_title)
-                    if tmdb_result.updated or tmdb_result.matched_id:
-                        self._log(f"  OK: '{tmdb_result.matched_title}' — "
-                                  f"hits:{tmdb_result.hits} misses:{tmdb_result.misses}")
-                        # TMDB-only credits output when verification succeeds
-                        cdata = self._apply_tmdb_credits(cdata, tmdb_result)
-                        tmdb_matched = True
-                        if ocr_lines:
-                            try:
-                                from core.credits_qa import check_missing_actors
-                                qa = check_missing_actors(
-                                    ocr_results=ocr_lines,
-                                    tmdb_cast=cdata.get("cast", []),
-                                )
-                                if qa.missing_actors:
-                                    cdata["credits_qa"] = qa.to_dict()
-                                    self._log(f"  {qa.summary}")
-                            except Exception as e:
-                                self._log(f"  [QA] {e}")
-                    else:
-                        self._log(f"  --: {tmdb_result.reason}")
-
-                # ══ BLOK2: TMDB eşleşmedi → VLM ile derin okuma ══
-                if not tmdb_matched:
-                    if self._blok2_enabled and self._vlm_reader.enabled and self._vlm_reader.is_available():
-                        self._log("\n[BLOK2] TMDB eşleşmedi — VLM ile derin okuma başlatılıyor...")
-                        vlm_t = time.time()
-                        vlm_ocr_lines = []
-                        for frame_info in candidates:
-                            result = self._vlm_reader.read_text_from_frame(
-                                frame_info["path"], lang="tr")
-                            if result and result.get("text"):
-                                for line_text in result["text"].splitlines():
-                                    line_text = line_text.strip()
-                                    if line_text:
-                                        vlm_ocr_lines.append({
-                                            "text": line_text,
-                                            "avg_confidence": 0.85,
-                                            "bbox": [],
-                                            "frame_path": frame_info["path"],
-                                            "source": "vlm_blok2",
-                                        })
-                        if vlm_ocr_lines:
-                            # VLM sonuçlarına _repair_turkish() uygulanmaz
-                            ocr_lines = self._merge_blok2_results(ocr_lines, vlm_ocr_lines)
-                            parser = CreditsParser(turkish_name_db=self._name_db)
-                            parsed = parser.parse(ocr_lines, layout_pairs=layout_pairs)
-                            cdata = parser.to_report_dict(parsed)
-                            # BLOK2 sonrası cdata_raw güncelle — DATABASE ham verisi tutarlı olsun
-                            cdata_raw = copy.deepcopy(cdata)
-                            self._log(
-                                f"  [BLOK2] VLM okuma: {len(vlm_ocr_lines)} satır, "
-                                f"toplam: {len(ocr_lines)} satır ({time.time()-vlm_t:.1f}s)"
-                            )
-                    else:
-                        self._log("  [BLOK2] Pasif — config'de blok2_enabled=false")
-                        # Gemini cast extraction — daha önce (pre-TMDB) çalıştırılmadıysa çalıştır
-                        if cdata.get("gemini_extracted"):
-                            self._log("  [Gemini] Zaten çalıştı (pre-TMDB) — atlanıyor")
-                        elif cdata.get("gemini_timeout"):
-                            self._log("  [Gemini] Pre-TMDB timeout — ikinci deneme atlanıyor")
+                    try:
+                        tmdb_result = self._run_tmdb(cdata, work_dir)
+                        if tmdb_result and (tmdb_result.updated or tmdb_result.matched_id):
+                            self._log(f"  [TMDB Film] '{tmdb_result.matched_title}' — "
+                                      f"hits:{tmdb_result.hits} misses:{tmdb_result.misses}")
+                            # TMDB film eşleşti — ama artık OCR verisini SİLMİYORUZ
+                            # TMDB verisini ek bilgi olarak ekliyoruz
+                            tmdb_matched = True
+                            cdata["_tmdb_film_match"] = {
+                                "title": tmdb_result.matched_title,
+                                "id": tmdb_result.matched_id,
+                                "hits": tmdb_result.hits,
+                                "misses": tmdb_result.misses,
+                            }
+                            # TMDB cast/crew'yu referans olarak ekle (üzerine yazma!)
+                            cdata["_tmdb_cast_ref"] = tmdb_result.cast or []
+                            cdata["_tmdb_crew_ref"] = tmdb_result.crew or []
                         else:
-                            self._run_gemini_cast_extract(ocr_lines, cdata)
+                            if tmdb_result:
+                                self._log(f"  [TMDB Film] {tmdb_result.reason}")
+                    except Exception as e:
+                        self._log(f"  [TMDB Film] Hata: {e}")
 
-                # ══ [LLM] LLM_CAST_FILTER ══════════════════════════
-                # Sadece TMDB eşleşmezse LLM devreye girsin
-                if not tmdb_matched:
-                    self._log(f"\n[LLM] Cast Filtreleme (TMDB eşleşmedi)")
+                # ══ [LLM] LLM_CAST_FILTER (opsiyonel) ════════════════
+                if self._llm_filter_enabled and not tmdb_matched:
+                    self._log(f"\n[LLM] Cast Filtreleme")
                     t = time.time()
-                    # Provider gemini iken Ollama model adı gönderme
                     import core.llm_provider as _llm_prov
                     _active_provider = _llm_prov.get_provider()
                     if _active_provider == "gemini":
@@ -495,8 +523,6 @@ class PipelineRunner:
                     llm_elapsed = time.time() - t
                     if llm_elapsed > 0.1:
                         self._log(f"  [LLM] Cast filtreleme: {llm_elapsed:.1f}s")
-                else:
-                    self._log(f"\n[LLM] TMDB eşleşti — LLM filtresi atlanıyor")
 
                 # ══ [GOOGLE_VI] Akıllı tetik ════════════════════════════
                 # TMDB miss + düşük çözünürlük veya non-standard font ise Google VI çağır
