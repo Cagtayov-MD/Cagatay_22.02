@@ -1294,6 +1294,23 @@ class ExportEngine:
         L.append(f"  {'FRAME':<{fw}}:     {fps_str}")
         L.append(f"  {'TOPLAM SÜRE':<{fw}}:     {duration}")
 
+        # ── SESLENDİRME DİLİ ──
+        _detected_lang = ""
+        if audio_result and isinstance(audio_result, dict):
+            _detected_lang = audio_result.get("detected_language", "")
+        if _detected_lang and _detected_lang != "unknown":
+            try:
+                from core.gemini_summarizer import get_language_label
+                _lang_label = get_language_label(_detected_lang)
+            except ImportError:
+                _lang_label = _detected_lang.upper()
+            if _detected_lang.lower() == "tr":
+                L.append(f"  {'SESLENDİRME DİLİ':<{fw}}:     {_lang_label}")
+            else:
+                L.append(f"  {'SESLENDİRME DİLİ':<{fw}}:     {_lang_label} (ALTYAZILI)")
+        else:
+            L.append(f"  {'SESLENDİRME DİLİ':<{fw}}:     VERİ YOK")
+
         cast_list = cr.get("cast") or []
         actor_names = [
             (c.get("actor_name") or "").strip()
@@ -1314,13 +1331,23 @@ class ExportEngine:
             director_names,
             [name for names in crew_roles.values() for name in names],
         )
+        # Original title'daki kelimeleri de koru (İngilizce i→I, İ→I değil)
+        if original_title:
+            for token in original_title.split():
+                t = token.strip("''`\".,;:!?()[]{}")
+                if t:
+                    protected_words.add(t.casefold())
 
         # Yabancı özel isimleri özet işleme için topla
         foreign_nouns = _collect_foreign_nouns(cast_list)
 
         # ── ÖZET ─────────────────────────────────────────────────────
+        _summary_model = ""
+        if audio_result and isinstance(audio_result, dict):
+            _summary_model = audio_result.get("summary_model", "")
+        _ozet_label = "ÖZET(PRO)" if "pro" in _summary_model.lower() else "ÖZET"
         L.append(sep)
-        L.append("  ÖZET")
+        L.append(f"  {_ozet_label}")
         L.append(sep)
         summary = None
         if audio_result and isinstance(audio_result, dict):
@@ -1390,8 +1417,10 @@ class ExportEngine:
                 L.append(f"  {output_role:<{role_col}}VERİ YOK")
 
         # ── DOĞRULAMA LOGU (verification log) ──────────────────────
+        # FilmDizi profilinde kullanıcı raporunda gösterilmez
+        _content_type = r.get("processing", {}).get("content_type", "")
         _vlog_text = cr.get("_verification_log_text", "")
-        if _vlog_text:
+        if _vlog_text and _content_type != "FilmDizi":
             L.append(sep)
             L.append("  DOĞRULAMA LOGU")
             L.append(sep)

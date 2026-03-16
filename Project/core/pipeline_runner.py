@@ -176,7 +176,7 @@ class PipelineRunner:
 
     # ──────────────────────────────────────────────────────────────
     def run(self, video_path, scope="video_only",
-            first_min=4.0, last_min=8.0, content_profile: dict | None = None) -> dict:
+            first_min=6.0, last_min=10.0, content_profile: dict | None = None) -> dict:
         # İçerik profilinden scope/first_min/last_min değerlerini uygula
         profile_name = "FilmDizi"
         if content_profile:
@@ -190,6 +190,18 @@ class PipelineRunner:
                 last_min  = float(content_profile.get("last_segment_minutes", last_min))
             except (ValueError, TypeError):
                 print(f"  [Config] Geçersiz last_segment_minutes — varsayılan {last_min} dk kullanılıyor")
+
+            # ── Profil ayarlarını config'e merge et (ASR/OCR parametreleri) ──
+            _profile_merge_keys = (
+                "audio_stages", "whisper_model", "whisper_language",
+                "compute_type", "beam_size", "ocr_engine",
+                "tmdb_enabled", "tmdb_person_verify",
+                "gemini_enabled", "llm_cast_filter", "blok2_enabled",
+                "qwen_fallback_on_handwriting",
+            )
+            for _pk in _profile_merge_keys:
+                if _pk in content_profile:
+                    self.config[_pk] = content_profile[_pk]
 
         t0 = time.time()
         video_path = str(Path(video_path).resolve())
@@ -471,8 +483,6 @@ class PipelineRunner:
                 self._log(f"  OK: İsim doğrulama tamamlandı ({verify_elapsed:.1f}s)")
 
                 # ══ ESKI TMDB FILM ARAMASINI KORU (opsiyonel, eski profiller için) ══
-                # FilmDiziONEOCR profili: tmdb_enabled=false → atla
-                # FilmDizi profili: tmdb_enabled=true → eski film araması hala çalışır
                 tmdb_matched = False
                 tmdb_result = None
                 if _tmdb_enabled and not (content_profile or {}).get("match_parse_enabled"):
@@ -483,46 +493,105 @@ class PipelineRunner:
                         if tmdb_result and (tmdb_result.updated or tmdb_result.matched_id):
                             self._log(f"  [TMDB Film] '{tmdb_result.matched_title}' — "
                                       f"hits:{tmdb_result.hits} misses:{tmdb_result.misses}")
-                            # TMDB film eşleşti — ama artık OCR verisini SİLMİYORUZ
-                            # TMDB verisini ek bilgi olarak ekliyoruz
                             tmdb_matched = True
-                            cdata["_tmdb_film_match"] = {
-                                "title": tmdb_result.matched_title,
-                                "id": tmdb_result.matched_id,
-                                "hits": tmdb_result.hits,
-                                "misses": tmdb_result.misses,
-                            }
-                            # TMDB cast/crew'yu referans olarak ekle (üzerine yazma!)
-                            cdata["_tmdb_cast_ref"] = tmdb_result.cast or []
-                            cdata["_tmdb_crew_ref"] = tmdb_result.crew or []
+
+                            # ── Profil bazlı dallanma ──
+                            if profile_name in ("FilmDizi", "FilmDiziQwen"):
+                                # TMDB LOCK: OCR verisi silinir, TMDB kanonik veri yazılır
+                                cdata = self._apply_tmdb_credits(cdata, tmdb_result)
+                                self._log(f"  [TMDB] LOCK aktif — cast:{cdata['total_actors']} crew:{cdata['total_crew']}")
+                                # QA: OCR'da olup TMDB'de olmayan oyuncular
+                                if ocr_lines:
+                                    try:
+                                        from core.credits_qa import check_missing_actors
+                                        qa = check_missing_actors(
+                                            ocr_results=ocr_lines,
+                                            tmdb_cast=cdata.get("cast", []),
+                                        )
+                                        if qa.missing_actors:
+                                            cdata["credits_qa"] = qa.to_dict()
+                                            self._log(f"  {qa.summary}")
+                                    except Exception as e:
+                                        self._log(f"  [QA] {e}")
+                            else:
+                                # REFERANS MODU (FilmDiziONEOCR vb.): OCR master kalır
+                                cdata["_tmdb_film_match"] = {
+                                    "title": tmdb_result.matched_title,
+                                    "id": tmdb_result.matched_id,
+                                    "hits": tmdb_result.hits,
+                                    "misses": tmdb_result.misses,
+                                }
+                                cdata["_tmdb_cast_ref"] = tmdb_result.cast or []
+                                cdata["_tmdb_crew_ref"] = tmdb_result.crew or []
+                                self._log(f"  [TMDB] Referans modu — OCR verisi korunuyor")
                         else:
                             if tmdb_result:
                                 self._log(f"  [TMDB Film] {tmdb_result.reason}")
                     except Exception as e:
                         self._log(f"  [TMDB Film] Hata: {e}")
 
-                # ══ [LLM] LLM_CAST_FILTER (opsiyonel) ════════════════
-                if self._llm_filter_enabled and not tmdb_matched:
-                    self._log(f"\n[LLM] Cast Filtreleme")
-                    t = time.time()
-                    import core.llm_provider as _llm_prov
-                    _active_provider = _llm_prov.get_provider()
-                    if _active_provider == "gemini":
-                        _llm_filter_model = self.config.get("llm_filter_model") or None
+                # ══ BLOK2: TMDB eşleşmedi → VLM ile derin okuma ══
+                if not tmdb_matched:
+                    if self._blok2_enabled and self._vlm_reader.enabled and self._vlm_reader.is_available():
+                        self._log("\n[BLOK2] TMDB eşleşmedi — VLM ile derin okuma başlatılıyor...")
+                        vlm_t = time.time()
+                        vlm_ocr_lines = []
+                        for frame_info in candidates:
+                            result_vlm = self._vlm_reader.read_text_from_frame(
+                                frame_info["path"], lang="tr")
+                            if result_vlm and result_vlm.get("text"):
+                                for line_text in result_vlm["text"].splitlines():
+                                    line_text = line_text.strip()
+                                    if line_text:
+                                        vlm_ocr_lines.append({
+                                            "text": line_text,
+                                            "avg_confidence": 0.85,
+                                            "bbox": [],
+                                            "frame_path": frame_info["path"],
+                                            "source": "vlm_blok2",
+                                        })
+                        if vlm_ocr_lines:
+                            ocr_lines = self._merge_blok2_results(ocr_lines, vlm_ocr_lines)
+                            parser = CreditsParser(turkish_name_db=self._name_db)
+                            parsed = parser.parse(ocr_lines, layout_pairs=layout_pairs)
+                            cdata = parser.to_report_dict(parsed)
+                            cdata_raw = copy.deepcopy(cdata)
+                            self._log(
+                                f"  [BLOK2] VLM okuma: {len(vlm_ocr_lines)} satır, "
+                                f"toplam: {len(ocr_lines)} satır ({time.time()-vlm_t:.1f}s)"
+                            )
                     else:
-                        _llm_filter_model = self.config.get("llm_filter_model") or self.config.get("ollama_model", "qwen2.5vl:7b")
-                    llm_filter = LLMCastFilter(
-                        ollama_url=self.config.get("ollama_url", "http://localhost:11434"),
-                        model=_llm_filter_model,
-                        enabled=self._llm_filter_enabled,
-                        log_cb=self._log,
-                        name_checker=self._name_db.is_name,
-                    )
-                    cdata["cast"] = llm_filter.filter_cast(cdata.get("cast", []), log_cb=self._log)
-                    cdata["total_actors"] = len(cdata["cast"])
-                    llm_elapsed = time.time() - t
-                    if llm_elapsed > 0.1:
-                        self._log(f"  [LLM] Cast filtreleme: {llm_elapsed:.1f}s")
+                        if not tmdb_matched:
+                            self._log("  [BLOK2] Pasif — config'de blok2_enabled=false")
+                            if not cdata.get("gemini_extracted"):
+                                self._run_gemini_cast_extract(ocr_lines, cdata)
+
+                # ══ [LLM] LLM_CAST_FILTER (opsiyonel) ════════════════
+                # Sadece TMDB eşleşmezse LLM devreye girsin
+                if not tmdb_matched:
+                    if self._llm_filter_enabled:
+                        self._log(f"\n[LLM] Cast Filtreleme (TMDB eşleşmedi)")
+                        t = time.time()
+                        import core.llm_provider as _llm_prov
+                        _active_provider = _llm_prov.get_provider()
+                        if _active_provider == "gemini":
+                            _llm_filter_model = self.config.get("llm_filter_model") or None
+                        else:
+                            _llm_filter_model = self.config.get("llm_filter_model") or self.config.get("ollama_model", "qwen2.5vl:7b")
+                        llm_filter = LLMCastFilter(
+                            ollama_url=self.config.get("ollama_url", "http://localhost:11434"),
+                            model=_llm_filter_model,
+                            enabled=self._llm_filter_enabled,
+                            log_cb=self._log,
+                            name_checker=self._name_db.is_name,
+                        )
+                        cdata["cast"] = llm_filter.filter_cast(cdata.get("cast", []), log_cb=self._log)
+                        cdata["total_actors"] = len(cdata["cast"])
+                        llm_elapsed = time.time() - t
+                        if llm_elapsed > 0.1:
+                            self._log(f"  [LLM] Cast filtreleme: {llm_elapsed:.1f}s")
+                else:
+                    self._log(f"\n[LLM] TMDB eşleşti — LLM filtresi atlanıyor")
 
                 # ══ [GOOGLE_VI] Akıllı tetik ════════════════════════════
                 # TMDB miss + düşük çözünürlük veya non-standard font ise Google VI çağır
@@ -597,14 +666,17 @@ class PipelineRunner:
                     if gemini_api_key:
                         try:
                             from core.gemini_summarizer import summarize_transcript
+                            _detected_lang = audio_result.get("detected_language", "tr")
                             summary = summarize_transcript(
                                 transcript_text,
                                 api_key=gemini_api_key,
                                 log_cb=self._log,
                                 variant="en",
+                                detected_language=_detected_lang,
                             )
                             if summary:
                                 audio_result["summary"] = summary
+                                audio_result["summary_model"] = summary.get("model_used", "")
                         except Exception as _sum_e:
                             self._log(f"  [Summarizer] Özet hatası (pipeline etkilenmedi): {_sum_e}")
                     else:
@@ -848,6 +920,11 @@ class PipelineRunner:
         cdata["total_crew"] = len(crew)
         cdata["verification_status"] = "tmdb_verified"
         cdata["keywords_source"] = "tmdb_only"
+
+        # TMDB lock aktif — NAME_VERIFY'dan kalan _verified_crew_roles geçersiz
+        cdata.pop("_verified_crew_roles", None)
+        cdata.pop("_verification_log_text", None)
+        cdata.pop("_verification_log", None)
 
         # Bug 1: film_title'ı TMDB başlığıyla güncelle
         if tmdb_result.matched_title:

@@ -132,8 +132,8 @@ class AudioPipeline:
 
             if not language_is_turkish:
                 self._log(
-                    f"  [DİL TESPİTİ] Türkçe değil ({lang_result['detected_language'].upper()}) "
-                    f"— TRANSCRIBE ve POST_PROCESS atlanacak"
+                    f"  [DİL TESPİTİ] Dil: {lang_result['detected_language'].upper()} "
+                    f"— yabancı dilde transcribe yapılacak"
                 )
 
         # ══════════════════════════════════════════════════════
@@ -187,39 +187,29 @@ class AudioPipeline:
         # ══════════════════════════════════════════════════════
         transcribe_result = {"segments": []}
 
-        if "transcribe" in stages_to_run and clean_wav and language_is_turkish:
+        # Tespit edilen dili Whisper'a aktar
+        _whisper_lang = result.get("detected_language", options.get("whisper_language", "tr"))
+        if _whisper_lang == "unknown":
+            _whisper_lang = None  # Whisper kendi tespit etsin
+
+        if "transcribe" in stages_to_run and clean_wav:
             self._log(f"\n[E] TRANSCRIBE")
             transcribe = TranscribeStage(log_cb=self._log)
-            # BUG-01 FIX: hf_token transcribe.run() çağrısından kaldırıldı.
-            # DiarizeStage [C] zaten PyAnnote'u çalıştırdı ve diarize_result
-            # içinde segmentler var. Eğer hf_token geçilirse TranscribeStage
-            # yeniden DiarizationPipeline oluşturur → VRAM ve zaman ikiye katlanır.
-            # Çözüm: diarization= parametresi yeterli; hf_token YOK.
-            # BUG-02 FIX: diarize_result (tam dict) yerine sadece segments listesi
-            # geçirilmeli; _assign_speakers list bekler, dict gelince sessizce dönerdi.
-            # BUG-03 FIX: Whisper ayarları options={} ile geçiriliyor; ayrı kwargs
-            # olarak geçirildiğinde _run_legacy bunları görmüyordu.
             transcribe_result = transcribe.run(
                 clean_wav,
                 diarization=diarize_result.get("segments", []),
                 options={
                     "whisper_model": options.get("whisper_model", "large-v3"),
-                    "whisper_language": options.get("whisper_language", "tr"),
+                    "whisper_language": _whisper_lang,
                     "compute_type": options.get("compute_type"),
-                    "beam_size": options.get("beam_size", 5),  # beam_size olarak duzeltildi; eskiden batch_size: 16 geliyordu
-                    "tmdb_cast": self.config.get("tmdb_cast", []),  # cast isimlerini Whisper'a initial_prompt olarak geçir
+                    "beam_size": options.get("beam_size", 5),
+                    "tmdb_cast": self.config.get("tmdb_cast", []),
                 },
             )
             result["stages"]["transcribe"] = {
                 "duration_sec": transcribe_result["stage_time_sec"],
                 "status": transcribe_result["status"],
                 "segments": transcribe_result.get("total_segments", 0),
-            }
-        elif "transcribe" in stages_to_run and not language_is_turkish:
-            result["stages"]["transcribe"] = {
-                "status": "skipped",
-                "reason": f"non_turkish_language: {result.get('detected_language', 'unknown')}",
-                "duration_sec": 0.0,
             }
 
         # ══════════════════════════════════════════════════════

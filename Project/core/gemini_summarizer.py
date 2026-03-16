@@ -1,12 +1,11 @@
 """
-gemini_summarizer.py — Transcript'ten Türkçe özet çıkarma (Gemini 2.5 Pro).
+gemini_summarizer.py — Transcript'ten Türkçe özet çıkarma.
 
-summarize_transcript(transcript_text, api_key, log_cb) -> dict | None
-  - Transcript metnini Gemini'ye gönderir
-  - İngilizce prompt ile Türkçe özet üretir: {"en": ".."}
+Model Stratejisi: Gemini 2.5 Pro (birincil) → Flash (fallback)
+Çok dilli destek: Transcript dil bilgisi prompt'a eklenir, çıktı her zaman Türkçe.
 
-VARYANT SEÇİMİ:
-  - summarize_transcript(..., variant="en") -> EN prompt (varsayılan)
+summarize_transcript(transcript_text, api_key, log_cb, detected_language) -> dict | None
+  → {"en": "...", "model_used": "gemini-2.5-pro"|"gemini-2.5-flash"}
 """
 
 import core.llm_provider as _llm
@@ -15,11 +14,33 @@ _TIMEOUT_SEC = 90
 _MAX_CHARS = 120000
 
 # ─────────────────────────────────────────────────────────────────────────────
-# VARYANT EN — İngilizce kurallar, Türkçe çıktı
+# DİL ETİKETLERİ
+# ─────────────────────────────────────────────────────────────────────────────
+LANG_LABELS = {
+    "tr": "TR", "en": "İNG", "de": "ALM", "fr": "FRA",
+    "es": "İSP", "it": "İTA", "ru": "RUS", "ar": "ARA",
+    "ja": "JAP", "ko": "KOR", "zh": "ÇİN", "pt": "POR",
+    "nl": "HOL", "pl": "POL", "sv": "İSV", "da": "DAN",
+    "fi": "FİN", "no": "NOR", "el": "YUN", "hu": "MAC",
+    "cs": "ÇEK", "ro": "ROM", "hi": "HİN",
+}
+
+
+def get_language_label(lang_code: str) -> str:
+    """ISO dil kodundan kısa Türkçe etiket döndür."""
+    if not lang_code:
+        return "VERİ YOK"
+    return LANG_LABELS.get(lang_code.lower(), lang_code.upper())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SYSTEM PROMPT — Çok dilli destek
 # ─────────────────────────────────────────────────────────────────────────────
 _SYSTEM_PROMPT_EN = (
     "You are an analytical summarizer working for a video archive database. "
     "You will be given a transcript (ASR) of a film or video.\n"
+    "The transcript may be in any language. Analyze the content in its original "
+    "language, then write the summary in Turkish.\n\n"
     "Your task: analyze the story in the transcript and produce a concise, "
     "direct summary in narrative prose format.\n\n"
     "STRICT RULES — THESE MUST BE FOLLOWED WITHOUT EXCEPTION:\n\n"
@@ -39,7 +60,7 @@ _SYSTEM_PROMPT_EN = (
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Few-shot örnek (her iki varyanta eklenir)
+# Few-shot örnek
 # ─────────────────────────────────────────────────────────────────────────────
 _FEW_SHOT = (
     "Aşağıdaki örnek DOĞRU formattır — tam olarak böyle yaz:\n\n"
@@ -55,57 +76,112 @@ _FEW_SHOT = (
     "Şimdi aşağıdaki transcript için aynı formatta özet yaz:\n"
 )
 
+# Türkçe'ye özgü karakterler (kontrol için)
+_TR_CHARS = set("çÇğĞıİöÖşŞüÜ")
+
+
+def _is_turkish_text(text: str) -> bool:
+    """Metnin Türkçe olup olmadığını kontrol et."""
+    if not text:
+        return False
+    return any(c in _TR_CHARS for c in text)
+
+
+def _try_summarize(prompt: str, model: str, api_key: str, log_cb) -> str | None:
+    """Tek model ile özet denemesi yap."""
+    try:
+        result = _llm._gemini_generate(
+            prompt,
+            system=_SYSTEM_PROMPT_EN,
+            api_key=api_key or None,
+            model=model,
+            timeout=_TIMEOUT_SEC,
+            log_cb=log_cb,
+        )
+        return result if result and result.strip() else None
+    except Exception as e:
+        if log_cb:
+            log_cb(f"  [Summarizer] {model} hatası: {e}")
+        return None
+
+
+def _translate_to_turkish(text: str, api_key: str, log_cb) -> str:
+    """Flash ile Türkçeye çevir (edge case: özet yabancı dilde geldiğinde)."""
+    try:
+        result = _llm._gemini_generate(
+            f"Translate the following text to Turkish. Output only the Turkish translation, nothing else.\n\n{text}",
+            system="You are a professional translator. Translate accurately to Turkish.",
+            api_key=api_key or None,
+            model="gemini-2.5-flash",
+            timeout=60,
+            log_cb=log_cb,
+        )
+        return result.strip() if result else text
+    except Exception:
+        return text
+
 
 def summarize_transcript(
     transcript_text: str,
     api_key: str = "",
-    model: str = "gemini-2.5-pro",
+    model: str = "",
     log_cb=None,
     variant: str = "en",
+    detected_language: str = "tr",
 ) -> dict | None:
-    """Transcript metninden Gemini 2.5 Pro ile Türkçe özet üret.
+    """Transcript metninden Gemini ile Türkçe özet üret.
 
-    Args:
-        transcript_text: Ham transcript metni.
-        api_key: Gemini API anahtarı. Boşsa env'den okunur.
-        model: Kullanılacak Gemini model adı.
-        log_cb: İsteğe bağlı log callback fonksiyonu.
-        variant: "en" (varsayılan) — İngilizce prompt ile Türkçe özet üretir.
+    Model stratejisi: Pro → Flash fallback.
 
     Returns:
-        variant="en"   -> {"en": "<özet>"}
+        {"en": "<özet>", "model_used": "gemini-2.5-pro"|"gemini-2.5-flash"}
         Hata durumunda None.
     """
     if not transcript_text or not transcript_text.strip():
         return None
 
     snippet = transcript_text.strip()[:_MAX_CHARS]
-    prompt = _FEW_SHOT + f"Transcript:\n{snippet}"
+
+    # Dil bilgisini prompt'a ekle
+    lang_label = get_language_label(detected_language)
+    lang_info = f"\nTranscript language: {detected_language.upper()} ({lang_label})\n" if detected_language != "tr" else ""
+
+    prompt = _FEW_SHOT + lang_info + f"Transcript:\n{snippet}"
 
     results = {}
 
-    # ── Varyant EN ──────────────────────────────────────────────────────────
     if variant in ("en", "both"):
-        if log_cb:
-            log_cb("  [Summarizer] EN varyant özeti oluşturuluyor...")
-        try:
-            en_result = _llm._gemini_generate(
-                prompt,
-                system=_SYSTEM_PROMPT_EN,
-                api_key=api_key or None,
-                model=model,
-                timeout=_TIMEOUT_SEC,
-                log_cb=log_cb,
-            )
-            if en_result:
-                results["en"] = en_result
+        summary_text = None
+        model_used = ""
+
+        # Strateji: belirli model verilmişse onu kullan, yoksa Pro→Flash
+        models_to_try = [model] if model else ["gemini-2.5-pro", "gemini-2.5-flash"]
+
+        for m in models_to_try:
+            if log_cb:
+                log_cb(f"  [Summarizer] EN varyant özeti oluşturuluyor ({m})...")
+            summary_text = _try_summarize(prompt, m, api_key, log_cb)
+            if summary_text:
+                model_used = m
                 if log_cb:
-                    log_cb(f"  [Summarizer] EN özet alındı ({len(en_result)} karakter)")
+                    log_cb(f"  [Summarizer] EN özet alındı ({len(summary_text)} karakter, {m})")
+                break
             else:
                 if log_cb:
-                    log_cb("  [Summarizer] EN varyant boş yanıt döndü")
-        except Exception as e:
+                    log_cb(f"  [Summarizer] {m} başarısız — sonraki modele geçiliyor")
+
+        if not summary_text:
             if log_cb:
-                log_cb(f"  [Summarizer] EN varyant API hatası: {e}")
+                log_cb("  [Summarizer] Hiçbir modelden özet alınamadı")
+            return None
+
+        # Türkçe kontrolü — yabancı dilde gelirse Flash ile çevir
+        if not _is_turkish_text(summary_text):
+            if log_cb:
+                log_cb("  [Summarizer] Özet Türkçe değil — Flash ile çeviri yapılıyor")
+            summary_text = _translate_to_turkish(summary_text, api_key, log_cb)
+
+        results["en"] = summary_text
+        results["model_used"] = model_used
 
     return results if results else None
