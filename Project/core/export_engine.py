@@ -402,12 +402,15 @@ def _to_upper_tr_ozet(text: str, foreign_nouns: set) -> str:
         elif _has_turkish_suffix(base_cleaned):
             result.append(_upper_word_turkish(word))
 
-        # 7. İlk harf büyük + saf ASCII + DB'de yok → yabancı isim
-        #    LLM çıktısında özel isimler büyük harfle başlar.
+        # 7. Saf ASCII + DB'de yok + Türkçe kelime değil → yabancı isim
+        #    Büyük/küçük harf fark etmez — Gemini bazen küçük harfle yazıyor
         elif (base_cleaned
-                and base_cleaned[0].isupper()
                 and base_cleaned.isascii()
-                and base_cleaned.isalpha()):
+                and base_cleaned.isalpha()
+                and len(base_cleaned) >= 3
+                and not _is_known_name(base_cleaned)
+                and not _has_turkish_suffix(base_cleaned)
+                and base_cleaned.lower() not in _TR_SAFEGUARD_ASCII):
             result.append(_upper_word_english(word))
 
         # 8. Varsayılan: Türkçe kural
@@ -1204,7 +1207,7 @@ class ExportEngine:
             },
             "processing": {
                 "scope": scope,
-                "content_type": content_profile_name or "FilmDizi",
+                "content_type": content_profile_name or "FilmDizi-Paddle",
                 "ocr_engine": "PaddleOCR (GPU)",
                 "first_segment_min": first_min,
                 "last_segment_min": last_min,
@@ -1339,7 +1342,19 @@ class ExportEngine:
                     protected_words.add(t.casefold())
 
         # Yabancı özel isimleri özet işleme için topla
+        # Cast oyuncu + karakter adları
         foreign_nouns = _collect_foreign_nouns(cast_list)
+        # Crew isimleri de ekle (TMDB'den gelen crew adları yabancı olabilir)
+        crew_list = cr.get("technical_crew") or cr.get("crew") or []
+        for crew_entry in crew_list:
+            raw_name = (crew_entry.get("name") or "").strip()
+            if not raw_name:
+                continue
+            for token in raw_name.split():
+                base = re.split(r"['']", token)[0]
+                base = re.sub(r"[^a-zA-ZÀ-ÖØ-öø-ÿçğıöşüÇĞİÖŞÜ]", "", base)
+                if base and not _is_turkish_word(base):
+                    foreign_nouns.add(_to_ascii_upper(base))
 
         # ── ÖZET ─────────────────────────────────────────────────────
         _summary_model = ""
@@ -1417,10 +1432,10 @@ class ExportEngine:
                 L.append(f"  {output_role:<{role_col}}VERİ YOK")
 
         # ── DOĞRULAMA LOGU (verification log) ──────────────────────
-        # FilmDizi profilinde kullanıcı raporunda gösterilmez
+        # FilmDizi-Paddle profilinde kullanıcı raporunda gösterilmez
         _content_type = r.get("processing", {}).get("content_type", "")
         _vlog_text = cr.get("_verification_log_text", "")
-        if _vlog_text and _content_type != "FilmDizi":
+        if _vlog_text and _content_type != "FilmDizi-Paddle":
             L.append(sep)
             L.append("  DOĞRULAMA LOGU")
             L.append(sep)

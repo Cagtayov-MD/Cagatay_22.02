@@ -56,7 +56,11 @@ _SYSTEM_PROMPT_EN = (
     "Completely ignore subplots and secondary characters.\n\n"
     "NO CHARACTER INTRODUCTIONS: Do NOT introduce or describe characters by name/age/job "
     "at the start. Just tell the story — who they are will emerge from the events.\n\n"
-    "Output language: Turkish. No title. Start directly with the story."
+    "Output language: Turkish. No title. Start directly with the story.\n\n"
+    "FOREIGN NAMES: Write all foreign proper names (character names, place names, "
+    "person names) using their original Latin spelling. NEVER use Turkish-specific "
+    "characters (ç, ğ, ı, ö, ş, ü, İ) in foreign names. "
+    "Example: Write 'Vichita' not 'Viçita', 'Tom' not 'Töm'."
 )
 
 # ─────────────────────────────────────────────────────────────────────────────

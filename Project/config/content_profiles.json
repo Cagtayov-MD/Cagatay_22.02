@@ -1,5 +1,6 @@
 {
-  "FilmDizi": {
+  "FilmDizi-Paddle": {
+    "_description": "PaddleOCR birincil motor. TMDB LOCK modu — TMDB eşleşince OCR verisi silinir, TMDB kutsal kaynak olarak kullanılır.",
     "scope": "video_only",
     "first_segment_minutes": 6,
     "last_segment_minutes": 10,
@@ -12,17 +13,23 @@
     "compute_type": "float32",
     "beam_size": 3,
     "ocr_enabled": true,
+    "ocr_engine": "paddle",
+    "tmdb_enabled": true,
     "match_parse_enabled": false
   },
-  "FilmDiziONEOCR": {
-    "_description": "Windows 11 OneOCR birincil motor. TMDB kişi bazlı doğrulama aktif (kutsal kaynak değil). Gemini/LLM cast filter opsiyonel. ASR kapalı.",
+  "FilmDizi-ONEOCR": {
+    "_description": "Windows 11 OneOCR birincil motor. TMDB TAVSİYE modu — TMDB eşleşse bile OCR verisi master kalır, TMDB sadece referans. Bu profildeki değişiklikler FilmDizi-Paddle'ı ETKİLEMEZ.",
     "scope": "video_only",
-    "first_segment_minutes": 2,
-    "last_segment_minutes": 7,
+    "first_segment_minutes": 6,
+    "last_segment_minutes": 10,
     "text_filter_threshold": 0.23,
     "text_filter_mser_min_boxes": 3,
     "text_filter_max_per_segment": 135,
-    "audio_stages": [],
+    "audio_stages": ["extract", "detect_language", "transcribe"],
+    "whisper_model": "large-v3",
+    "whisper_language": "tr",
+    "compute_type": "float32",
+    "beam_size": 3,
     "ocr_enabled": true,
     "ocr_engine": "oneocr",
     "tmdb_enabled": true,
@@ -51,8 +58,8 @@
   },
   "FilmDiziQwen": {
     "scope": "video_only",
-    "first_segment_minutes": 2,
-    "last_segment_minutes": 7,
+    "first_segment_minutes": 6,
+    "last_segment_minutes": 10,
     "text_filter_threshold": 0.23,
     "text_filter_mser_min_boxes": 3,
     "text_filter_max_per_segment": 135,

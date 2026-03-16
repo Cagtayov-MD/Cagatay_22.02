@@ -178,9 +178,9 @@ class PipelineRunner:
     def run(self, video_path, scope="video_only",
             first_min=6.0, last_min=10.0, content_profile: dict | None = None) -> dict:
         # İçerik profilinden scope/first_min/last_min değerlerini uygula
-        profile_name = "FilmDizi"
+        profile_name = "FilmDizi-Paddle"
         if content_profile:
-            profile_name = content_profile.get("_name", "FilmDizi")
+            profile_name = content_profile.get("_name", "FilmDizi-Paddle")
             scope      = content_profile.get("scope", scope)
             try:
                 first_min = float(content_profile.get("first_segment_minutes", first_min))
@@ -496,7 +496,7 @@ class PipelineRunner:
                             tmdb_matched = True
 
                             # ── Profil bazlı dallanma ──
-                            if profile_name in ("FilmDizi", "FilmDiziQwen"):
+                            if profile_name in ("FilmDizi-Paddle", "FilmDiziQwen"):
                                 # TMDB LOCK: OCR verisi silinir, TMDB kanonik veri yazılır
                                 cdata = self._apply_tmdb_credits(cdata, tmdb_result)
                                 self._log(f"  [TMDB] LOCK aktif — cast:{cdata['total_actors']} crew:{cdata['total_crew']}")
@@ -514,7 +514,7 @@ class PipelineRunner:
                                     except Exception as e:
                                         self._log(f"  [QA] {e}")
                             else:
-                                # REFERANS MODU (FilmDiziONEOCR vb.): OCR master kalır
+                                # REFERANS MODU (FilmDizi-ONEOCR vb.): OCR master kalır
                                 cdata["_tmdb_film_match"] = {
                                     "title": tmdb_result.matched_title,
                                     "id": tmdb_result.matched_id,
