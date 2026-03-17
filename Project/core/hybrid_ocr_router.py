@@ -69,6 +69,7 @@ class HybridOCRRouter:
         self.cfg = cfg or {}
         self._log = log_cb or (lambda m: None)
         self._name_db = name_db
+        self._font_cache: dict[str, str] = {}
 
         self._qwen_fallback = self.cfg.get("qwen_fallback_on_handwriting", True)
 
@@ -207,7 +208,14 @@ class HybridOCRRouter:
             if not frame_path or not Path(frame_path).exists():
                 continue
 
-            avg_conf = frame_avg_conf.get(frame_path, 1.0)
+            avg_conf = frame_avg_conf.get(frame_path, None)
+
+            # Frame'de OCR sonucu yok → font analizi ile karar ver
+            if avg_conf is None:
+                font_type = self._estimate_font_type(frame_path)
+                if font_type == "handwriting":
+                    handwriting_frames.append(frame_info)
+                continue
 
             # Katman 1: Yüksek confidence → Qwen gerek yok
             if avg_conf >= CONF_HIGH:
@@ -264,16 +272,20 @@ class HybridOCRRouter:
 
     def _estimate_font_type(self, frame_path: str) -> str:
         """
-        Frame'in font tipini tahmin et.
+        Frame'in font tipini tahmin et (cache'li).
         OneOCREngine.estimate_font_type() metodunu kullanır.
         Returns: "standard" | "handwriting" | "decorative" | "unknown"
         """
+        if frame_path in self._font_cache:
+            return self._font_cache[frame_path]
         if self._oneocr is None:
             return "unknown"
         try:
-            return self._oneocr.estimate_font_type(frame_path)
+            result = self._oneocr.estimate_font_type(frame_path)
         except Exception:
-            return "unknown"
+            result = "unknown"
+        self._font_cache[frame_path] = result
+        return result
 
     def _compute_namedb_ratio(self, ocr_lines: list) -> float:
         """
