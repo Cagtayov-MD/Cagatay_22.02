@@ -1402,7 +1402,15 @@ class ExportEngine:
             protected_words.update(_collect_summary_name_candidates(summary))
             L.append(f"  {summary}")
         else:
-            L.append("  ÖZET OLUŞTURULAMADI.")
+            # Neden özet oluşturulamadığına dair açıklayıcı yer tutucu
+            if not audio_result or not isinstance(audio_result, dict):
+                L.append("  ÖZET OLUŞTURULAMADI (SES ANALİZİ ÇALIŞMADI).")
+            elif audio_result.get("status") == "error":
+                L.append("  ÖZET OLUŞTURULAMADI (SES ANALİZİ HATASI).")
+            elif not audio_result.get("transcript"):
+                L.append("  ÖZET OLUŞTURULAMADI (TRANSKRİPT MEVCUT DEĞİL).")
+            else:
+                L.append("  ÖZET OLUŞTURULAMADI (ÖZETLEYİCİ KULLANILABILIR DEĞİL).")
         ozet_content_end = len(L)
 
         # ── ANAHTAR SÖZCÜKLER ─────────────────────────────────────────
@@ -1446,15 +1454,17 @@ class ExportEngine:
                 L.append(f"  {output_role:<{role_col}}VERİ YOK")
 
         # ── DOĞRULAMA LOGU (verification log) ──────────────────────
-        # FilmDizi-Paddle profilinde kullanıcı raporunda gösterilmez
-        _content_type = r.get("processing", {}).get("content_type", "")
+        # Her profilde sabit bölüm olarak gösterilir; veri yoksa açıklayıcı
+        # bir yer tutucu satır yazılır.
         _vlog_text = cr.get("_verification_log_text", "")
-        if _vlog_text and _content_type != "FilmDizi-Paddle":
-            L.append(sep)
-            L.append("  DOĞRULAMA LOGU")
-            L.append(sep)
+        L.append(sep)
+        L.append("  DOĞRULAMA LOGU")
+        L.append(sep)
+        if _vlog_text:
             for vline in _vlog_text.splitlines():
                 L.append(f"  {vline}" if vline.strip() else "")
+        else:
+            L.append("  DOĞRULAMA LOGU MEVCUT DEĞİL")
 
         L.append(sep)
         L.append(f"  OLUŞTURULMA: {r['generated_at']}")

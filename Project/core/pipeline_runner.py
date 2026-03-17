@@ -959,10 +959,15 @@ class PipelineRunner:
         cdata["verification_status"] = "tmdb_verified"
         cdata["keywords_source"] = "tmdb_only"
 
-        # TMDB lock aktif — NAME_VERIFY'dan kalan _verified_crew_roles geçersiz
+        # TMDB lock aktif — NAME_VERIFY'dan kalan _verified_crew_roles geçersiz.
+        # _verified_crew_roles temizlenir; doğrulama logu yerine TMDB notu konur.
         cdata.pop("_verified_crew_roles", None)
-        cdata.pop("_verification_log_text", None)
         cdata.pop("_verification_log", None)
+        cdata["_verification_log_text"] = (
+            "  TMDB DOĞRULAMA KULLANILDI\n"
+            "  Yapım ekibi ve oyuncu listesi TMDB veritabanından otomatik olarak\n"
+            "  alındı; manuel OCR doğrulama logu bu içerik için geçerli değildir."
+        )
 
         # Bug 1: film_title'ı TMDB başlığıyla güncelle
         if tmdb_result.matched_title:

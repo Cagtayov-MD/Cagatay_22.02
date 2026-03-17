@@ -70,3 +70,129 @@ def test_upper_word_turkish_dotted_i_preserved():
     from core.export_engine import _upper_word_turkish
 
     assert _upper_word_turkish("İstanbul") == "İSTANBUL"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# USER-REPORT-FORMAT-01..06 — Sabit format (doğrulama logu + özet yer tutucusu)
+# ─────────────────────────────────────────────────────────────────────────────
+
+import tempfile
+import os
+
+
+def _make_minimal_report(content_type="FilmDizi-Paddle", vlog_text="", verification_status=""):
+    """Minimal geçerli rapor dict'i döndürür."""
+    from datetime import datetime
+
+    cr = {
+        "cast": [],
+        "technical_crew": [],
+        "directors": [],
+        "film_title": "Test Film",
+        "year": "2024",
+    }
+    if vlog_text:
+        cr["_verification_log_text"] = vlog_text
+    if verification_status:
+        cr["verification_status"] = verification_status
+    return {
+        "generated_at": datetime.now().isoformat(),
+        "profile": "test",
+        "file_info": {
+            "filename": "TEST_123_Test.mp4",
+            "resolution": "1920x1080",
+            "fps": 25,
+            "duration_human": "01:30:00",
+        },
+        "processing": {"content_type": content_type},
+        "credits": cr,
+    }
+
+
+def test_user_report_always_has_dogrulama_logu_section_for_filmdizi_paddle():
+    """USER-REPORT-FORMAT-01: FilmDizi-Paddle profilinde de DOĞRULAMA LOGU bölümü çıkmalı."""
+    from core.export_engine import ExportEngine
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        engine = ExportEngine(tmpdir)
+        r = _make_minimal_report(content_type="FilmDizi-Paddle", vlog_text="")
+        path = os.path.join(tmpdir, "out.txt")
+        engine._write_user_report(r, path)
+        content = open(path, encoding="utf-8-sig").read()
+        assert "DOĞRULAMA LOGU" in content, (
+            "FilmDizi-Paddle profilinde DOĞRULAMA LOGU bölümü eksik"
+        )
+
+
+def test_user_report_dogrulama_logu_placeholder_when_no_log():
+    """USER-REPORT-FORMAT-02: Doğrulama logu yoksa yer tutucu satır yazılmalı."""
+    from core.export_engine import ExportEngine
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        engine = ExportEngine(tmpdir)
+        r = _make_minimal_report(vlog_text="")
+        path = os.path.join(tmpdir, "out.txt")
+        engine._write_user_report(r, path)
+        content = open(path, encoding="utf-8-sig").read()
+        assert "DOĞRULAMA LOGU MEVCUT DEĞİL" in content, (
+            "Doğrulama logu yokken yer tutucu satır bekleniyor"
+        )
+
+
+def test_user_report_dogrulama_logu_shows_vlog_text_when_present():
+    """USER-REPORT-FORMAT-03: _verification_log_text varsa içeriği raporta gösterilmeli."""
+    from core.export_engine import ExportEngine
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        engine = ExportEngine(tmpdir)
+        r = _make_minimal_report(vlog_text="YONETMEN ONAYLANDI")
+        path = os.path.join(tmpdir, "out.txt")
+        engine._write_user_report(r, path)
+        content = open(path, encoding="utf-8-sig").read()
+        assert "YONETMEN ONAYLANDI" in content, (
+            "Doğrulama log metni kullanıcı raporunda görünmüyor"
+        )
+
+
+def test_user_report_ozet_section_always_present():
+    """USER-REPORT-FORMAT-04: ÖZET bölümü her zaman raporta yer almalı."""
+    from core.export_engine import ExportEngine
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        engine = ExportEngine(tmpdir)
+        r = _make_minimal_report()
+        path = os.path.join(tmpdir, "out.txt")
+        # audio_result=None → özet yok
+        engine._write_user_report(r, path, audio_result=None)
+        content = open(path, encoding="utf-8-sig").read()
+        assert "ÖZET" in content, "ÖZET bölümü audio_result=None durumunda eksik"
+
+
+def test_user_report_ozet_placeholder_when_no_audio():
+    """USER-REPORT-FORMAT-05: Ses analizi çalışmadıysa açıklayıcı yer tutucu olmalı."""
+    from core.export_engine import ExportEngine
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        engine = ExportEngine(tmpdir)
+        r = _make_minimal_report()
+        path = os.path.join(tmpdir, "out.txt")
+        engine._write_user_report(r, path, audio_result=None)
+        content = open(path, encoding="utf-8-sig").read()
+        assert "SES ANALİZİ ÇALIŞMADI" in content, (
+            "audio_result=None durumunda açıklayıcı özet yer tutucusu eksik"
+        )
+
+
+def test_user_report_yapim_ekibi_always_present():
+    """USER-REPORT-FORMAT-06: YAPIM EKİBİ bölümü her zaman tüm 7 rolü göstermeli."""
+    from core.export_engine import ExportEngine, _OUTPUT_ROLES
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        engine = ExportEngine(tmpdir)
+        r = _make_minimal_report()
+        path = os.path.join(tmpdir, "out.txt")
+        engine._write_user_report(r, path)
+        content = open(path, encoding="utf-8-sig").read()
+        assert "YAPIM EKİBİ" in content, "YAPIM EKİBİ bölümü eksik"
+        for role in _OUTPUT_ROLES:
+            assert role in content, f"Rol eksik: {role}"
