@@ -13,7 +13,9 @@ Prensip: Ses pipeline patlarsa video pipeline sonuçları kaybolmaz.
 
 import json
 import os
+import signal
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -112,28 +114,52 @@ class AudioBridge:
             self._log(f"  [AudioBridge] Config yazma hatası: {e}")
             return self._error_result(f"Config yazma hatası: {e}")
 
-        # ── 3. Subprocess çalıştır ──
+        # ── 3. Subprocess çalıştır (Popen — gerçek zamanlı log) ──
         cmd = [self._venv_python, self._worker_script, config_path]
         self._log(f"  [AudioBridge] Başlatılıyor: {Path(self._venv_python).name}")
         self._log(f"  [AudioBridge] Komut: {' '.join(cmd)}")
 
         try:
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=self._timeout,
             )
 
-            # stdout'u logla (pipeline progress mesajları)
-            if proc.stdout:
-                for line in proc.stdout.strip().split("\n"):
-                    self._log(f"  [audio] {line}")
+            # stderr'ı arka planda topla (deadlock önleme)
+            stderr_lines: list[str] = []
+
+            def _drain_stderr():
+                assert proc.stderr is not None
+                for line in proc.stderr:
+                    stderr_lines.append(line)
+
+            stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+            stderr_thread.start()
+
+            # stdout'u gerçek zamanlı logla
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                stripped = line.rstrip("\n\r")
+                if stripped:
+                    self._log(f"  [audio] {stripped}")
+
+            # Process'in bitmesini bekle (timeout ile)
+            try:
+                proc.wait(timeout=self._timeout)
+            except subprocess.TimeoutExpired:
+                self._log(f"  [AudioBridge] Timeout! ({self._timeout}s aşıldı) — process kill")
+                proc.kill()
+                proc.wait(timeout=10)
+                return self._error_result(f"Ses pipeline timeout ({self._timeout}s)")
+
+            stderr_thread.join(timeout=5)
 
             if proc.returncode != 0:
-                stderr_tail = proc.stderr.strip()[-500:] if proc.stderr else ""
+                stderr_tail = "".join(stderr_lines).strip()[-500:]
                 self._log(f"  [AudioBridge] Hata (rc={proc.returncode}): {stderr_tail}")
 
                 # Subprocess hatalı bitti ama audio_result.json yazılmış olabilir
@@ -143,10 +169,6 @@ class AudioBridge:
                 return self._error_result(
                     f"Subprocess hatası (rc={proc.returncode}): {stderr_tail}"
                 )
-
-        except subprocess.TimeoutExpired:
-            self._log(f"  [AudioBridge] Timeout! ({self._timeout}s aşıldı)")
-            return self._error_result(f"Ses pipeline timeout ({self._timeout}s)")
 
         except FileNotFoundError:
             self._log(f"  [AudioBridge] Python bulunamadı: {self._venv_python}")

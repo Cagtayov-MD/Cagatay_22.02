@@ -273,6 +273,49 @@ def _write_text_atomic(path: str, content: str) -> None:
             pass
 
 
+def _is_pid_alive(pid: int) -> bool:
+    """PID hâlâ çalışıyor mu kontrol et."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)  # sinyal göndermez, sadece varlık kontrolü
+        return True
+    except ProcessLookupError:
+        return False  # process yok
+    except PermissionError:
+        return True  # process var ama erişim yok — canlı say
+    except OSError:
+        return False
+
+
+def _try_clean_stale_lock(lock_path: str) -> bool:
+    """
+    Stale lock tespiti: lock dosyasındaki PID ölmüşse kilidi sil.
+    Returns True if stale lock was cleaned.
+    """
+    try:
+        with open(lock_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        # "pid=12345 time=..." formatını parse et
+        pid = 0
+        for part in content.split():
+            if part.startswith("pid="):
+                pid = int(part.split("=", 1)[1])
+                break
+
+        if pid > 0 and not _is_pid_alive(pid):
+            os.remove(lock_path)
+            return True
+    except (OSError, ValueError):
+        # Dosya okunamıyorsa veya parse edilemiyorsa temizlemeyi dene
+        try:
+            os.remove(lock_path)
+            return True
+        except OSError:
+            pass
+    return False
+
+
 def _acquire_lock(lock_path: str) -> Optional[int]:
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
     try:
@@ -280,6 +323,14 @@ def _acquire_lock(lock_path: str) -> Optional[int]:
         os.write(fd, f"pid={os.getpid()} time={time.time()}\n".encode("utf-8"))
         return fd
     except FileExistsError:
+        # Stale lock kontrolü: eski process ölmüşse kilidi temizle ve tekrar dene
+        if _try_clean_stale_lock(lock_path):
+            try:
+                fd = os.open(lock_path, flags)
+                os.write(fd, f"pid={os.getpid()} time={time.time()}\n".encode("utf-8"))
+                return fd
+            except OSError:
+                return None
         return None
     except OSError:
         return None
