@@ -374,8 +374,8 @@ class LanguageDetectionStage:
 
             model = WhisperModel(
                 "tiny",
-                device="cuda",
-                compute_type="int8",  # tiny için int8 yeterli, hızlı
+                device="cpu",
+                compute_type="int8",  # CPU + int8: VRAM çakışması önlenir, tiny için hız farkı yok
             )
             segments, info = model.transcribe(
                 wav_path,
