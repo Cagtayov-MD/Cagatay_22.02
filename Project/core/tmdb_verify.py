@@ -121,6 +121,7 @@ class TMDBVerifyResult:
     keywords: List[str] = None
     genres: List[str] = None
     original_title: str = ""
+    matched_via: str = ""  # "title" veya "cast_only" — LOCK kararı için
 
     def __post_init__(self):
         if self.cast is None:
@@ -389,7 +390,7 @@ class TMDBVerify:
             return TMDBVerifyResult(False, "no cast or directors to verify")
 
         # TMDB'de eşleşme bul
-        tmdb_entry, kind = self._find_tmdb_entry(film_title, cast_names, director_names)
+        tmdb_entry, kind, matched_via = self._find_tmdb_entry(film_title, cast_names, director_names)
 
         if not tmdb_entry:
             self._log(f"  [TMDB] Eşleşme bulunamadı")
@@ -475,6 +476,7 @@ class TMDBVerify:
             keywords=tmdb_keywords,
             genres=tmdb_genres,
             original_title=original_title,
+            matched_via=matched_via,
         )
 
     # ── TMDB'de eşleşme bul ─────────────────────────────────────────
@@ -531,15 +533,15 @@ class TMDBVerify:
                 self._log(f"  [TMDB]   → {matched}/{len(cast_names)} oyuncu eşleşti")
                 if matched >= 2:
                     self._log(f"  [TMDB] film adı + {matched} oyuncu eşleşti → %100 güven")
-                    return r, kind
+                    return r, kind, "title"
                 # 1 oyuncu + yönetmen eşleşmesi de kabul edilir
                 if matched >= 1 and director_names and _director_matches_crew(credits):
                     self._log(f"  [TMDB] film adı + {matched} oyuncu + yönetmen eşleşti → %100 güven")
-                    return r, kind
-                # cast yokken salt yönetmen eşleşmesi de yeterli
-                if matched == 0 and not cast_names and director_names and _director_matches_crew(credits):
-                    self._log(f"  [TMDB] film adı + yönetmen eşleşti (cast yok) → kabul")
-                    return r, kind
+                    return r, kind, "title"
+                # Oyuncu eşleşmedi ama film adı + yönetmen eşleşmesi yeterli
+                if matched == 0 and director_names and _director_matches_crew(credits):
+                    self._log(f"  [TMDB] film adı + yönetmen eşleşti (oyuncu eşleşmedi) → kabul")
+                    return r, kind, "title"
             # Bu başlık denemesinde eşleşme yoksa sonraki varyantı dene
 
         # ── Strateji 2: Oyuncularla ara ──
@@ -630,9 +632,9 @@ class TMDBVerify:
                             f"  [TMDB] {matched} oyuncu + {director_matched} yönetmen "
                             f"eşleşti → %100 güven"
                         )
-                        return best["entry"], best["kind"]
+                        return best["entry"], best["kind"], "cast_only"
 
-        return None, ""
+        return None, "", ""
 
     # ── Credits çek ─────────────────────────────────────────────────
     def _fetch_credits(self, kind: str, mid: int) -> Optional[dict]:

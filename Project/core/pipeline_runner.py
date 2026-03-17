@@ -527,7 +527,9 @@ class PipelineRunner:
                             tmdb_matched = True
 
                             # ── Profil bazlı dallanma ──
-                            if profile_name in ("FilmDizi-Paddle", "FilmDiziQwen"):
+                            _matched_via = getattr(tmdb_result, 'matched_via', '')
+                            if (profile_name in ("FilmDizi-Paddle", "FilmDiziQwen", "FilmDizi-Hybrid")
+                                    and _matched_via == "title"):
                                 # TMDB LOCK: OCR verisi silinir, TMDB kanonik veri yazılır
                                 cdata = self._apply_tmdb_credits(cdata, tmdb_result)
                                 self._log(f"  [TMDB] LOCK aktif — cast:{cdata['total_actors']} crew:{cdata['total_crew']}")
@@ -545,7 +547,9 @@ class PipelineRunner:
                                     except Exception as e:
                                         self._log(f"  [QA] {e}")
                             else:
-                                # REFERANS MODU (FilmDizi-ONEOCR vb.): OCR master kalır
+                                # REFERANS MODU: film adıyla eşleşmedi veya sadece oyuncularla bulundu
+                                if _matched_via == "cast_only":
+                                    self._log(f"  [TMDB] Sadece oyuncularla eşleşme — LOCK açılmıyor, referans modu")
                                 cdata["_tmdb_film_match"] = {
                                     "title": tmdb_result.matched_title,
                                     "id": tmdb_result.matched_id,
@@ -1203,7 +1207,14 @@ class PipelineRunner:
         def _to_title(raw: str) -> str:
             return ' '.join(_tr_capitalize(w) for w in raw.replace('_', ' ').split())
 
-        # Strateji 1: {prefix}_{FILM_ADI}_{YIL}-{rest} formatı
+        # Strateji 1 (en güvenilir): Sayısal blok sonundaki başlık (4-4-1-3/4-2-1-BAŞLIK)
+        m = re.search(r'\d{4}-\d{3,4}-\d-\d{3,4}-\d{2}-\d-(.+)$', stem)
+        if m:
+            title = _to_title(m.group(1))
+            if title:
+                return title
+
+        # Strateji 2 (fallback): {prefix}_{FILM_ADI}_{YIL}-{rest} formatı
         # Alt çizgiyle ayrılmış segmentlerde yıl (4 rakam) ile başlayan bloğu bul
         # Sadece çok kelimeli orta segment gerçek başlık olarak değerlendirilir
         parts = stem.split('_')
@@ -1218,13 +1229,6 @@ class PipelineRunner:
                         if title:
                             return title
                 break
-
-        # Strateji 2: Sayısal blok sonundaki başlık (4-4-1-4-2-1-BAŞLIK)
-        m = re.search(r'\d{4}-\d{4}-\d-\d{4}-\d{2}-\d-(.+)$', stem)
-        if m:
-            title = _to_title(m.group(1))
-            if title:
-                return title
 
         return stem
 

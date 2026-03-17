@@ -49,8 +49,8 @@ except ImportError:
 # ── Eşikler ──────────────────────────────────────────────────────────────────
 
 # Confidence eşikleri (Katman 1)
-CONF_HIGH   = 0.90   # ≥ bu değer → oneocr yeterli
-CONF_LOW    = 0.70   # < bu değer → Qwen gerek
+CONF_HIGH   = 0.30   # ≥ bu değer → oneocr yeterli
+CONF_LOW    = 0.20   # < bu değer → Qwen gerek
 
 # NameDB eşleşme oranı (Katman 3)
 NAMEDB_MATCH_THRESHOLD = 0.60  # < bu oran → Qwen gerek

@@ -180,32 +180,46 @@ def _to_ascii_upper(word: str) -> str:
     return ''.join(cleaned)
 
 
+def _upper_word_foreign(word: str) -> str:
+    """Yabancı isim büyütme: i→I (noktalı İ değil), aksanlı karakterler korunur."""
+    return word.upper()
+
+
 def _upper_word(word: str, protected_words: set[str] | None = None) -> str:
     """Tek kelimeyi büyük harfe çevir.
 
     Karar sırası:
-    1. protected_words'te → İngilizce/ASCII kural
-    2. Aksanlı Latin karakter (é, ñ, ê) → kesinlikle yabancı → İngilizce
-    3. Diğer tüm kelimeler → Türkçe kural (varsayılan)
+    1. protected_words'te → yabancı kural (i→I, aksanlar korunur)
+    2. Aksanlı Latin karakter (é, ñ, ê) → kesinlikle yabancı
+    3. Kelimede ç/ö var ama ğ/ı/ş/ü yok → muhtemelen yabancı (Françoise, Böhm)
+    4. Diğer tüm kelimeler → Türkçe kural (varsayılan)
 
     NOT: Yabancı isimler cast/crew'dan _collect_protected_words ile tespit edilip
-    protected_words'e eklendiğinde İngilizce büyütülür.
+    protected_words'e eklendiğinde yabancı büyütülür.
     Özet kısmında ise _to_upper_tr_ozet akıllı heuristic kullanır.
     """
     raw = (word or "").strip()
     token_for_check = raw.strip("''`\""".,;:!?()[]{}")
     base_for_check = token_for_check.split("'", 1)[0].split("'", 1)[0]
 
-    # 1. protected_words → İngilizce kural
+    # 1. protected_words → yabancı kural
     if protected_words and base_for_check.casefold() in protected_words:
-        return _to_ascii_upper(raw)
+        return _upper_word_foreign(raw)
 
     # 2. Aksanlı Latince karakter (é, ñ, ê) → kesinlikle yabancı
     if any(c not in _TR_ONLY_CHARS and not c.isascii() and c.isalpha()
            for c in base_for_check):
-        return _to_ascii_upper(raw)
+        return _upper_word_foreign(raw)
 
-    # 3. VARSAYILAN: Türkçe kural
+    # 3. ç/ö var ama ğ/ı/ş/ü yok → muhtemelen yabancı (Françoise, Böhm)
+    _STRICT_TR = set('ğışüĞİŞÜ')
+    _AMBIGUOUS = set('çöÇÖ')
+    has_ambiguous = any(c in _AMBIGUOUS for c in base_for_check)
+    has_strict_tr = any(c in _STRICT_TR for c in base_for_check)
+    if has_ambiguous and not has_strict_tr:
+        return _upper_word_foreign(raw)
+
+    # 4. VARSAYILAN: Türkçe kural
     result = word.replace('i', 'İ').replace('ı', 'I')
     result = result.replace('ç', 'Ç').replace('ğ', 'Ğ')
     result = result.replace('ö', 'Ö').replace('ş', 'Ş').replace('ü', 'Ü')

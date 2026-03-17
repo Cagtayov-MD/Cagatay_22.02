@@ -449,9 +449,9 @@ class NameVerifier:
                     self._add_log("FINAL", role, name, name,
                                    "flagged", "unverified")
                     self._log(f"    [?] {name} — doğrulanamadı")
-                    # Yine de ekle ama flag'li
+                    # Yine de ekle — Gemini ayıkladıysa güvenilir
                     if name not in verified_names:
-                        verified_names.append(f"{name} (?)")
+                        verified_names.append(name)
 
             result[role] = verified_names
 
