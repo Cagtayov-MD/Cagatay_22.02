@@ -24,8 +24,6 @@ Kullanım:
 import re
 import unicodedata
 
-from core.llm_provider import _gemini_generate
-
 # ═══════════════════════════════════════════════════════════════════
 # KATMAN 1 — HARD BLACKLIST
 # ═══════════════════════════════════════════════════════════════════
@@ -273,60 +271,6 @@ def _tmdb_person_verify(name: str, expected_role: str, tmdb_client, log_cb=None)
 
 
 # ═══════════════════════════════════════════════════════════════════
-# KATMAN 4 — GEMİNİ "DID YOU MEAN?"
-# ═══════════════════════════════════════════════════════════════════
-
-def _gemini_did_you_mean(name: str, role_hint: str, api_key: str,
-                          log_cb=None) -> dict:
-    """Gemini'ye isim düzeltme önerisi sor.
-
-    OCR'ın yanlış okuduğu bir ismi Gemini'ye sorarak doğru yazımı bulmaya
-    çalışır. Gemini tek başına doğrulama yapamaz — sadece öneri verir.
-    Önerilen isim mutlaka TMDB Person Search'ten geçirilmelidir.
-
-    Args:
-        name:      Sorgulanacak isim (OCR çıktısı, hatalı olabilir)
-        role_hint: Beklenen meslek (OYUNCU, YÖNETMEN vb.)
-        api_key:   Gemini API anahtarı
-        log_cb:    Log callback
-
-    Returns:
-        dict:
-          {"corrected": False, "reason": "gemini_not_found"}
-          {"corrected": True, "suggested_name": "<isim>", "reason": "gemini_suggestion"}
-          {"corrected": False, "reason": "gemini_error:<hata>"}
-    """
-    prompt = (
-        f'"{name}" adına benzer bir {role_hint} (oyuncu/yönetmen/senarist vb.) var mı?\n'
-        f"Eğer varsa, doğru yazımını ver.\n"
-        f'Eğer yoksa "YOK" yaz.\n'
-        f'SADECE ismi veya "YOK" yaz, başka açıklama yapma.'
-    )
-    try:
-        response = _gemini_generate(
-            prompt,
-            api_key=api_key,
-            log_cb=log_cb,
-        )
-    except Exception as exc:
-        return {"corrected": False, "reason": f"gemini_error:{exc}"}
-
-    if response is None:
-        return {"corrected": False, "reason": "gemini_error:no_response"}
-
-    cleaned = response.strip()
-    if not cleaned or "YOK" in cleaned.upper():
-        return {"corrected": False, "reason": "gemini_not_found"}
-
-    # Yanıt birden fazla satır içeriyorsa ilk satırı al ve tırnak işaretlerini temizle
-    suggested = re.sub(r"""^["']+|["']+$""", "", cleaned.splitlines()[0].strip())
-    if not suggested:
-        return {"corrected": False, "reason": "gemini_not_found"}
-
-    return {"corrected": True, "suggested_name": suggested, "reason": "gemini_suggestion"}
-
-
-# ═══════════════════════════════════════════════════════════════════
 # ANA SINIF — NameVerifier
 # ═══════════════════════════════════════════════════════════════════
 
@@ -336,19 +280,16 @@ class NameVerifier:
     Her doğrulama adımını loglar. Log, D:\\DATABASE altına JSON olarak yazılır.
 
     Kullanım:
-        verifier = NameVerifier(name_db=name_db, tmdb_client=tmdb_client,
-                                gemini_api_key=api_key)
+        verifier = NameVerifier(name_db=name_db, tmdb_client=tmdb_client)
         crew_roles = verifier.verify_crew(crew_roles)
         cast_list = verifier.verify_cast(cast_list)
         log = verifier.get_log()
     """
 
-    def __init__(self, name_db=None, tmdb_client=None, log_cb=None,
-                 gemini_api_key=None):
+    def __init__(self, name_db=None, tmdb_client=None, log_cb=None):
         self._name_db = name_db
         self._tmdb_client = tmdb_client
         self._log = log_cb or (lambda m: None)
-        self._gemini_api_key = gemini_api_key
         self._verification_log = []  # Her adım burada
 
     def _add_log(self, layer: str, role: str, name_in: str,
@@ -397,8 +338,6 @@ class NameVerifier:
                 lines.append(f"  [{role}] ✓ {name_in} ({reason})")
             elif action == "flagged":
                 lines.append(f"  [{role}] ? {name_in} ({reason})")
-            elif action == "suggested":
-                lines.append(f"  [{role}] ↷ {name_in}  →  {name_out} ({reason})")
 
             # TMDB ek bilgileri
             if entry.get("tmdb_department"):
@@ -409,60 +348,6 @@ class NameVerifier:
                 lines.append(f"          NameDB: skor={entry['namedb_score']:.2f}")
 
         return "\n".join(lines)
-
-    def _apply_gemini_dym(self, name: str, role: str,
-                           corrected_name: str) -> tuple:
-        """Gemini "Did You Mean?" katmanını uygula ve sonucu döndür.
-
-        Args:
-            name:           Orijinal OCR ismi
-            role:           İsmin rolü (OYUNCU, YÖNETMEN vb.)
-            corrected_name: Katman 2/3 sonrası mevcut düzeltilmiş isim
-
-        Returns:
-            (tmdb_verified: bool, corrected_name: str)
-            Gemini veya TMDB doğrulamasının sonucunu içerir.
-            tmdb_verified yalnızca TMDB doğrularsa True olur.
-        """
-        self._log(f"    [GEM] Sorgulanıyor: {name}")
-        gem_result = _gemini_did_you_mean(
-            name, role, self._gemini_api_key, self._log)
-
-        if not gem_result["corrected"]:
-            self._add_log("GEMINI_DYM", role, name, "",
-                           "not_found", gem_result.get("reason", ""))
-            self._log(f"    [GEM] ✗ {name} — {gem_result.get('reason','')}")
-            return False, corrected_name
-
-        suggested = gem_result["suggested_name"]
-        self._add_log("GEMINI_DYM", role, name, suggested,
-                       "suggested", "gemini_suggestion")
-        self._log(f"    [GEM] ↷ {name} → {suggested}")
-
-        # Önerilen ismi TMDB'den doğrula
-        if self._tmdb_client:
-            gem_tmdb = _tmdb_person_verify(
-                suggested, role, self._tmdb_client, self._log)
-        else:
-            gem_tmdb = {"verified": False, "reason": "no_client"}
-
-        if gem_tmdb["verified"]:
-            confirmed_name = gem_tmdb.get("tmdb_name", suggested)
-            self._add_log("TMDB_PERSON", role, suggested,
-                           confirmed_name, "kept",
-                           "gemini_dym_confirmed", {
-                               "tmdb_name": gem_tmdb.get("tmdb_name"),
-                               "tmdb_department": gem_tmdb.get("tmdb_department"),
-                               "tmdb_id": gem_tmdb.get("tmdb_id"),
-                           })
-            self._log(f"    [TMDB] ✓ {confirmed_name} (Gemini önerisi doğrulandı)")
-            return True, confirmed_name
-
-        # TMDB doğrulayamadı — Gemini önerisini flag'li kabul et
-        self._add_log("GEMINI_DYM", role, name, suggested,
-                       "flagged", "gemini_unconfirmed")
-        self._log(f"    [GEM] ? {suggested} — TMDB doğrulayamadı, flag'li")
-        return False, suggested
 
     # ─────────────────────────────────────────────────────
     # VERIFY CREW — 7 yıldızlı yapım ekibi doğrulama
@@ -553,11 +438,6 @@ class NameVerifier:
                         self._add_log("TMDB_PERSON", role, search_name, "",
                                        "not_found", tmdb_result.get("reason", ""))
 
-                # ── KATMAN 4: Gemini "Did You Mean?" ──
-                if not namedb_verified and not tmdb_verified and self._gemini_api_key:
-                    tmdb_verified, corrected_name = self._apply_gemini_dym(
-                        name, role, corrected_name)
-
                 # ── KARAR ──
                 if namedb_verified or tmdb_verified:
                     if corrected_name not in verified_names:
@@ -647,13 +527,6 @@ class NameVerifier:
                                        "tmdb_department": tmdb_result.get("tmdb_department"),
                                        "tmdb_id": tmdb_result.get("tmdb_id"),
                                    })
-
-            # ── KATMAN 4: Gemini "Did You Mean?" ──
-            if not is_verified and self._gemini_api_key:
-                gem_tmdb_verified, corrected_name = self._apply_gemini_dym(
-                    name, "OYUNCU", corrected_name)
-                if gem_tmdb_verified:
-                    is_verified = True
 
             # Sonucu güncelle
             new_entry = dict(entry)

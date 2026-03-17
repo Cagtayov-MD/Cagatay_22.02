@@ -480,7 +480,6 @@ class PipelineRunner:
                     name_db=self._name_db,
                     tmdb_client=_tmdb_client,
                     log_cb=self._log,
-                    gemini_api_key=get_gemini_api_key(),
                 )
 
                 # ── Yapım Ekibi doğrulama ──
@@ -527,16 +526,35 @@ class PipelineRunner:
                                       f"hits:{tmdb_result.hits} misses:{tmdb_result.misses}")
                             tmdb_matched = True
 
-                            # ── Tüm profiller REFERANS MODU: OCR master kalır ──
-                            cdata["_tmdb_film_match"] = {
-                                "title": tmdb_result.matched_title,
-                                "id": tmdb_result.matched_id,
-                                "hits": tmdb_result.hits,
-                                "misses": tmdb_result.misses,
-                            }
-                            cdata["_tmdb_cast_ref"] = tmdb_result.cast or []
-                            cdata["_tmdb_crew_ref"] = tmdb_result.crew or []
-                            self._log(f"  [TMDB] Referans modu — OCR verisi korunuyor")
+                            # ── Profil bazlı dallanma ──
+                            if profile_name in ("FilmDizi-Paddle", "FilmDiziQwen"):
+                                # TMDB LOCK: OCR verisi silinir, TMDB kanonik veri yazılır
+                                cdata = self._apply_tmdb_credits(cdata, tmdb_result)
+                                self._log(f"  [TMDB] LOCK aktif — cast:{cdata['total_actors']} crew:{cdata['total_crew']}")
+                                # QA: OCR'da olup TMDB'de olmayan oyuncular
+                                if ocr_lines:
+                                    try:
+                                        from core.credits_qa import check_missing_actors
+                                        qa = check_missing_actors(
+                                            ocr_results=ocr_lines,
+                                            tmdb_cast=cdata.get("cast", []),
+                                        )
+                                        if qa.missing_actors:
+                                            cdata["credits_qa"] = qa.to_dict()
+                                            self._log(f"  {qa.summary}")
+                                    except Exception as e:
+                                        self._log(f"  [QA] {e}")
+                            else:
+                                # REFERANS MODU (FilmDizi-ONEOCR vb.): OCR master kalır
+                                cdata["_tmdb_film_match"] = {
+                                    "title": tmdb_result.matched_title,
+                                    "id": tmdb_result.matched_id,
+                                    "hits": tmdb_result.hits,
+                                    "misses": tmdb_result.misses,
+                                }
+                                cdata["_tmdb_cast_ref"] = tmdb_result.cast or []
+                                cdata["_tmdb_crew_ref"] = tmdb_result.crew or []
+                                self._log(f"  [TMDB] Referans modu — OCR verisi korunuyor")
                         else:
                             if tmdb_result:
                                 self._log(f"  [TMDB Film] {tmdb_result.reason}")
