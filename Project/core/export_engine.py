@@ -209,7 +209,7 @@ def _upper_word(word: str, protected_words: set[str] | None = None) -> str:
     result = word.replace('i', 'İ').replace('ı', 'I')
     result = result.replace('ç', 'Ç').replace('ğ', 'Ğ')
     result = result.replace('ö', 'Ö').replace('ş', 'Ş').replace('ü', 'Ü')
-    return result.upper()
+    return ''.join(c.upper() if 'a' <= c <= 'z' else c for c in result)
 
 
 def _collect_protected_words(*name_groups: list[str]) -> set[str]:
@@ -263,7 +263,7 @@ def _upper_word_turkish(word: str) -> str:
     result = word.replace('i', 'İ').replace('ı', 'I')
     result = result.replace('ç', 'Ç').replace('ğ', 'Ğ')
     result = result.replace('ö', 'Ö').replace('ş', 'Ş').replace('ü', 'Ü')
-    return result.upper()
+    return ''.join(c.upper() if 'a' <= c <= 'z' else c for c in result)
 
 
 def _upper_word_english(word: str) -> str:
@@ -1334,11 +1334,11 @@ class ExportEngine:
             director_names,
             [name for names in crew_roles.values() for name in names],
         )
-        # Original title'daki kelimeleri de koru (İngilizce i→I, İ→I değil)
+        # Original title'daki kelimeleri de koru (yalnızca Türkçe olmayan kelimeler)
         if original_title:
             for token in original_title.split():
                 t = token.strip("''`\".,;:!?()[]{}")
-                if t:
+                if t and not _is_turkish_word(t) and not _is_known_name(t):
                     protected_words.add(t.casefold())
 
         # Yabancı özel isimleri özet işleme için topla
