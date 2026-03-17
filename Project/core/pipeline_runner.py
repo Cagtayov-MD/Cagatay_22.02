@@ -672,14 +672,20 @@ class PipelineRunner:
 
             # ── Audio sonucunu topla (paralel mod tamamlanmış olmalı) ──
             if audio_future is not None:
+                # Bridge timeout (default 3600s) + 120s marj
+                _audio_timeout = self.config.get("audio_timeout", 3600) + 120
                 try:
                     self._log("  [AUDIO] Ses sonucu bekleniyor...")
-                    audio_result = audio_future.result()
+                    audio_result = audio_future.result(timeout=_audio_timeout)
                     executor.shutdown(wait=False)
                     if audio_result and audio_result.get("status") != "error":
                         self._log("  [AUDIO] Ses analizi tamamlandı (OK)")
                     else:
                         self._log(f"  [AUDIO] Ses analizi sonuç: HATA")
+                except TimeoutError:
+                    self._log(f"  [AUDIO] TIMEOUT — {_audio_timeout}s aşıldı, audio atlanıyor")
+                    audio_result = {"status": "error", "error": f"future timeout ({_audio_timeout}s)"}
+                    executor.shutdown(wait=False)
                 except Exception as ae:
                     self._log(f"  [AUDIO] HATA: {ae}")
                     audio_result = {"status": "error", "error": str(ae)}
