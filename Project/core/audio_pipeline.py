@@ -2,8 +2,16 @@
 audio_pipeline.py — Ses pipeline orkestratör.
 
 Her stage'i sırayla çalıştırır, VRAM yönetimi yapar.
-Stage sırası (Film/Dizi):
-  [A] EXTRACT → [B] DİL TESPİTİ → [C] DENOISE → [D] DIARIZE → [E] TRANSCRIBE → [F] POST_PROCESS
+
+Stage sırası (Film/Dizi) — v2:
+  [B] DİL TESPİTİ → [A] EXTRACT → [C] DENOISE → [D] DIARIZE → [E] TRANSCRIBE → [F] POST_PROCESS
+
+  ÖNEMLİ DEĞİŞİKLİK (v2):
+    Dil tespiti artık extract'tan ÖNCE çalışır.
+    Çünkü arşiv materyalde stereo kanallar farklı dillerde olabiliyor
+    (örn: sol=İngilizce+Türkçe karışık, sağ=sadece Türkçe).
+    detect_language hangi kanalın en iyi olduğunu tespit eder,
+    extract o kanalla ses çıkarır.
 
 Stage'ler arası veri JSON ile taşınır (dict).
 Herhangi bir stage patlarsa pipeline durur ama mevcut sonuçlar korunur.
@@ -28,7 +36,7 @@ class AudioPipeline:
     Film/Dizi: DF3 → PyAnnote → faster-whisper → Ollama
     """
 
-    VERSION = "1.1"
+    VERSION = "1.2"
 
     def __init__(self, config: dict, log_cb=None):
         self.config = config
@@ -69,17 +77,60 @@ class AudioPipeline:
             "detected_language": "unknown",
             "language_is_turkish": False,
             "detected_language_samples": [],
+            "selected_channel": None,
             "stages": {},
         }
 
         self._log(f"\n{'='*60}")
-        self._log(f"  SES PIPELINE — Film/Dizi")
+        self._log(f"  SES PIPELINE v{self.VERSION} — Film/Dizi")
         self._log(f"{'='*60}")
         self._log(f"  Video: {Path(video_path).name}")
         self._log(f"  Çalışma: {audio_dir}")
 
         # ══════════════════════════════════════════════════════
-        # [A] EXTRACT
+        # [B] DİL TESPİTİ  (artık EXTRACT'tan ÖNCE çalışır)
+        # ══════════════════════════════════════════════════════
+        language_is_turkish = True  # default: Türkçe varsay (mevcut davranışı koru)
+        selected_channel = None     # None = karışık mono (eski davranış)
+
+        if "detect_language" in stages_to_run:
+            self._log(f"\n[B] DİL TESPİTİ (pre-extract)")
+            lang_detector = LanguageDetectionStage(
+                ffmpeg_path=ffmpeg, log_cb=self._log
+            )
+            lang_result = lang_detector.run(
+                video_path, audio_dir,
+                duration_sec=0.0,  # ffprobe ile kendisi alacak
+            )
+            result["stages"]["detect_language"] = {
+                "duration_sec": lang_result["stage_time_sec"],
+                "status": lang_result["status"],
+                "detected_language": lang_result["detected_language"],
+                "confidence": lang_result["confidence"],
+                "decision_logic": lang_result.get("decision_logic", ""),
+                "selected_channel": lang_result.get("selected_channel"),
+                "channel_trials": lang_result.get("channel_trials", []),
+            }
+            result["detected_language"] = lang_result["detected_language"]
+            result["language_is_turkish"] = lang_result["language_is_turkish"]
+            result["detected_language_samples"] = lang_result.get("samples", [])
+            result["selected_channel"] = lang_result.get("selected_channel")
+            language_is_turkish = lang_result["language_is_turkish"]
+            selected_channel = lang_result.get("selected_channel")
+
+            if not language_is_turkish:
+                self._log(
+                    f"  [DİL TESPİTİ] Dil: {lang_result['detected_language'].upper()} "
+                    f"— yabancı dilde transcribe yapılacak"
+                )
+            if selected_channel is not None:
+                self._log(
+                    f"  [DİL TESPİTİ] Kanal seçimi: {selected_channel} "
+                    f"→ extract bu kanalla çalışacak"
+                )
+
+        # ══════════════════════════════════════════════════════
+        # [A] EXTRACT  (selected_channel bilgisiyle)
         # ══════════════════════════════════════════════════════
         wav_16k = ""
         wav_48k = ""
@@ -87,10 +138,14 @@ class AudioPipeline:
         if "extract" in stages_to_run:
             self._log(f"\n[A] EXTRACT")
             extract = ExtractStage(ffmpeg_path=ffmpeg, log_cb=self._log)
-            extract_result = extract.run(video_path, audio_dir)
+            extract_result = extract.run(
+                video_path, audio_dir,
+                selected_channel=selected_channel,
+            )
             result["stages"]["extract"] = {
                 "duration_sec": extract_result["stage_time_sec"],
                 "status": extract_result["status"],
+                "selected_channel": extract_result.get("selected_channel"),
             }
 
             if extract_result["status"] != "ok":
@@ -103,38 +158,6 @@ class AudioPipeline:
             wav_16k = extract_result["wav_16k"]
             wav_48k = extract_result["wav_48k"]
             result["duration_sec"] = extract_result["duration_sec"]
-
-        # ══════════════════════════════════════════════════════
-        # [B] DİL TESPİTİ
-        # ══════════════════════════════════════════════════════
-        language_is_turkish = True  # default: Türkçe varsay (mevcut davranışı koru)
-
-        if "detect_language" in stages_to_run and wav_16k:
-            self._log(f"\n[B] DİL TESPİTİ")
-            lang_detector = LanguageDetectionStage(
-                ffmpeg_path=ffmpeg, log_cb=self._log
-            )
-            lang_result = lang_detector.run(
-                video_path, audio_dir,
-                duration_sec=result.get("duration_sec", 0.0)
-            )
-            result["stages"]["detect_language"] = {
-                "duration_sec": lang_result["stage_time_sec"],
-                "status": lang_result["status"],
-                "detected_language": lang_result["detected_language"],
-                "confidence": lang_result["confidence"],
-                "decision_logic": lang_result.get("decision_logic", ""),
-            }
-            result["detected_language"] = lang_result["detected_language"]
-            result["language_is_turkish"] = lang_result["language_is_turkish"]
-            result["detected_language_samples"] = lang_result.get("samples", [])
-            language_is_turkish = lang_result["language_is_turkish"]
-
-            if not language_is_turkish:
-                self._log(
-                    f"  [DİL TESPİTİ] Dil: {lang_result['detected_language'].upper()} "
-                    f"— yabancı dilde transcribe yapılacak"
-                )
 
         # ══════════════════════════════════════════════════════
         # [C] DENOISE

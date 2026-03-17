@@ -667,12 +667,15 @@ class PipelineRunner:
                         try:
                             from core.gemini_summarizer import summarize_transcript
                             _detected_lang = audio_result.get("detected_language", "tr")
+                            # TMDB cast'i al (varsa) — yabancı dil çevirisinde isim doğrulama için
+                            _tmdb_cast_for_summary = cdata.get("cast") or cdata.get("_tmdb_cast_ref") or []
                             summary = summarize_transcript(
                                 transcript_text,
                                 api_key=gemini_api_key,
                                 log_cb=self._log,
                                 variant="en",
                                 detected_language=_detected_lang,
+                                tmdb_cast=_tmdb_cast_for_summary,
                             )
                             if summary:
                                 audio_result["summary"] = summary
@@ -784,10 +787,10 @@ class PipelineRunner:
             program_type = self.config.get("program_type", "film_dizi")
             if program_type in ("film_dizi", "kisa_haber"):
                 # Sadece extract + transcribe (düz deşifre) — denoise/diarize gerekmez
-                stages = ["extract", "transcribe"]
+                stages = ["detect_language", "extract", "transcribe"]
             else:
                 # mac, muzik_programi vb. tam pipeline gerektirir (ileride genişletilecek)
-                stages = ["extract", "denoise", "diarize", "transcribe", "post_process"]
+                stages = ["detect_language", "extract", "denoise", "diarize", "transcribe", "post_process"]
 
         self._log(f"  [Audio] Stages: {stages}")
 

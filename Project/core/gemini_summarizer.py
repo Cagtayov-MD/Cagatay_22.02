@@ -2,9 +2,13 @@
 gemini_summarizer.py — Transcript'ten Türkçe özet çıkarma.
 
 Model Stratejisi: Gemini 2.5 Pro (birincil) → Flash (fallback)
-Çok dilli destek: Transcript dil bilgisi prompt'a eklenir, çıktı her zaman Türkçe.
 
-summarize_transcript(transcript_text, api_key, log_cb, detected_language) -> dict | None
+Dil Stratejisi (v2):
+  • Türkçe transcript → Pro ile doğrudan Türkçe özet (tek adım, mevcut davranış)
+  • Yabancı transcript → Pro ile orijinal dilde özet → Flash ile Türkçeye çevir
+    + TMDB cast varsa isimleri doğrula + Türkçe karakter kuralları uygula
+
+summarize_transcript(transcript_text, api_key, log_cb, detected_language, tmdb_cast) -> dict | None
   → {"en": "...", "model_used": "gemini-2.5-pro"|"gemini-2.5-flash"}
 """
 
@@ -23,6 +27,7 @@ LANG_LABELS = {
     "nl": "HOL", "pl": "POL", "sv": "İSV", "da": "DAN",
     "fi": "FİN", "no": "NOR", "el": "YUN", "hu": "MAC",
     "cs": "ÇEK", "ro": "ROM", "hi": "HİN",
+    "ku": "KÜR", "fa": "FAR",
 }
 
 
@@ -34,13 +39,12 @@ def get_language_label(lang_code: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SYSTEM PROMPT — Çok dilli destek
+# SYSTEM PROMPT — Türkçe özet (Türkçe transcript için)
 # ─────────────────────────────────────────────────────────────────────────────
-_SYSTEM_PROMPT_EN = (
+_SYSTEM_PROMPT_TR = (
     "You are an analytical summarizer working for a video archive database. "
     "You will be given a transcript (ASR) of a film or video.\n"
-    "The transcript may be in any language. Analyze the content in its original "
-    "language, then write the summary in Turkish.\n\n"
+    "The transcript is in Turkish. Analyze the content and write the summary in Turkish.\n\n"
     "Your task: analyze the story in the transcript and produce a concise, "
     "direct summary in narrative prose format.\n\n"
     "STRICT RULES — THESE MUST BE FOLLOWED WITHOUT EXCEPTION:\n\n"
@@ -64,7 +68,44 @@ _SYSTEM_PROMPT_EN = (
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Few-shot örnek
+# SYSTEM PROMPT — Orijinal dilde özet (yabancı dil transcript için, adım 1)
+# ─────────────────────────────────────────────────────────────────────────────
+_SYSTEM_PROMPT_FOREIGN = (
+    "You are an analytical summarizer working for a video archive database. "
+    "You will be given a transcript (ASR) of a film or video.\n\n"
+    "IMPORTANT: Write the summary in the SAME LANGUAGE as the transcript. "
+    "Do NOT translate to any other language.\n\n"
+    "Your task: analyze the story in the transcript and produce a concise, "
+    "direct summary in narrative prose format.\n\n"
+    "STRICT RULES — THESE MUST BE FOLLOWED WITHOUT EXCEPTION:\n\n"
+    "LENGTH: Target 80 words, maximum 100 words.\n\n"
+    "ZERO SUSPENSE: Do NOT use teaser/marketing language.\n\n"
+    "SPOILER (ENDING) IS MANDATORY: Include the final outcome.\n\n"
+    "FORMAT: No bullet points. Write a single, flowing paragraph.\n\n"
+    "FOCUS: Main character's key turning point and final decision only.\n\n"
+    "NO CHARACTER INTRODUCTIONS: Just tell the story.\n\n"
+    "No title. Start directly with the story."
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SYSTEM PROMPT — Çeviri + isim doğrulama (yabancı dil, adım 2)
+# ─────────────────────────────────────────────────────────────────────────────
+_SYSTEM_PROMPT_TRANSLATE = (
+    "You are a professional translator and name verification specialist "
+    "for a Turkish video archive database.\n\n"
+    "Your task: Translate the given summary to Turkish.\n\n"
+    "RULES:\n"
+    "1. Translate accurately and naturally to Turkish.\n"
+    "2. FOREIGN NAMES: Keep all foreign proper names (character names, person names, "
+    "   place names) in their ORIGINAL spelling. Do NOT turkify them.\n"
+    "   Example: 'Jack Sparrow' stays 'Jack Sparrow', NOT 'Cek Sparov'.\n"
+    "3. TURKISH NAME RULES: In Turkish text, 'i' uppercases to 'İ' and 'I' lowercases "
+    "   to 'ı'. But this rule applies ONLY to Turkish words, NOT to foreign names.\n"
+    "4. Output ONLY the Turkish translation. No explanations, no notes.\n"
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Few-shot örnek (Türkçe özet için)
 # ─────────────────────────────────────────────────────────────────────────────
 _FEW_SHOT = (
     "Aşağıdaki örnek DOĞRU formattır — tam olarak böyle yaz:\n\n"
@@ -91,12 +132,13 @@ def _is_turkish_text(text: str) -> bool:
     return any(c in _TR_CHARS for c in text)
 
 
-def _try_summarize(prompt: str, model: str, api_key: str, log_cb) -> str | None:
+def _try_summarize(prompt: str, system: str, model: str,
+                   api_key: str, log_cb) -> str | None:
     """Tek model ile özet denemesi yap."""
     try:
         result = _llm._gemini_generate(
             prompt,
-            system=_SYSTEM_PROMPT_EN,
+            system=system,
             api_key=api_key or None,
             model=model,
             timeout=_TIMEOUT_SEC,
@@ -109,20 +151,79 @@ def _try_summarize(prompt: str, model: str, api_key: str, log_cb) -> str | None:
         return None
 
 
-def _translate_to_turkish(text: str, api_key: str, log_cb) -> str:
-    """Flash ile Türkçeye çevir (edge case: özet yabancı dilde geldiğinde)."""
+def _build_cast_reference(tmdb_cast: list) -> str:
+    """TMDB cast listesinden çeviri prompt'u için referans metni oluştur."""
+    if not tmdb_cast:
+        return ""
+
+    lines = []
+    for entry in tmdb_cast[:20]:  # max 20 kişi
+        actor = ""
+        char = ""
+        if isinstance(entry, dict):
+            actor = (entry.get("actor_name") or entry.get("name") or "").strip()
+            char = (entry.get("character_name") or entry.get("character") or "").strip()
+        if actor and char:
+            lines.append(f"  {actor} → {char}")
+        elif actor:
+            lines.append(f"  {actor}")
+
+    if not lines:
+        return ""
+
+    return (
+        "\n\nIMPORTANT — CAST REFERENCE LIST (use these exact spellings):\n"
+        + "\n".join(lines)
+        + "\n\nIf the summary mentions any character that matches this list, "
+        "use the EXACT spelling from this list. "
+        "For example, if transcript says 'Cek Sparov' but the list says "
+        "'Jack Sparrow', use 'Jack Sparrow'.\n"
+    )
+
+
+def _translate_and_verify(
+    foreign_summary: str,
+    api_key: str,
+    tmdb_cast: list | None,
+    detected_language: str,
+    log_cb,
+) -> str:
+    """
+    Flash ile yabancı dildeki özeti Türkçeye çevir.
+    TMDB cast varsa isimleri doğrula.
+    """
+    cast_ref = _build_cast_reference(tmdb_cast or [])
+    lang_label = get_language_label(detected_language)
+
+    prompt = (
+        f"Source language: {detected_language.upper()} ({lang_label})\n\n"
+        f"Summary to translate:\n{foreign_summary}"
+        f"{cast_ref}"
+    )
+
     try:
         result = _llm._gemini_generate(
-            f"Translate the following text to Turkish. Output only the Turkish translation, nothing else.\n\n{text}",
-            system="You are a professional translator. Translate accurately to Turkish.",
+            prompt,
+            system=_SYSTEM_PROMPT_TRANSLATE,
             api_key=api_key or None,
             model="gemini-2.5-flash",
             timeout=60,
             log_cb=log_cb,
         )
-        return result.strip() if result else text
-    except Exception:
-        return text
+        if result and result.strip():
+            if log_cb:
+                has_cast = "evet" if cast_ref else "hayır"
+                log_cb(
+                    f"  [Summarizer] Flash çeviri tamamlandı "
+                    f"({len(result)} kar, cast_ref={has_cast})"
+                )
+            return result.strip()
+    except Exception as e:
+        if log_cb:
+            log_cb(f"  [Summarizer] Flash çeviri hatası: {e}")
+
+    # Fallback: çeviri başarısızsa orijinali döndür
+    return foreign_summary
 
 
 def summarize_transcript(
@@ -132,25 +233,32 @@ def summarize_transcript(
     log_cb=None,
     variant: str = "en",
     detected_language: str = "tr",
+    tmdb_cast: list | None = None,
 ) -> dict | None:
     """Transcript metninden Gemini ile Türkçe özet üret.
 
-    Model stratejisi: Pro → Flash fallback.
+    Dil Stratejisi (v2):
+      • Türkçe → Pro ile doğrudan Türkçe özet (tek adım)
+      • Yabancı → Pro ile orijinal dilde özet → Flash ile Türkçeye çevir + isim doğrula
+
+    Args:
+        transcript_text:  ASR transcript metni
+        api_key:          Gemini API key
+        model:            Belirli model (boşsa Pro→Flash fallback)
+        log_cb:           Log callback
+        variant:          "en" (varsayılan)
+        detected_language: Tespit edilen dil kodu ("tr", "en", "ar", ...)
+        tmdb_cast:        TMDB cast listesi (opsiyonel, yabancı dil çevirisinde kullanılır)
 
     Returns:
-        {"en": "<özet>", "model_used": "gemini-2.5-pro"|"gemini-2.5-flash"}
+        {"en": "<Türkçe özet>", "model_used": "gemini-2.5-pro"|"gemini-2.5-flash"}
         Hata durumunda None.
     """
     if not transcript_text or not transcript_text.strip():
         return None
 
     snippet = transcript_text.strip()[:_MAX_CHARS]
-
-    # Dil bilgisini prompt'a ekle
-    lang_label = get_language_label(detected_language)
-    lang_info = f"\nTranscript language: {detected_language.upper()} ({lang_label})\n" if detected_language != "tr" else ""
-
-    prompt = _FEW_SHOT + lang_info + f"Transcript:\n{snippet}"
+    is_turkish = (detected_language == "tr" or not detected_language)
 
     results = {}
 
@@ -158,32 +266,103 @@ def summarize_transcript(
         summary_text = None
         model_used = ""
 
-        # Strateji: belirli model verilmişse onu kullan, yoksa Pro→Flash
-        models_to_try = [model] if model else ["gemini-2.5-pro", "gemini-2.5-flash"]
-
-        for m in models_to_try:
+        if is_turkish:
+            # ══════════════════════════════════════════════════════
+            # TÜRKÇE AKIŞ — tek adım, mevcut davranış
+            # ══════════════════════════════════════════════════════
             if log_cb:
-                log_cb(f"  [Summarizer] EN varyant özeti oluşturuluyor ({m})...")
-            summary_text = _try_summarize(prompt, m, api_key, log_cb)
-            if summary_text:
-                model_used = m
-                if log_cb:
-                    log_cb(f"  [Summarizer] EN özet alındı ({len(summary_text)} karakter, {m})")
-                break
-            else:
-                if log_cb:
-                    log_cb(f"  [Summarizer] {m} başarısız — sonraki modele geçiliyor")
+                log_cb("  [Summarizer] Türkçe transcript → tek adım özet")
 
+            system = _SYSTEM_PROMPT_TR
+            prompt = _FEW_SHOT + f"Transcript:\n{snippet}"
+
+            models_to_try = [model] if model else ["gemini-2.5-pro", "gemini-2.5-flash"]
+            for m in models_to_try:
+                if log_cb:
+                    log_cb(f"  [Summarizer] Türkçe özet oluşturuluyor ({m})...")
+                summary_text = _try_summarize(prompt, system, m, api_key, log_cb)
+                if summary_text:
+                    model_used = m
+                    if log_cb:
+                        log_cb(f"  [Summarizer] Türkçe özet alındı ({len(summary_text)} kar, {m})")
+                    break
+                else:
+                    if log_cb:
+                        log_cb(f"  [Summarizer] {m} başarısız — sonraki modele geçiliyor")
+
+            # Güvenlik: Türkçe demiştik ama özet Türkçe gelmezse Flash ile çevir
+            if summary_text and not _is_turkish_text(summary_text):
+                if log_cb:
+                    log_cb("  [Summarizer] Özet Türkçe değil — Flash ile çeviri yapılıyor")
+                summary_text = _translate_and_verify(
+                    summary_text, api_key, tmdb_cast, detected_language, log_cb
+                )
+
+        else:
+            # ══════════════════════════════════════════════════════
+            # YABANCI DİL AKIŞI — iki adım
+            # Adım 1: Orijinal dilde özet (Pro)
+            # Adım 2: Türkçeye çevir + isim doğrula (Flash)
+            # ══════════════════════════════════════════════════════
+            lang_label = get_language_label(detected_language)
+            if log_cb:
+                log_cb(
+                    f"  [Summarizer] Yabancı dil ({detected_language.upper()}/{lang_label}) "
+                    f"→ iki adımlı akış"
+                )
+
+            # ── Adım 1: Orijinal dilde özet ──
+            system = _SYSTEM_PROMPT_FOREIGN
+            lang_info = f"\nTranscript language: {detected_language.upper()} ({lang_label})\n"
+            prompt = lang_info + f"Transcript:\n{snippet}"
+
+            models_to_try = [model] if model else ["gemini-2.5-pro", "gemini-2.5-flash"]
+            foreign_summary = None
+
+            for m in models_to_try:
+                if log_cb:
+                    log_cb(
+                        f"  [Summarizer] Adım 1: {detected_language.upper()} özet "
+                        f"oluşturuluyor ({m})..."
+                    )
+                foreign_summary = _try_summarize(prompt, system, m, api_key, log_cb)
+                if foreign_summary:
+                    model_used = m
+                    if log_cb:
+                        log_cb(
+                            f"  [Summarizer] Adım 1 tamamlandı: {detected_language.upper()} "
+                            f"özet ({len(foreign_summary)} kar, {m})"
+                        )
+                    break
+                else:
+                    if log_cb:
+                        log_cb(f"  [Summarizer] {m} başarısız — sonraki modele geçiliyor")
+
+            if not foreign_summary:
+                if log_cb:
+                    log_cb("  [Summarizer] Adım 1 başarısız — hiçbir modelden özet alınamadı")
+                return None
+
+            # ── Adım 2: Türkçeye çevir + isim doğrula ──
+            if log_cb:
+                cast_count = len(tmdb_cast) if tmdb_cast else 0
+                log_cb(
+                    f"  [Summarizer] Adım 2: Flash ile Türkçeye çeviri "
+                    f"(cast_ref={cast_count} kişi)..."
+                )
+
+            summary_text = _translate_and_verify(
+                foreign_summary, api_key, tmdb_cast, detected_language, log_cb
+            )
+
+            if log_cb:
+                log_cb(f"  [Summarizer] Adım 2 tamamlandı: Türkçe özet ({len(summary_text)} kar)")
+
+        # Sonuç
         if not summary_text:
             if log_cb:
                 log_cb("  [Summarizer] Hiçbir modelden özet alınamadı")
             return None
-
-        # Türkçe kontrolü — yabancı dilde gelirse Flash ile çevir
-        if not _is_turkish_text(summary_text):
-            if log_cb:
-                log_cb("  [Summarizer] Özet Türkçe değil — Flash ile çeviri yapılıyor")
-            summary_text = _translate_to_turkish(summary_text, api_key, log_cb)
 
         results["en"] = summary_text
         results["model_used"] = model_used
