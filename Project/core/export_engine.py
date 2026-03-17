@@ -181,8 +181,17 @@ def _to_ascii_upper(word: str) -> str:
 
 
 def _upper_word_foreign(word: str) -> str:
-    """Yabancı isim büyütme: i→I (noktalı İ değil), aksanlı karakterler korunur."""
-    return word.upper()
+    """Yabancı isim büyütme: i→I (noktalı İ değil), aksanlı karakterler → ASCII."""
+    upper = word.upper()
+    cleaned = []
+    for ch in upper:
+        if ch.isascii() or not ch.isalpha():
+            cleaned.append(ch)
+        else:
+            decomposed = unicodedata.normalize('NFD', ch)
+            base = ''.join(c for c in decomposed if unicodedata.category(c) != 'Mn')
+            cleaned.append(base if base else ch)
+    return ''.join(cleaned)
 
 
 def _upper_word(word: str, protected_words: set[str] | None = None) -> str:

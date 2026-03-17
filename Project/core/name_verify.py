@@ -375,6 +375,9 @@ class NameVerifier:
         result = {}
         for role, names in crew_roles.items():
             verified_names = []
+            unverified_candidates = []
+
+            # ── GEÇİŞ 1: Tüm isimleri işle, verified ve unverified'ı ayır ──
             for name in names:
                 name = name.strip()
                 if not name or name == "VERİ YOK":
@@ -438,20 +441,29 @@ class NameVerifier:
                         self._add_log("TMDB_PERSON", role, search_name, "",
                                        "not_found", tmdb_result.get("reason", ""))
 
-                # ── KARAR ──
+                # ── KARAR (geçiş 1): verified → hemen ekle, unverified → beklet ──
                 if namedb_verified or tmdb_verified:
                     if corrected_name not in verified_names:
                         verified_names.append(corrected_name)
                         self._add_log("FINAL", role, name, corrected_name,
                                        "kept", "verified")
                 else:
-                    # Ne NameDB ne TMDB doğruladı — flag ile geç
-                    self._add_log("FINAL", role, name, name,
-                                   "flagged", "unverified")
-                    self._log(f"    [?] {name} — doğrulanamadı")
-                    # Yine de ekle — Gemini ayıkladıysa güvenilir
-                    if name not in verified_names:
-                        verified_names.append(name)
+                    unverified_candidates.append((name, corrected_name))
+
+            # ── GEÇİŞ 2: unverified adayları değerlendir ──
+            for orig_name, cand_name in unverified_candidates:
+                if verified_names:
+                    # Aynı rol için verified isim var → unverified'ı düşür
+                    self._add_log("FINAL", role, orig_name, "",
+                                   "dropped", "unverified_has_alternative")
+                    self._log(f"    [DROP] ✗ {orig_name} — doğrulanamadı, alternatif var")
+                else:
+                    # Bu rol için hiç verified isim yok → flag ile ekle
+                    self._add_log("FINAL", role, orig_name, orig_name,
+                                   "flagged", "unverified_no_alternative")
+                    self._log(f"    [?] {orig_name} — doğrulanamadı (alternatif yok)")
+                    if orig_name not in verified_names:
+                        verified_names.append(orig_name)
 
             result[role] = verified_names
 
