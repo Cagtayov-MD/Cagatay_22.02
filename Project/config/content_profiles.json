@@ -1,6 +1,6 @@
 {
   "FilmDizi-Paddle": {
-    "_description": "PaddleOCR birincil motor. TMDB LOCK modu — TMDB eşleşince OCR verisi silinir, TMDB kutsal kaynak olarak kullanılır.",
+    "_description": "PaddleOCR birincil motor. Kişi doğrulamalı mod — TMDB kişi bazlı doğrulama, OCR verisi master kalır.",
     "scope": "video_only",
     "first_segment_minutes": 6,
     "last_segment_minutes": 10,
@@ -15,6 +15,7 @@
     "ocr_enabled": true,
     "ocr_engine": "paddle",
     "tmdb_enabled": true,
+    "tmdb_person_verify": true,
     "match_parse_enabled": false
   },
   "FilmDizi-ONEOCR": {
@@ -70,6 +71,8 @@
     "beam_size": 3,
     "ocr_enabled": true,
     "ocr_engine": "qwen",
+    "tmdb_enabled": true,
+    "tmdb_person_verify": true,
     "match_parse_enabled": false
   },
   "StudyoProgram": {
