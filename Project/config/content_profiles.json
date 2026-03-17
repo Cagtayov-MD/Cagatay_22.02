@@ -1,4 +1,27 @@
 {
+  "FilmDizi-Hybrid": {
+    "_description": "Hibrit OCR: oneocr birincil motor + Qwen VLM handwriting/cursive fallback. Standard fontlarda oneocr tek başına yeterli; handwriting/cursive tespit edildiğinde Qwen tam frame okuma yapar.",
+    "scope": "video_only",
+    "first_segment_minutes": 6,
+    "last_segment_minutes": 10,
+    "text_filter_threshold": 0.23,
+    "text_filter_mser_min_boxes": 3,
+    "text_filter_max_per_segment": 135,
+    "audio_stages": ["extract", "detect_language", "transcribe"],
+    "whisper_model": "large-v3",
+    "whisper_language": "tr",
+    "compute_type": "float32",
+    "beam_size": 3,
+    "ocr_enabled": true,
+    "ocr_engine": "hybrid",
+    "qwen_fallback_on_handwriting": true,
+    "tmdb_enabled": true,
+    "tmdb_person_verify": true,
+    "gemini_enabled": false,
+    "llm_cast_filter": false,
+    "blok2_enabled": false,
+    "match_parse_enabled": false
+  },
   "FilmDizi-Paddle": {
     "_description": "PaddleOCR birincil motor. Kişi doğrulamalı mod — TMDB kişi bazlı doğrulama, OCR verisi master kalır.",
     "scope": "video_only",
