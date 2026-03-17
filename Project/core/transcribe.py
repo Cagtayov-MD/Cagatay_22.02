@@ -30,7 +30,7 @@ except ImportError:
                 beam_size = 5
 
             device = VRAMManager.get_device()
-            compute_type = self._resolve_compute_type(opts.get('compute_type', None), device)
+            compute_type = self._resolve_compute_type(opts.get('compute_type', 'float16'), device)
 
             # WAV secimi (pipeline context'inden)
             audio_path = None
