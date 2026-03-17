@@ -211,9 +211,12 @@ class AudioPipeline:
         transcribe_result = {"segments": []}
 
         # Tespit edilen dili Whisper'a aktar
+        # Dil tespiti başarısız (unknown/hata) olursa config'deki whisper_language'ı kullan.
+        # None geçilmesi Whisper'ın her segment için kendi dil tespiti yapmasına yol açar
+        # ve Türkçe içeriği yanlış dilde transcribe etme riskini doğurur.
         _whisper_lang = result.get("detected_language", options.get("whisper_language", "tr"))
-        if _whisper_lang == "unknown":
-            _whisper_lang = None  # Whisper kendi tespit etsin
+        if _whisper_lang in ("unknown", None, ""):
+            _whisper_lang = options.get("whisper_language", "tr")
 
         if "transcribe" in stages_to_run and clean_wav:
             self._log(f"\n[E] TRANSCRIBE")
@@ -234,6 +237,16 @@ class AudioPipeline:
                 "status": transcribe_result["status"],
                 "segments": transcribe_result.get("total_segments", 0),
             }
+            # Dil tespiti başarısız olmuşsa Whisper'ın bulduğu dili kullan.
+            # Örnek: detect_language network path'te "unknown" döndürdü ama
+            # Whisper tr tespit etti → post_process çalışmalı.
+            if result.get("detected_language") in ("unknown", None, ""):
+                whisper_lang = transcribe_result.get("detected_language", "")
+                if whisper_lang:
+                    result["detected_language"] = whisper_lang
+                    result["language_is_turkish"] = (whisper_lang == "tr")
+                    language_is_turkish = (whisper_lang == "tr")
+                    self._log(f"  [TRANSCRIBE] Dil Whisper'dan güncellendi: {whisper_lang.upper()}")
 
         # ══════════════════════════════════════════════════════
         # [F] POST_PROCESS
