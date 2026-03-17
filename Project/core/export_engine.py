@@ -1304,7 +1304,6 @@ class ExportEngine:
         L.append(f"  {'FİLMİN ADI':<{fw}}:     {film_name_tr}")
         L.append(f"  {'FİLMİN ORJİNAL ADI':<{fw}}:     {original_title}")
         L.append(f"  {'FİLMİN ID':<{fw}}:     {film_id}")
-        L.append(f"  {'YAPIM TARİHİ':<{fw}}:     {year}")
         bolum = _extract_episode_from_id(film_id) if film_id else 'YOK'
         L.append(f"  {'BÖLÜM':<{fw}}:     {bolum}")
         L.append(f"  {'ÇÖZÜNÜRLÜK':<{fw}}:     {resolution}")
@@ -1444,17 +1443,6 @@ class ExportEngine:
                     L.append(f"  {role_label:<{role_col}}{name}")
             else:
                 L.append(f"  {output_role:<{role_col}}VERİ YOK")
-
-        # ── DOĞRULAMA LOGU (verification log) ──────────────────────
-        # FilmDizi-Paddle profilinde kullanıcı raporunda gösterilmez
-        _content_type = r.get("processing", {}).get("content_type", "")
-        _vlog_text = cr.get("_verification_log_text", "")
-        if _vlog_text and _content_type != "FilmDizi-Paddle":
-            L.append(sep)
-            L.append("  DOĞRULAMA LOGU")
-            L.append(sep)
-            for vline in _vlog_text.splitlines():
-                L.append(f"  {vline}" if vline.strip() else "")
 
         L.append(sep)
         L.append(f"  OLUŞTURULMA: {r['generated_at']}")
