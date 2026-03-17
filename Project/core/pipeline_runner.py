@@ -491,6 +491,11 @@ class PipelineRunner:
                     elif isinstance(d, dict):
                         director_names_raw.append(str(d.get("name", "")).strip())
 
+                # Gemini crew'u güncellediyse technical_crew'u da senkronize et
+                # (Gemini ham OCR çöpünü temizler ama technical_crew'a dokunmaz)
+                if cdata.get("gemini_extracted"):
+                    cdata["technical_crew"] = list(cdata.get("crew", []))
+
                 crew_roles = _map_crew_to_roles(
                     cdata.get("technical_crew") or cdata.get("crew") or [],
                     director_names_raw)
