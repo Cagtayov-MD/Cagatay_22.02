@@ -338,11 +338,7 @@ class HybridOCRRouter:
             _has_rapidfuzz = False
 
         # Qwen satırlarının normalize metinlerini set olarak tut
-        _TR_MAP = str.maketrans("çğışöüÇĞİŞÖÜ", "cgisouCGISOu")
-
-        def _norm(t: str) -> str:
-            import re
-            return re.sub(r"\s+", " ", t.lower().translate(_TR_MAP)).strip()
+        from utils.turkish import normalize_for_dedup as _norm
 
         qwen_norms = {_norm(getattr(l, "text", "") or "") for l in qwen_lines}
 

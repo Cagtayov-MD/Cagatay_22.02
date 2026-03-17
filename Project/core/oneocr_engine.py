@@ -72,16 +72,12 @@ BLACKLIST_PATTERNS = [
 _BLACKLIST_RE = [re.compile(p, re.IGNORECASE) for p in BLACKLIST_PATTERNS]
 
 # ── Türkçe normalizasyon ─────────────────────────────────────
-_TR_NORM = str.maketrans("çğışöüÇĞİŞÖÜ", "cgisouCGISOu")
+from utils.turkish import normalize_for_dedup as _normalize
 
 
 def _is_blacklisted(text: str) -> bool:
     t = text.strip()
     return any(r.search(t) for r in _BLACKLIST_RE)
-
-
-def _normalize(text: str) -> str:
-    return re.sub(r"\s+", " ", text.lower().translate(_TR_NORM)).strip()
 
 
 class OneOCREngine:

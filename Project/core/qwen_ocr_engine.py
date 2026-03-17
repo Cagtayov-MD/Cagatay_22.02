@@ -275,8 +275,5 @@ class QwenOCREngine:
     @staticmethod
     def _normalize(text: str) -> str:
         """Dedup için normalize et — büyük/küçük harf + Türkçe karakter agnostik."""
-        _TR = str.maketrans(
-            "çğışöüÇĞİŞÖÜ",
-            "cgisouCGISOu"   # basit ASCII eşleme
-        )
-        return re.sub(r"\s+", " ", text.lower().translate(_TR)).strip()
+        from utils.turkish import normalize_for_dedup
+        return normalize_for_dedup(text)

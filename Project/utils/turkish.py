@@ -40,6 +40,18 @@ def normalize_tr_keep_spaces(text: str) -> str:
     return (text or "").translate(_TR_MAP).lower()
 
 
+def normalize_for_dedup(text: str) -> str:
+    """OCR dedup anahtarı: Türkçe→ASCII, lowercase, çoklu boşluk tekleştir.
+
+    KRİTİK SIRA: translate ÖNCE, lower SONRA.
+    Python'da 'İ'.lower() → 'i̇' (i + combining dot, 2 karakter) üretir.
+    lower() önce çağrılırsa İ harfi bozulur ve dedup eşleşmez.
+    Bu fonksiyon tüm OCR motorları arasında tutarlı normalizasyon sağlar.
+    """
+    t = (text or "").translate(_TR_MAP).lower()
+    return re.sub(r"\s+", " ", t).strip()
+
+
 # ═══════════════════════════════════════════════════════════════════
 # TURK ISIM VERITABANI (~300 yaygin isim, ASCII normalize)
 # ═══════════════════════════════════════════════════════════════════

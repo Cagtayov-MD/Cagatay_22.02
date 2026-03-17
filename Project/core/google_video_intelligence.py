@@ -521,11 +521,8 @@ class GoogleVITextEngine:
     def _norm_key(self, text: str) -> str:
         if not text:
             return ""
-        tr_map = str.maketrans({
-            'ç':'c','ğ':'g','ı':'i','ö':'o','ş':'s','ü':'u',
-            'Ç':'c','Ğ':'g','İ':'i','Ö':'o','Ş':'s','Ü':'u',
-        })
-        t = text.lower().strip().translate(tr_map)
+        from utils.turkish import normalize_for_dedup
+        t = normalize_for_dedup(text)
         return re.sub(r'[^a-z0-9]', '', t)
 
     def _get_text(self, line) -> str:

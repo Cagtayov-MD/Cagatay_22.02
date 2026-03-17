@@ -657,11 +657,10 @@ class OCREngine:
         return text.strip()
 
     def _normalize(self, text: str) -> str:
-        t = text.lower().strip()
-        t = t.translate(self._TR_ASCII_MAP)
+        from utils.turkish import normalize_for_dedup
+        t = normalize_for_dedup(text)
         t = re.sub(r'[^\w\s]', '', t)
-        t = re.sub(r'\s+', ' ', t)
-        return t
+        return re.sub(r'\s+', ' ', t).strip()
 
     def _noise_filter(self, results: list[OCRResult]) -> list[OCRResult]:
         return [r for r in results
