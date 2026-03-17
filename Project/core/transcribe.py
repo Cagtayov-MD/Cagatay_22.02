@@ -73,29 +73,69 @@ except ImportError:
                 )
 
                 self._log(f"  [Whisper] Dil: {info.language} (olasilik: {info.language_probability:.2f})")
+                self._log(f"  [Whisper] Transkripsiyon başlıyor (beam={beam_size}, word_ts=True)...")
 
                 segments = []
-                for seg in raw_segments:
-                    words = []
-                    scores = []
-                    for w in (seg.words or []):
-                        words.append({
-                            'word': w.word.strip(),
-                            'start': round(w.start, 3),
-                            'end': round(w.end, 3),
-                            'score': round(w.probability, 3),
-                        })
-                        scores.append(w.probability)
+                seg_count = 0
+                last_progress = time.time()
+                try:
+                    for seg in raw_segments:
+                        seg_count += 1
+                        now = time.time()
+                        if seg_count % 10 == 0 or (now - last_progress) > 30:
+                            self._log(f"  [Whisper] ... {seg_count} segment işlendi ({seg.end:.0f}s/{now - t0:.0f}s)")
+                            last_progress = now
 
-                    avg_conf = round(sum(scores) / len(scores), 3) if scores else 0.0
-                    segments.append({
-                        'start': round(seg.start, 3),
-                        'end': round(seg.end, 3),
-                        'text': seg.text.strip(),
-                        'speaker': '',
-                        'confidence': avg_conf,
-                        'words': words,
-                    })
+                        words = []
+                        scores = []
+                        for w in (seg.words or []):
+                            words.append({
+                                'word': w.word.strip(),
+                                'start': round(w.start, 3),
+                                'end': round(w.end, 3),
+                                'score': round(w.probability, 3),
+                            })
+                            scores.append(w.probability)
+
+                        avg_conf = round(sum(scores) / len(scores), 3) if scores else 0.0
+                        segments.append({
+                            'start': round(seg.start, 3),
+                            'end': round(seg.end, 3),
+                            'text': seg.text.strip(),
+                            'speaker': '',
+                            'confidence': avg_conf,
+                            'words': words,
+                        })
+                except Exception as gen_err:
+                    self._log(f"  [Whisper] Generator hatası ({seg_count} segment sonra): {gen_err}")
+                    self._log(f"  [Whisper] word_timestamps=False ile yeniden deneniyor...")
+                    raw2, info2 = fw_model.transcribe(
+                        audio_path, language=language, beam_size=beam_size,
+                        word_timestamps=False, vad_filter=True,
+                        vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=200),
+                        initial_prompt=initial_prompt if initial_prompt else None,
+                    )
+                    segments = []
+                    for seg in raw2:
+                        segments.append({
+                            'start': round(seg.start, 3), 'end': round(seg.end, 3),
+                            'text': seg.text.strip(), 'speaker': '', 'confidence': 0.0, 'words': [],
+                        })
+
+                # 0 segment → fallback
+                if not segments:
+                    self._log(f"  [Whisper] 0 segment — word_timestamps=False ile yeniden deneniyor...")
+                    raw2, info2 = fw_model.transcribe(
+                        audio_path, language=language, beam_size=beam_size,
+                        word_timestamps=False, vad_filter=True,
+                        vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=200),
+                        initial_prompt=initial_prompt if initial_prompt else None,
+                    )
+                    for seg in raw2:
+                        segments.append({
+                            'start': round(seg.start, 3), 'end': round(seg.end, 3),
+                            'text': seg.text.strip(), 'speaker': '', 'confidence': 0.0, 'words': [],
+                        })
 
                 # diarize stage varsa konusmaci ata
                 diar_segments = (context.get('diarize') or {}).get('segments', [])
@@ -127,7 +167,8 @@ except ImportError:
             except Exception as e:
                 self._log(f"  [Whisper] Hata: {e}")
                 import traceback
-                traceback.print_exc()
+                tb_str = traceback.format_exc()
+                self._log(f"  [Whisper] Traceback: {tb_str[-500:]}")
                 return {
                     'status': 'error',
                     'segments': [],
