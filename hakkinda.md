@@ -1,4 +1,15 @@
-# Puanlama Tablosu
+## 📋 PR Tavsiye Raporu
+
+### ① Yapısal Kontrol — "Bu iş çalışıyor mu?"
+✅ Değişen 3 Python dosyasının hepsi syntax açısından temiz. Ana modüller sorunsuz import ediliyor.
+
+### ② Bağlam Kontrolü — "Amacımızı destekliyor mu?"
+Bu PR toplamda 5 dosyayı etkiliyor. Ağırlıklı olarak 📸 OCR dalında 3 dosya üzerinde çalışma yapılmış. Ek olarak ⚙️ Config/DAG katmanında 2 dosya değişiklik var.
+
+### ③ Çakışma Kontrolü — "Başka mekanizmaları bozuyor mu?"
+✅ Mevcut 4 test dosyasındaki testlerin tamamı başarıyla geçti.
+
+
 
 ## 🎯 Parametre Skorları
 
