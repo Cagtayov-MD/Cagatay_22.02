@@ -183,13 +183,16 @@ class PipelineRunner:
                 pass
 
     # ──────────────────────────────────────────────────────────────
-    def run(self, video_path, scope="video_only",
+    def run(self, video_path, scope=None,
             first_min=6.0, last_min=10.0, content_profile: dict | None = None) -> dict:
-        # İçerik profilinden scope/first_min/last_min değerlerini uygula
+        # Scope belirleme: açık parametre > profil > config > varsayılan
+        # ÖNEMLİ: Kullanıcı arayüzünden gelen açık scope seçimi EN YÜKSEK ÖNCELİKTEDİR.
+        # Profil scope'u yalnızca açık bir seçim yapılmadığında (None) devreye girer.
         profile_name = "FilmDizi-Hybrid"
         if content_profile:
             profile_name = content_profile.get("_name", "FilmDizi-Hybrid")
-            scope      = content_profile.get("scope", scope)
+            if scope is None:
+                scope = content_profile.get("scope")
             try:
                 first_min = float(content_profile.get("first_segment_minutes", first_min))
             except (ValueError, TypeError):
@@ -210,6 +213,10 @@ class PipelineRunner:
             for _pk in _profile_merge_keys:
                 if _pk in content_profile:
                     self.config[_pk] = content_profile[_pk]
+
+        # Scope hâlâ None ise config'den veya varsayılandan al
+        if scope is None:
+            scope = self.config.get("scope", "video+audio")
 
         t0 = time.time()
         video_path = str(Path(video_path).resolve())
@@ -254,62 +261,66 @@ class PipelineRunner:
                 self.config.get("ocr_engine", _default_engine)
             ).lower()
 
-            if _ocr_engine_type == "hybrid":
-                if _HAS_HYBRID and _HAS_ONEOCR:
-                    self._log(f"  [OCR] Motor: Hybrid (oneocr + Qwen VLM handwriting fallback)")
-                    self._ocr_engine = HybridOCRRouter(
-                        cfg=self.config,
-                        log_cb=self._log,
-                        name_db=self._name_db,
-                    )
-                elif _HAS_ONEOCR:
-                    self._log(f"  [OCR] Hybrid router yüklenemedi — OneOCR tek başına")
-                    self._ocr_engine = OneOCREngine(
-                        cfg=self.config,
-                        log_cb=self._log,
-                        name_db=self._name_db,
-                    )
-                else:
-                    self._log(f"  [OCR] oneocr kurulu değil — Qwen VLM'e fallback")
+            # audio_only modunda OCR motoru başlatılmıyor — ses analizi için gereksiz
+            if scope != "audio_only":
+                if _ocr_engine_type == "hybrid":
+                    if _HAS_HYBRID and _HAS_ONEOCR:
+                        self._log(f"  [OCR] Motor: Hybrid (oneocr + Qwen VLM handwriting fallback)")
+                        self._ocr_engine = HybridOCRRouter(
+                            cfg=self.config,
+                            log_cb=self._log,
+                            name_db=self._name_db,
+                        )
+                    elif _HAS_ONEOCR:
+                        self._log(f"  [OCR] Hybrid router yüklenemedi — OneOCR tek başına")
+                        self._ocr_engine = OneOCREngine(
+                            cfg=self.config,
+                            log_cb=self._log,
+                            name_db=self._name_db,
+                        )
+                    else:
+                        self._log(f"  [OCR] oneocr kurulu değil — Qwen VLM'e fallback")
+                        self._ocr_engine = QwenOCREngine(
+                            cfg=self.config,
+                            log_cb=self._log,
+                            name_db=self._name_db,
+                            ollama_url=self.config.get("ollama_url", "http://localhost:11434"),
+                        )
+                elif _ocr_engine_type == "oneocr":
+                    if _HAS_ONEOCR:
+                        self._log(f"  [OCR] Motor: OneOCR (Windows Snipping Tool)")
+                        self._ocr_engine = OneOCREngine(
+                            cfg=self.config,
+                            log_cb=self._log,
+                            name_db=self._name_db,
+                        )
+                    else:
+                        self._log(f"  [OCR] OneOCR kurulu değil — Qwen VLM'e fallback")
+                        self._ocr_engine = QwenOCREngine(
+                            cfg=self.config,
+                            log_cb=self._log,
+                            name_db=self._name_db,
+                            ollama_url=self.config.get("ollama_url", "http://localhost:11434"),
+                        )
+                elif _ocr_engine_type == "qwen":
+                    self._log(f"  [OCR] Motor: Qwen2.5-VL (VLM tabanlı)")
                     self._ocr_engine = QwenOCREngine(
                         cfg=self.config,
                         log_cb=self._log,
                         name_db=self._name_db,
                         ollama_url=self.config.get("ollama_url", "http://localhost:11434"),
                     )
-            elif _ocr_engine_type == "oneocr":
-                if _HAS_ONEOCR:
-                    self._log(f"  [OCR] Motor: OneOCR (Windows Snipping Tool)")
-                    self._ocr_engine = OneOCREngine(
-                        cfg=self.config,
-                        log_cb=self._log,
-                        name_db=self._name_db,
-                    )
                 else:
-                    self._log(f"  [OCR] OneOCR kurulu değil — Qwen VLM'e fallback")
-                    self._ocr_engine = QwenOCREngine(
+                    self._log(f"  [OCR] Motor: PaddleOCR (GPU)")
+                    self._ocr_engine = OCREngine(
+                        use_gpu=self.config.get("use_gpu", True),
+                        lang=self.config.get("ocr_languages", ["en"])[0],
                         cfg=self.config,
                         log_cb=self._log,
                         name_db=self._name_db,
-                        ollama_url=self.config.get("ollama_url", "http://localhost:11434"),
                     )
-            elif _ocr_engine_type == "qwen":
-                self._log(f"  [OCR] Motor: Qwen2.5-VL (VLM tabanlı)")
-                self._ocr_engine = QwenOCREngine(
-                    cfg=self.config,
-                    log_cb=self._log,
-                    name_db=self._name_db,
-                    ollama_url=self.config.get("ollama_url", "http://localhost:11434"),
-                )
             else:
-                self._log(f"  [OCR] Motor: PaddleOCR (GPU)")
-                self._ocr_engine = OCREngine(
-                    use_gpu=self.config.get("use_gpu", True),
-                    lang=self.config.get("ocr_languages", ["en"])[0],
-                    cfg=self.config,
-                    log_cb=self._log,
-                    name_db=self._name_db,
-                )
+                self._log(f"  [OCR] Scope=audio_only — OCR motoru başlatılmıyor (atlanıyor)")
 
             # ══ [1/6] INGEST ═══════════════════════════════════
             self._log(f"\n[1/6] INGEST")
