@@ -33,6 +33,14 @@ def _norm(s: str) -> str:
     return "".join(ch for ch in (s or "").lower() if ch.isalnum())
 
 
+_TURKISH_CHARS = frozenset("çşğıöüÇŞĞİÖÜ")
+
+
+def _is_turkish(text: str) -> bool:
+    """Türkçe özel karakterler içeriyorsa True döner."""
+    return bool(set(text) & _TURKISH_CHARS)
+
+
 # Şirket/organizasyon isimlerini tespit etmek için anahtar kelimeler
 COMPANY_KEYWORDS = {
     'productions', 'production', 'sa', 'ltd', 'inc', 'corp',
@@ -845,8 +853,6 @@ class TMDBVerify:
 
         Return: (accepted: bool, score: float, breakdown: dict)
         """
-        _THRESHOLD = 4.0
-
         tmdb_title = (tmdb_entry.get("name") or tmdb_entry.get("title") or "").strip()
         tmdb_original_title = (
             tmdb_entry.get("original_title") or tmdb_entry.get("original_name") or ""
@@ -866,67 +872,68 @@ class TMDBVerify:
             f"  [TMDB] Ters doğrulama başlatılıyor: '{tmdb_title}' (id:{tmdb_entry.get('id', 0)})"
         )
 
-        # ── 1. Başlık eşleşme kalitesi (max +2.5 / max -2.0) ──────────
+        # ── 1. Başlık eşleşme kalitesi (max +2.5 / max -4.0) ──────────
         title_pos = 0.0
         title_neg = 0.0
         fuzzy_score = 0
+        title_active = False  # dinamik eşik hesabı için
 
+        compare_title: Optional[str] = None
         if ocr_title and tmdb_title:
-            # Tam eşleşme (normalize edilmiş)
-            if _norm(ocr_title) == _norm(tmdb_title) or (
-                tmdb_original_title and _norm(ocr_title) == _norm(tmdb_original_title)
-            ):
-                title_pos = 2.5
-                fuzzy_score = 100
-            else:
-                titles_to_check = [tmdb_title]
-                if tmdb_original_title:
-                    titles_to_check.append(tmdb_original_title)
+            ocr_is_tr  = _is_turkish(ocr_title)
+            tmdb_is_tr = _is_turkish(tmdb_title)
+            orig_is_tr = _is_turkish(tmdb_original_title) if tmdb_original_title else False
 
-                best_fuzzy = 0
-                if HAS_RAPIDFUZZ:
-                    for t in titles_to_check:
-                        s = fuzz.WRatio(ocr_title, t)
-                        if s > best_fuzzy:
-                            best_fuzzy = s
-                fuzzy_score = best_fuzzy
+            # Aynı dildeki TMDB başlığını seç
+            if ocr_is_tr == tmdb_is_tr:
+                compare_title = tmdb_title
+            elif tmdb_original_title and (ocr_is_tr == orig_is_tr):
+                compare_title = tmdb_original_title
+            # else: farklı dil → atla (title_active=False, 0.0/0.0)
 
-                if best_fuzzy >= 90:
-                    title_pos = 2.0
-                elif best_fuzzy >= 80:
-                    title_pos = 1.0
+            if compare_title is not None:
+                title_active = True
+                # Tam eşleşme (normalize edilmiş)
+                if _norm(ocr_title) == _norm(compare_title):
+                    title_pos = 2.5
+                    fuzzy_score = 100
                 else:
-                    # Kısmi eşleşme: başlık birinin içinde geçiyor mu?
-                    ocr_lower  = ocr_title.lower()
-                    tmdb_lower = tmdb_title.lower()
-                    orig_lower = tmdb_original_title.lower() if tmdb_original_title else ""
-                    if (
-                        ocr_lower in tmdb_lower
-                        or tmdb_lower in ocr_lower
-                        or (orig_lower and (ocr_lower in orig_lower or orig_lower in ocr_lower))
-                    ):
-                        title_pos = 0.5
-                    else:
-                        title_pos = 0.0
+                    if HAS_RAPIDFUZZ:
+                        fuzzy_score = fuzz.WRatio(ocr_title, compare_title)
 
-                # Başlık uyumsuzluğu cezası
-                if best_fuzzy < 60:
-                    title_neg = -2.0
-                elif best_fuzzy < 70:
-                    title_neg = -1.0
+                    if fuzzy_score >= 90:
+                        title_pos = 2.0
+                    elif fuzzy_score >= 80:
+                        title_pos = 1.0
+                    else:
+                        # Kısmi eşleşme: başlık birinin içinde geçiyor mu?
+                        ocr_lower = ocr_title.lower()
+                        cmp_lower = compare_title.lower()
+                        if ocr_lower in cmp_lower or cmp_lower in ocr_lower:
+                            title_pos = 0.5
+                        else:
+                            title_pos = 0.0
+
+                    # Aynı dilde başlık uyumsuzluğu cezası
+                    if fuzzy_score < 60:
+                        title_neg = -4.0
+                    elif fuzzy_score < 70:
+                        title_neg = -1.0
 
         title_net = title_pos + title_neg
         score += title_net
         breakdown["title"] = {
             "ocr": ocr_title,
             "tmdb": tmdb_title,
+            "compare": compare_title,
             "fuzzy": fuzzy_score,
             "pos": title_pos,
             "neg": title_neg,
             "net": title_net,
         }
         self._log(
-            f"  [TMDB]   Başlık: '{ocr_title}' vs '{tmdb_title}' → "
+            f"  [TMDB]   Başlık: '{ocr_title}' vs "
+            f"'{compare_title if title_active else '(atlandı)'}' → "
             f"fuzzy={fuzzy_score} → +{title_pos} / {title_neg}"
         )
 
@@ -979,14 +986,15 @@ class TMDBVerify:
             "net": director_net,
         }
 
-        # ── 3. Cast eşleşme ORANI (max +3.0 / max -3.0) ──────────────
+        # ── 3. Cast eşleşme ORANI + MUTLAK BONUS (max +6.0 / max -3.0) ──────────────
         cast_pos = 0.0
         cast_neg = 0.0
         total = forward_hits + forward_misses
+        cast_active = total > 0
         ratio = (forward_hits / total) if total > 0 else 0.0
         ratio_pct = ratio * 100
 
-        # Pozitif
+        # Pozitif (oran bazlı)
         if ratio >= 0.50:
             cast_pos = 3.0
         elif ratio >= 0.30:
@@ -998,13 +1006,22 @@ class TMDBVerify:
         else:
             cast_pos = 0.0
 
-        # Negatif
-        if ratio < 0.05:
-            cast_neg = -3.0
-        elif ratio < 0.10:
-            cast_neg = -2.0
-        elif ratio < 0.15:
-            cast_neg = -1.0
+        # Mutlak eşleşme bonusu
+        if forward_hits >= 8:
+            cast_pos += 3.0
+        elif forward_hits >= 5:
+            cast_pos += 2.0
+        elif forward_hits >= 3:
+            cast_pos += 1.0
+
+        # Negatif: sadece forward_hits < 3 ise uygulanır
+        if forward_hits < 3:
+            if ratio < 0.05:
+                cast_neg = -3.0
+            elif ratio < 0.10:
+                cast_neg = -2.0
+            elif ratio < 0.15:
+                cast_neg = -1.0
 
         cast_net = cast_pos + cast_neg
         score += cast_net
@@ -1063,6 +1080,24 @@ class TMDBVerify:
             "net": year_net,
         }
 
+        # ── Dinamik eşik: aktif kategorilerin max pozitif puan toplamı × %40 ──
+        _MAX_TITLE   = 2.5
+        _MAX_DIRECTOR = 2.5
+        _MAX_CAST    = 6.0
+        _MAX_YEAR    = 2.0
+
+        max_pos = 0.0
+        if title_active:
+            max_pos += _MAX_TITLE
+        if ocr_director_names:
+            max_pos += _MAX_DIRECTOR
+        if cast_active:
+            max_pos += _MAX_CAST
+        if ocr_year and tmdb_year:
+            max_pos += _MAX_YEAR
+
+        _THRESHOLD = max(1.0, round(max_pos * 0.40, 2))
+
         # ── Karar ─────────────────────────────────────────────────────
         accepted = score >= _THRESHOLD
         breakdown["total"]     = round(score, 2)
@@ -1070,7 +1105,7 @@ class TMDBVerify:
 
         status = "✅ ACCEPT" if accepted else "❌ REJECT"
         self._log(
-            f"  [TMDB]   Toplam: {score:.1f} / 10.0 → {status} (eşik: {_THRESHOLD})"
+            f"  [TMDB]   Toplam: {score:.1f} / {max_pos:.1f} → {status} (eşik: {_THRESHOLD})"
         )
 
         return accepted, round(score, 2), breakdown
