@@ -319,6 +319,12 @@ def test_verify_credits_kulube_rejected():
     assert result.rejected is True, (
         f"Kulübe senaryosunda rejected=True bekleniyor, aldık: {result.rejected}"
     )
+    assert result.reverse_passed is False, (
+        "REJECT durumunda reverse_passed False olmalı"
+    )
+    assert result.reverse_threshold > 0.0, (
+        "reverse_threshold doldurulmalı"
+    )
     assert result.matched_id == 0, (
         f"REJECT durumunda matched_id=0 olmalı, aldık: {result.matched_id}"
     )
@@ -405,6 +411,15 @@ def test_verify_credits_correct_film_accepted():
     )
     assert result.matched_id == FIGHT_CLUB_ID, (
         f"matched_id={FIGHT_CLUB_ID} bekleniyor, aldık: {result.matched_id}"
+    )
+    assert result.reverse_threshold > 0.0, (
+        "reverse_threshold hesaplanmalı"
+    )
+    assert result.reverse_passed is True, (
+        "Doğru film senaryosunda reverse_passed True olmalı"
+    )
+    assert result.reverse_score >= result.reverse_threshold, (
+        "reverse_score eşiği geçmeli"
     )
     assert result.reverse_score >= 4.0, (
         f"reverse_score eşiğin üzerinde olmalı: {result.reverse_score}"

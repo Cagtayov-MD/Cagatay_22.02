@@ -131,6 +131,8 @@ class TMDBVerifyResult:
     original_title: str = ""
     matched_via: str = ""  # "title" veya "cast_only" — LOCK kararı için
     reverse_score: float = 0.0          # Ters doğrulama puanı
+    reverse_threshold: float = 0.0      # Ters doğrulama eşiği (dinamik)
+    reverse_passed: bool = False        # Ters doğrulama eşiği geçildi mi?
     reverse_breakdown: Dict[str, Any] = None  # Puan detayları
     rejected: bool = False              # Ters doğrulama tarafından reddedildi mi
 
@@ -480,10 +482,12 @@ class TMDBVerify:
                 reason="reverse_validation_rejected",
                 matched_title=tmdb_title,
                 matched_id=0,
-                reverse_score=_rv_score,
-                reverse_breakdown=_rv_breakdown,
-                rejected=True,
-            )
+            reverse_score=_rv_score,
+            reverse_breakdown=_rv_breakdown,
+            rejected=True,
+            reverse_threshold=_rv_breakdown.get("threshold", 0.0),
+            reverse_passed=False,
+        )
 
         # Cast kanonikleştir
         updated, hits, misses = self._canonicalize(cdata, credits_data)
@@ -549,6 +553,8 @@ class TMDBVerify:
             matched_via=matched_via,
             reverse_score=_rv_score,
             reverse_breakdown=_rv_breakdown,
+            reverse_threshold=_rv_breakdown.get("threshold", 0.0),
+            reverse_passed=_rv_accepted,
         )
 
     # ── TMDB'de eşleşme bul ─────────────────────────────────────────

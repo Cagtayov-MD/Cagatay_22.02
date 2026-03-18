@@ -535,11 +535,19 @@ class PipelineRunner:
 
                             # ── Profil bazlı dallanma ──
                             _matched_via = getattr(tmdb_result, 'matched_via', '')
-                            if (profile_name == "FilmDizi-Hybrid"
-                                    and _matched_via == "title"):
+                            _lock, _lock_reason = self._should_lock_tmdb(profile_name, tmdb_result, _matched_via)
+                            if _lock:
+                                if _lock_reason == "reverse_validation":
+                                    _thr = getattr(tmdb_result, "reverse_threshold", 0.0) or 0.0
+                                    self._log(
+                                        f"  [TMDB] LOCK aktif — ters doğrulama geçti "
+                                        f"(score:{tmdb_result.reverse_score:.2f}/{_thr:.2f})"
+                                    )
+                                else:
+                                    self._log(f"  [TMDB] LOCK aktif — film adı eşleşmesi")
                                 # TMDB LOCK: OCR verisi silinir, TMDB kanonik veri yazılır
                                 cdata = self._apply_tmdb_credits(cdata, tmdb_result)
-                                self._log(f"  [TMDB] LOCK aktif — cast:{cdata['total_actors']} crew:{cdata['total_crew']}")
+                                self._log(f"  [TMDB] LOCK tamamlandı — cast:{cdata['total_actors']} crew:{cdata['total_crew']}")
                                 # QA: OCR'da olup TMDB'de olmayan oyuncular
                                 if ocr_lines:
                                     try:
@@ -1104,6 +1112,27 @@ class PipelineRunner:
             cdata["gemini_extracted"] = True
             return True
         return False
+
+    @staticmethod
+    def _should_lock_tmdb(profile_name: str, tmdb_result, matched_via: str) -> tuple[bool, str]:
+        """TMDB sonucunun LOCK (kutsal kaynak) moduna alınıp alınmayacağını belirle."""
+        if not tmdb_result or getattr(tmdb_result, "rejected", False):
+            return False, ""
+
+        reverse_threshold = (getattr(tmdb_result, "reverse_threshold", 0.0) or 0.0)
+        reverse_score = (getattr(tmdb_result, "reverse_score", 0.0) or 0.0)
+        reverse_passed = bool(getattr(tmdb_result, "reverse_passed", False))
+
+        if reverse_threshold and not reverse_passed:
+            reverse_passed = reverse_score >= reverse_threshold
+
+        if profile_name == "FilmDizi-Hybrid":
+            if reverse_passed:
+                return True, "reverse_validation"
+            if matched_via == "title":
+                return True, "title"
+
+        return False, ""
 
     # ──────────────────────────────────────────────────────────────
     # TMDB
