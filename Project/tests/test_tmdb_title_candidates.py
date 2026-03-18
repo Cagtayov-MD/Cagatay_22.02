@@ -156,7 +156,7 @@ def test_strategy2_director_contributes_via_crew():
          patch.object(verifier, "_load_cache", return_value=None), \
          patch.object(verifier, "_save_cache"):
 
-        entry, kind = verifier._find_tmdb_entry(
+        entry, kind, _via = verifier._find_tmdb_entry(
             film_title="",  # Film adı yok — Strategy 2 tetiklenmeli
             cast_names=["Isabelle Huppert", "Jean-Francois Balmer"],
             director_names=["Claude Chabrol"],
@@ -208,7 +208,7 @@ def test_strategy2_director_no_double_count_for_actor_director():
          patch.object(verifier, "_save_cache"):
 
         # Sadece 1 kişi arıyoruz; count en fazla 1 olmalı → MIN_ACTOR_MATCH=3 geçilemez
-        entry, kind = verifier._find_tmdb_entry(
+        entry, kind, _via = verifier._find_tmdb_entry(
             film_title="",
             cast_names=["Actor One"],
             director_names=[],
@@ -258,7 +258,7 @@ def test_strategy1_director_only_no_cast():
          patch.object(verifier, "_load_cache", return_value=None), \
          patch.object(verifier, "_save_cache"):
 
-        entry, kind = verifier._find_tmdb_entry(
+        entry, kind, _via = verifier._find_tmdb_entry(
             film_title="Teşkilat",
             cast_names=[],
             director_names=["Ozan Bodur"],
@@ -314,7 +314,7 @@ def test_strategy2_director_only_no_cast():
          patch.object(verifier, "_load_cache", return_value=None), \
          patch.object(verifier, "_save_cache"):
 
-        entry, kind = verifier._find_tmdb_entry(
+        entry, kind, _via = verifier._find_tmdb_entry(
             film_title="",
             cast_names=[],
             director_names=["Ozan Bodur"],
@@ -368,7 +368,7 @@ def test_strategy2_cast_present_still_uses_min_actor_match():
          patch.object(verifier, "_load_cache", return_value=None), \
          patch.object(verifier, "_save_cache"):
 
-        entry, kind = verifier._find_tmdb_entry(
+        entry, kind, _via = verifier._find_tmdb_entry(
             film_title="",
             cast_names=["Actor A", "Actor B"],
             director_names=[],
@@ -378,3 +378,148 @@ def test_strategy2_cast_present_still_uses_min_actor_match():
     assert entry is None, (
         "cast doluyken MIN_ACTOR_MATCH=3 eşiği korunmalı; 2 eşleşmeyle None dönmeliydi."
     )
+
+
+# ── Strateji 1b: Orijinal başlık ara testleri ────────────────────────────────
+
+
+def test_original_title_fallback_used_when_local_title_fails():
+    """
+    ORIG-TITLE-01: Türkçe/yerel başlık bulunamazsa orijinal başlıkla arama yapılmalı.
+
+    Senaryo: 'Gün Batısı' → TMDB'de 0 sonuç
+             original_title='THE SUNDOWNERS' → TMDB'de bulunuyor
+             2 oyuncu eşleşiyor → matched_via='original_title'
+    """
+    from unittest.mock import patch
+    from core.tmdb_verify import TMDBVerify
+    import tempfile
+
+    tmp = tempfile.mkdtemp()
+    verifier = TMDBVerify(work_dir=tmp, api_key="test-key")
+
+    MOVIE_ID = 43393
+    MOVIE_ENTRY = {
+        "id": MOVIE_ID, "media_type": "movie",
+        "title": "The Sundowners", "release_date": "1950-01-01",
+    }
+
+    def fake_search_multi(title):
+        # Türkçe başlıkla arama sonuç vermez; İngilizce başlıkla bulunur
+        if _norm(title) in (_norm("Gün Batısı"), _norm("Gun Batisi")):
+            return []
+        if "sundowner" in title.lower():
+            return [MOVIE_ENTRY]
+        return []
+
+    def fake_fetch_credits(kind, mid):
+        if mid == MOVIE_ID:
+            return {
+                "cast": [
+                    {"name": "Robert Preston"},
+                    {"name": "Robert Sterling"},
+                    {"name": "Chill Wills"},
+                ],
+                "crew": [{"name": "George Templeton", "job": "Director"}],
+            }
+        return None
+
+    with patch.object(verifier.client, "search_multi", side_effect=fake_search_multi), \
+         patch.object(verifier, "_fetch_credits", side_effect=fake_fetch_credits), \
+         patch.object(verifier, "_load_cache", return_value=None), \
+         patch.object(verifier, "_save_cache"):
+
+        entry, kind, matched_via = verifier._find_tmdb_entry(
+            film_title="Gün Batısı",
+            cast_names=["Robert Preston", "Robert Sterling", "Chill Wills"],
+            director_names=["George Templeton"],
+            original_title="THE SUNDOWNERS",
+        )
+
+    assert entry is not None, (
+        "Orijinal başlık fallback çalışmalıydı; None döndü. "
+        "Türkçe başlık başarısız olunca 'THE SUNDOWNERS' ile aranmalı."
+    )
+    assert entry["id"] == MOVIE_ID
+    assert kind == "movie"
+    assert matched_via == "original_title", (
+        f"matched_via 'original_title' olmalıydı, '{matched_via}' döndü"
+    )
+
+
+def test_original_title_fallback_skipped_when_same_as_local():
+    """
+    ORIG-TITLE-02: Orijinal başlık yerel başlıkla aynıysa tekrar aranmamalı.
+
+    Normalize edilmiş formlar aynıysa Strategy 1b atlanır.
+    """
+    from unittest.mock import patch
+    from core.tmdb_verify import TMDBVerify
+    import tempfile
+
+    tmp = tempfile.mkdtemp()
+    verifier = TMDBVerify(work_dir=tmp, api_key="test-key")
+
+    search_calls = []
+
+    def fake_search_multi(title):
+        search_calls.append(title)
+        return []
+
+    def fake_fetch_credits(kind, mid):
+        return None
+
+    with patch.object(verifier.client, "search_multi", side_effect=fake_search_multi), \
+         patch.object(verifier, "_fetch_credits", side_effect=fake_fetch_credits), \
+         patch.object(verifier, "_load_cache", return_value=None), \
+         patch.object(verifier, "_save_cache"), \
+         patch.object(verifier.client, "search_person", return_value=[]):
+
+        verifier._find_tmdb_entry(
+            film_title="Casablanca",
+            cast_names=["Actor A", "Actor B", "Actor C"],
+            director_names=[],
+            original_title="Casablanca",  # aynı isim
+        )
+
+    # Sadece 1 arama yapılmalı (yerel başlık); orijinal başlık tekrar aranmamalı
+    assert len(search_calls) == 1, (
+        f"Aynı orijinal başlık için fazladan arama yapıldı: {search_calls}"
+    )
+
+
+def test_original_title_fallback_skipped_when_empty():
+    """
+    ORIG-TITLE-03: Orijinal başlık boşsa Strategy 1b atlanmalı, cast fallback'e geçilmeli.
+    """
+    from unittest.mock import patch
+    from core.tmdb_verify import TMDBVerify
+    import tempfile
+
+    tmp = tempfile.mkdtemp()
+    verifier = TMDBVerify(work_dir=tmp, api_key="test-key")
+
+    def fake_search_multi(title):
+        return []
+
+    with patch.object(verifier.client, "search_multi", side_effect=fake_search_multi), \
+         patch.object(verifier, "_fetch_credits", return_value=None), \
+         patch.object(verifier, "_load_cache", return_value=None), \
+         patch.object(verifier, "_save_cache"), \
+         patch.object(verifier.client, "search_person", return_value=[]):
+
+        entry, kind, matched_via = verifier._find_tmdb_entry(
+            film_title="Gün Batısı",
+            cast_names=["Actor A", "Actor B", "Actor C"],
+            director_names=[],
+            original_title="",  # boş — fallback atlanmalı
+        )
+
+    # Eşleşme yok ama hata da olmamalı
+    assert entry is None
+
+
+def _norm(s):
+    """Normalize yardımcısı — core.tmdb_verify._norm ile aynı mantık."""
+    from core.tmdb_verify import _norm as _tmdb_norm
+    return _tmdb_norm(s)
