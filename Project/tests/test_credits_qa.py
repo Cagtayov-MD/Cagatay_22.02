@@ -25,7 +25,9 @@ if _project_dir not in sys.path:
 
 from core.credits_qa import (
     check_missing_actors,
+    check_missing_crew,
     CreditsQA,
+    CrewQA,
     MissingActor,
     MIN_CONFIDENCE,
     MIN_SEEN_FRAMES,
@@ -241,3 +243,82 @@ def test_qa12_both_empty():
     result = check_missing_actors([], [])
     assert isinstance(result, CreditsQA)
     assert result.missing_actors == []
+
+
+# ── Crew QA helpers ───────────────────────────────────────────────────────────
+
+def _tmdb_crew(*names):
+    return [{"name": n, "job": "Crew"} for n in names]
+
+
+# ── Crew QA-01: Missing crew member detected ──────────────────────────────────
+
+def test_crew_qa01_missing_crew_detected():
+    ocr = [_line("IVAN VOLKMAN")]
+    tmdb = _tmdb_crew("Ray Milland", "Lionel Lindon")
+    result = check_missing_crew(ocr, tmdb)
+    assert isinstance(result, CrewQA)
+    assert len(result.missing_crew) == 1
+    assert result.missing_crew[0].name == "IVAN VOLKMAN"
+
+
+# ── Crew QA-02: TMDB crew member NOT flagged ─────────────────────────────────
+
+def test_crew_qa02_crew_in_tmdb_not_flagged():
+    ocr = [_line("Ray Milland")]
+    tmdb = _tmdb_crew("Ray Milland")
+    result = check_missing_crew(ocr, tmdb)
+    assert len(result.missing_crew) == 0
+
+
+# ── Crew QA-03: Low confidence filtered out ──────────────────────────────────
+
+def test_crew_qa03_low_confidence_filtered():
+    ocr = [_line("SOME CREW", conf=MIN_CONFIDENCE - 0.01)]
+    tmdb = _tmdb_crew("Nobody")
+    result = check_missing_crew(ocr, tmdb)
+    assert len(result.missing_crew) == 0
+
+
+# ── Crew QA-04: check_missing_crew returns CrewQA ────────────────────────────
+
+def test_crew_qa04_returns_crew_qa():
+    result = check_missing_crew([], [])
+    assert isinstance(result, CrewQA)
+    assert result.missing_crew == []
+    assert result.summary == ""
+
+
+# ── Crew QA-05: to_dict() has correct keys ───────────────────────────────────
+
+def test_crew_qa05_to_dict_keys():
+    ocr = [_line("IVAN VOLKMAN")]
+    tmdb = _tmdb_crew("Ray Milland")
+    result = check_missing_crew(ocr, tmdb)
+    d = result.to_dict()
+    assert "tmdb_crew_count"    in d
+    assert "ocr_crew_count"     in d
+    assert "missing_crew_count" in d
+    assert "missing_crew"       in d
+    assert "summary"            in d
+    assert d["missing_crew_count"] == len(d["missing_crew"])
+
+
+# ── Crew QA-06: Single-word name allowed (MIN_WORDS=1) ───────────────────────
+
+def test_crew_qa06_single_word_name_allowed():
+    ocr = [_line("KUBRICK")]
+    tmdb = _tmdb_crew("Nobody")
+    result = check_missing_crew(ocr, tmdb)
+    # Single word should NOT be filtered (crew MIN_WORDS=1)
+    assert len(result.missing_crew) == 1
+
+
+# ── Crew QA-07: Fuzzy match prevents flagging similar names ──────────────────
+
+def test_crew_qa07_fuzzy_match_not_flagged():
+    # "WALTER KELLER" and "Walter E. Keller" should match via fuzzy similarity
+    ocr = [_line("WALTER KELLER")]
+    tmdb = _tmdb_crew("Walter E. Keller")
+    result = check_missing_crew(ocr, tmdb)
+    assert len(result.missing_crew) == 0

@@ -546,6 +546,18 @@ class PipelineRunner:
                                             self._log(f"  {qa.summary}")
                                     except Exception as e:
                                         self._log(f"  [QA] {e}")
+                                if ocr_lines:
+                                    try:
+                                        from core.credits_qa import check_missing_crew
+                                        crew_qa = check_missing_crew(
+                                            ocr_results=ocr_lines,
+                                            tmdb_crew=cdata.get("crew", []),
+                                        )
+                                        if crew_qa.missing_crew:
+                                            cdata["crew_qa"] = crew_qa.to_dict()
+                                            self._log(f"  {crew_qa.summary}")
+                                    except Exception as e:
+                                        self._log(f"  [Crew QA] {e}")
                             else:
                                 # REFERANS MODU: film adıyla eşleşmedi veya sadece oyuncularla bulundu
                                 if _matched_via == "cast_only":
@@ -895,6 +907,14 @@ class PipelineRunner:
 
     def _apply_tmdb_credits(self, cdata: dict, tmdb_result):
         """TMDB doğrulama başarılıysa rapor içeriğini TMDB kanonik verisiyle sınırla."""
+        import re as _re
+        import unicodedata as _unicodedata
+
+        def _norm_name(s: str) -> str:
+            nfkd = _unicodedata.normalize("NFKD", s)
+            ascii_ = nfkd.encode("ascii", "ignore").decode("ascii")
+            return _re.sub(r"[^a-z0-9]", "", ascii_.lower())
+
         cast = []
         for item in (tmdb_result.cast or []):
             name = (item.get("name") or "").strip()
@@ -963,6 +983,36 @@ class PipelineRunner:
         cdata["total_crew"] = len(crew)
         cdata["verification_status"] = "tmdb_verified"
         cdata["keywords_source"] = "tmdb_only"
+
+        # ── OCR'da var, TMDB'de yok → crew'a merge et ────────────────────────
+        # _verified_crew_roles: {job_key: [{"name": ..., "confidence": ...}, ...]}
+        ocr_crew_roles = cdata.get("_verified_crew_roles") or {}
+        if ocr_crew_roles:
+            tmdb_crew_names = {_norm_name(c["name"]) for c in crew if c.get("name")}
+            for role_key, persons in ocr_crew_roles.items():
+                if not isinstance(persons, list):
+                    persons = [persons]
+                for person in persons:
+                    name = (person.get("name") or "").strip()
+                    if not name:
+                        continue
+                    if _norm_name(name) in tmdb_crew_names:
+                        continue  # Zaten TMDB'de var
+                    crew.append({
+                        "name": name,
+                        "job": role_key,
+                        "role": role_key,
+                        "role_tr": self._JOB_TR.get(role_key, role_key),
+                        "role_category": "crew",
+                        "raw": "ocr_verified",
+                        "confidence": float(person.get("confidence", 0.85)),
+                        "frame": "ocr",
+                    })
+                    tmdb_crew_names.add(_norm_name(name))  # tekrar eklemeyi önle
+            # merge sonrası toplamları güncelle
+            cdata["crew"] = crew
+            cdata["technical_crew"] = crew
+            cdata["total_crew"] = len(crew)
 
         # TMDB lock aktif — NAME_VERIFY'dan kalan _verified_crew_roles geçersiz
         cdata.pop("_verified_crew_roles", None)
