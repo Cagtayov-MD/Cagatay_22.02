@@ -540,8 +540,17 @@ class PipelineRunner:
 
                             # ── Profil bazlı dallanma ──
                             _matched_via = getattr(tmdb_result, 'matched_via', '')
-                            if (profile_name == "FilmDizi-Hybrid"
-                                    and _matched_via == "title"):
+                            _reverse_score = getattr(tmdb_result, 'reverse_score', 0.0)
+                            _reverse_threshold = 3.4  # varsayılan minimum eşik
+                            if tmdb_result.reverse_breakdown:
+                                _reverse_threshold = tmdb_result.reverse_breakdown.get('threshold', 3.4)
+                            _lock_eligible = (
+                                _matched_via == "title"
+                                or (_reverse_score >= _reverse_threshold and tmdb_result.matched_id > 0)
+                            )
+                            if (profile_name == "FilmDizi-Hybrid" and _lock_eligible):
+                                if _matched_via == "cast_only":
+                                    self._log(f"  [TMDB] cast_only eşleşme ama reverse_score={_reverse_score:.1f} ≥ {_reverse_threshold:.1f} — LOCK açılıyor")
                                 # TMDB LOCK: OCR verisi silinir, TMDB kanonik veri yazılır
                                 cdata = self._apply_tmdb_credits(cdata, tmdb_result)
                                 self._log(f"  [TMDB] LOCK aktif — cast:{cdata['total_actors']} crew:{cdata['total_crew']}")
@@ -571,9 +580,10 @@ class PipelineRunner:
                                     except Exception as e:
                                         self._log(f"  [Crew QA] {e}")
                             else:
-                                # REFERANS MODU: film adıyla eşleşmedi veya sadece oyuncularla bulundu
+                                # REFERANS MODU: LOCK koşulu sağlanamadı
+                                # (_lock_eligible=False: başlık eşleşmedi ve reverse_score < eşik veya matched_id=0)
                                 if _matched_via == "cast_only":
-                                    self._log(f"  [TMDB] Sadece oyuncularla eşleşme — LOCK açılmıyor, referans modu")
+                                    self._log(f"  [TMDB] cast_only eşleşme — reverse_score={_reverse_score:.1f} < {_reverse_threshold:.1f} — LOCK açılmıyor, referans modu")
                                 cdata["_tmdb_film_match"] = {
                                     "title": tmdb_result.matched_title,
                                     "id": tmdb_result.matched_id,

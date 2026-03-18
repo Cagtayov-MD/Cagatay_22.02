@@ -24,6 +24,7 @@ from config.runtime_paths import resolve_name_db_path
 
 try:
     from rapidfuzz import fuzz as _fuzz
+    from rapidfuzz import process as _rf_process
     _HAS_RAPIDFUZZ = True
 except ImportError:
     _HAS_RAPIDFUZZ = False
@@ -583,6 +584,18 @@ def _map_crew_to_roles(crew_data: list, directors: list) -> dict[str, list[str]]
             continue
 
         output_role = _ROLE_TO_OUTPUT.get(role_lower)
+
+        # Fuzzy fallback for OCR-corrupted job titles (e.g. "Fifm Editor" → "Film Editor")
+        if not output_role and _HAS_RAPIDFUZZ:
+            match = _rf_process.extractOne(
+                role_lower,
+                list(_ROLE_TO_OUTPUT.keys()),
+                scorer=_fuzz.WRatio,
+                score_cutoff=82,
+            )
+            if match:
+                output_role = _ROLE_TO_OUTPUT[match[0]]
+
         if output_role and name not in result[output_role]:
             result[output_role].append(name)
 
