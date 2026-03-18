@@ -236,6 +236,15 @@ class MainWindow(QMainWindow):
         lay.addLayout(icerik_row)
         lay.addWidget(self._sep())
 
+        # Scope (analiz kapsamı) seçimi
+        scope_row = QHBoxLayout()
+        scope_row.addWidget(QLabel("Kapsam:"))
+        self.scope_combo = QComboBox()
+        self.scope_combo.addItems(["Video + Ses", "Sadece Video", "Sadece Ses"])
+        scope_row.addWidget(self.scope_combo)
+        lay.addLayout(scope_row)
+        lay.addWidget(self._sep())
+
         # Çıktı Dizini
         r2 = QHBoxLayout()
         lbl2 = QLabel("Cikti Dizini:")
@@ -250,6 +259,15 @@ class MainWindow(QMainWindow):
         lay.addLayout(r2)
 
         return grp
+
+    def _get_scope_from_combo(self) -> str:
+        """Scope combo'sundan pipeline scope string'ini döndür."""
+        text = self.scope_combo.currentText()
+        if text == "Sadece Video":
+            return "video_only"
+        elif text == "Sadece Ses":
+            return "audio_only"
+        return "video+audio"  # "Video + Ses" (varsayılan)
 
     def _build_log_panel(self):
         """Canlı Log — eski Sound Detail panelinin yerine."""
@@ -518,11 +536,11 @@ class MainWindow(QMainWindow):
                 out_dir = self.output_dir if self.output_dir else str(Path(video_path).parent)
 
                 from core.pipeline_runner import PipelineRunner
-                scope = "video_only"
+                scope = self._get_scope_from_combo()
+                # NOT: scope_combo seçimi profil JSON'dan gelen scope'u override eder
                 first_min = 4.0
                 last_min = 8.0
                 if content_profile:
-                    scope = content_profile.get("scope", scope)
                     try:
                         first_min = float(content_profile.get("first_segment_minutes", first_min))
                         last_min = float(content_profile.get("last_segment_minutes", last_min))
@@ -600,12 +618,11 @@ class MainWindow(QMainWindow):
             cfg = dict(params["config"])
             content_profile = params.get("content_profile")
 
-            # Profil varsa scope ve segment değerlerini profilden al
-            scope     = "video_only"
+            # Scope combo seçimi profil JSON'dan gelen scope'u override eder
+            scope     = self._get_scope_from_combo()
             first_min = 4.0
             last_min  = 8.0
             if content_profile:
-                scope     = content_profile.get("scope", scope)
                 first_min = float(content_profile.get("first_segment_minutes", first_min))
                 last_min  = float(content_profile.get("last_segment_minutes", last_min))
 
