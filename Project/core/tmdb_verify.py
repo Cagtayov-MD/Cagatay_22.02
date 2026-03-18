@@ -625,7 +625,12 @@ class TMDBVerify:
         _norm_orig   = _norm(original_title or "")
         _orig_usable = bool(original_title and _norm_orig and _norm_orig != _norm_film)
         if _orig_usable:
-            self._log(f"  [TMDB] Orijinal başlıkla arama deneniyor: '{original_title}'")
+            # Orijinal başlık aramasında daha yüksek cast eşleşme eşiği uygula.
+            # Aynı isimde birden fazla film olabilir → cast desteği güçlü olmalı.
+            # 5+ oyuncu varsa: %33 eşleşme gereksin (en az 3); daha azsa eski eşik (2) korunur.
+            _SMALL_CAST_LIMIT  = 5  # bu değerin altında eski davranış (min 2) geçerli
+            _orig_min_cast = max(3, len(cast_names) // 3) if len(cast_names) >= _SMALL_CAST_LIMIT else 2
+            self._log(f"  [TMDB] Orijinal başlıkla arama deneniyor: '{original_title}' (min cast eşleşme: {_orig_min_cast})")
             for orig_attempt in _title_candidates(original_title):
                 self._log(f"  [TMDB] Aranan orijinal başlık: '{orig_attempt}'")
                 cache_key = f"search_multi_{_norm(orig_attempt)}"
@@ -651,15 +656,22 @@ class TMDBVerify:
                     tmdb_names = self._extract_names(credits)
                     matched    = self._count_matches(cast_names, tmdb_names)
                     self._log(f"  [TMDB]   → {matched}/{len(cast_names)} oyuncu eşleşti")
-                    if matched >= 2:
-                        self._log(f"  [TMDB] orijinal başlık + {matched} oyuncu eşleşti → %100 güven")
+                    # Yükseltilmiş eşik: orijinal başlık tek başına yetmez, güçlü cast desteği gerekli
+                    if matched >= _orig_min_cast:
+                        self._log(f"  [TMDB] orijinal başlık + {matched} oyuncu eşleşti (>={_orig_min_cast}) → %100 güven")
                         return r, kind, "original_title"
-                    if matched >= 1 and director_names and _director_matches_crew(credits):
+                    # 2+ oyuncu + yönetmen eşleşmesi de güvenilir
+                    if matched >= 2 and director_names and _director_matches_crew(credits):
                         self._log(f"  [TMDB] orijinal başlık + {matched} oyuncu + yönetmen eşleşti → %100 güven")
+                        return r, kind, "original_title"
+                    # Tek oyuncu + yönetmen de kabul — ama sadece cast çok azsa
+                    if matched >= 1 and len(cast_names) < _SMALL_CAST_LIMIT and director_names and _director_matches_crew(credits):
+                        self._log(f"  [TMDB] orijinal başlık + {matched} oyuncu + yönetmen eşleşti (küçük cast) → kabul")
                         return r, kind, "original_title"
                     if matched == 0 and director_names and _director_matches_crew(credits):
                         self._log(f"  [TMDB] orijinal başlık + yönetmen eşleşti (oyuncu eşleşmedi) → kabul")
                         return r, kind, "original_title"
+                    self._log(f"  [TMDB]   → REJECT: {matched}/{len(cast_names)} < min {_orig_min_cast}")
                 # Bu orijinal başlık denemesinde eşleşme yoksa sonraki varyantı dene
         elif original_title and not _orig_usable:
             self._log(f"  [TMDB] Orijinal başlık yerel başlıkla aynı, tekrar aranmıyor")

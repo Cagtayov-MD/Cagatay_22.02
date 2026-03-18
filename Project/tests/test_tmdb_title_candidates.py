@@ -389,7 +389,7 @@ def test_original_title_fallback_used_when_local_title_fails():
 
     Senaryo: 'Gün Batısı' → TMDB'de 0 sonuç
              original_title='THE SUNDOWNERS' → TMDB'de bulunuyor
-             2 oyuncu eşleşiyor → matched_via='original_title'
+             6 cast_names, 6/6 eşleşme (dinamik eşiği karşılıyor) → matched_via='original_title'
     """
     from unittest.mock import patch
     from core.tmdb_verify import TMDBVerify
@@ -404,6 +404,11 @@ def test_original_title_fallback_used_when_local_title_fails():
         "title": "The Sundowners", "release_date": "1950-01-01",
     }
 
+    CAST = [
+        "Robert Preston", "Robert Sterling", "Chill Wills",
+        "John Litel", "Jack Elam", "Don Haggerty",
+    ]
+
     def fake_search_multi(title):
         # Türkçe başlıkla arama sonuç vermez; İngilizce başlıkla bulunur
         if _norm(title) in (_norm("Gün Batısı"), _norm("Gun Batisi")):
@@ -415,11 +420,7 @@ def test_original_title_fallback_used_when_local_title_fails():
     def fake_fetch_credits(kind, mid):
         if mid == MOVIE_ID:
             return {
-                "cast": [
-                    {"name": "Robert Preston"},
-                    {"name": "Robert Sterling"},
-                    {"name": "Chill Wills"},
-                ],
+                "cast": [{"name": n} for n in CAST],
                 "crew": [{"name": "George Templeton", "job": "Director"}],
             }
         return None
@@ -431,7 +432,7 @@ def test_original_title_fallback_used_when_local_title_fails():
 
         entry, kind, matched_via = verifier._find_tmdb_entry(
             film_title="Gün Batısı",
-            cast_names=["Robert Preston", "Robert Sterling", "Chill Wills"],
+            cast_names=CAST,
             director_names=["George Templeton"],
             original_title="THE SUNDOWNERS",
         )
@@ -442,6 +443,173 @@ def test_original_title_fallback_used_when_local_title_fails():
     )
     assert entry["id"] == MOVIE_ID
     assert kind == "movie"
+    assert matched_via == "original_title", (
+        f"matched_via 'original_title' olmalıydı, '{matched_via}' döndü"
+    )
+
+
+def test_original_title_weak_cast_match_rejected():
+    """
+    ORIG-TITLE-WEAK: Orijinal başlık + zayıf cast eşleşmesi → REJECT, Strateji 2'ye düşmeli.
+
+    9 cast_names varken sadece 2 eşleşme — dinamik eşiği karşılamıyor → reddedilmeli.
+    """
+    from unittest.mock import patch
+    from core.tmdb_verify import TMDBVerify
+    import tempfile
+
+    tmp = tempfile.mkdtemp()
+    verifier = TMDBVerify(work_dir=tmp, api_key="test-key")
+
+    WRONG_MOVIE_ID = 43047
+    WRONG_MOVIE_ENTRY = {
+        "id": WRONG_MOVIE_ID, "media_type": "movie",
+        "title": "The Sundowners", "release_date": "1960-01-01",
+    }
+
+    CAST_NAMES = [
+        "Actor One", "Actor Two", "Actor Three",
+        "Actor Four", "Actor Five", "Actor Six",
+        "Actor Seven", "Actor Eight", "Actor Nine",
+    ]
+    # TMDB'de sadece 2 oyuncu eşleşiyor → zayıf
+    TMDB_CAST = [
+        {"name": "Actor One"}, {"name": "Actor Two"},
+        {"name": "Wrong Actor A"}, {"name": "Wrong Actor B"},
+    ]
+
+    def fake_search_multi(title):
+        if "sundowner" in title.lower():
+            return [WRONG_MOVIE_ENTRY]
+        return []
+
+    def fake_fetch_credits(kind, mid):
+        if mid == WRONG_MOVIE_ID:
+            return {"cast": TMDB_CAST, "crew": []}
+        return None
+
+    with patch.object(verifier.client, "search_multi", side_effect=fake_search_multi), \
+         patch.object(verifier, "_fetch_credits", side_effect=fake_fetch_credits), \
+         patch.object(verifier, "_load_cache", return_value=None), \
+         patch.object(verifier, "_save_cache"), \
+         patch.object(verifier.client, "search_person", return_value=[]):
+
+        entry, kind, matched_via = verifier._find_tmdb_entry(
+            film_title="Gün Batısı",
+            cast_names=CAST_NAMES,
+            director_names=[],
+            original_title="THE SUNDOWNERS",
+        )
+
+    assert entry is None, (
+        f"Zayıf cast eşleşmesi (2/9) kabul edilmemeli; döndü: id={entry and entry.get('id')} via={matched_via}"
+    )
+
+
+def test_original_title_director_match_accepted():
+    """
+    ORIG-TITLE-DIRECTOR: Orijinal başlık + 2 cast + yönetmen eşleşmesi → ACCEPT.
+
+    9 cast_names, 2/9 cast eşleşmesi tek başına yetmez ama yönetmen de eşleşince kabul edilmeli.
+    """
+    from unittest.mock import patch
+    from core.tmdb_verify import TMDBVerify
+    import tempfile
+
+    tmp = tempfile.mkdtemp()
+    verifier = TMDBVerify(work_dir=tmp, api_key="test-key")
+
+    MOVIE_ID = 43393
+    MOVIE_ENTRY = {
+        "id": MOVIE_ID, "media_type": "movie",
+        "title": "The Sundowners", "release_date": "1960-01-01",
+    }
+
+    CAST_NAMES = [
+        "Actor One", "Actor Two", "Actor Three",
+        "Actor Four", "Actor Five", "Actor Six",
+        "Actor Seven", "Actor Eight", "Actor Nine",
+    ]
+    TMDB_CAST = [
+        {"name": "Actor One"}, {"name": "Actor Two"},
+        {"name": "Wrong Actor A"},
+    ]
+    TMDB_CREW = [{"name": "Fred Zinnemann", "job": "Director"}]
+
+    def fake_search_multi(title):
+        if "sundowner" in title.lower():
+            return [MOVIE_ENTRY]
+        return []
+
+    def fake_fetch_credits(kind, mid):
+        if mid == MOVIE_ID:
+            return {"cast": TMDB_CAST, "crew": TMDB_CREW}
+        return None
+
+    with patch.object(verifier.client, "search_multi", side_effect=fake_search_multi), \
+         patch.object(verifier, "_fetch_credits", side_effect=fake_fetch_credits), \
+         patch.object(verifier, "_load_cache", return_value=None), \
+         patch.object(verifier, "_save_cache"):
+
+        entry, kind, matched_via = verifier._find_tmdb_entry(
+            film_title="Gün Batısı",
+            cast_names=CAST_NAMES,
+            director_names=["Fred Zinnemann"],
+            original_title="THE SUNDOWNERS",
+        )
+
+    assert entry is not None, "2 cast + yönetmen eşleşmesi kabul edilmeliydi; None döndü."
+    assert entry["id"] == MOVIE_ID
+    assert matched_via == "original_title", (
+        f"matched_via 'original_title' olmalıydı, '{matched_via}' döndü"
+    )
+
+
+def test_original_title_small_cast_old_threshold():
+    """
+    ORIG-TITLE-SMALL-CAST: 3 cast_names (<5), 2/3 eşleşme → eski eşik korunur (2>=2) → ACCEPT.
+    """
+    from unittest.mock import patch
+    from core.tmdb_verify import TMDBVerify
+    import tempfile
+
+    tmp = tempfile.mkdtemp()
+    verifier = TMDBVerify(work_dir=tmp, api_key="test-key")
+
+    MOVIE_ID = 99999
+    MOVIE_ENTRY = {
+        "id": MOVIE_ID, "media_type": "movie",
+        "title": "Some Film", "release_date": "1955-01-01",
+    }
+
+    CAST_NAMES = ["Actor A", "Actor B", "Actor C"]
+    # Sadece 2 eşleşme
+    TMDB_CAST = [{"name": "Actor A"}, {"name": "Actor B"}, {"name": "Wrong Actor"}]
+
+    def fake_search_multi(title):
+        if "some film" in title.lower() or "somefilm" in title.lower():
+            return [MOVIE_ENTRY]
+        return []
+
+    def fake_fetch_credits(kind, mid):
+        if mid == MOVIE_ID:
+            return {"cast": TMDB_CAST, "crew": []}
+        return None
+
+    with patch.object(verifier.client, "search_multi", side_effect=fake_search_multi), \
+         patch.object(verifier, "_fetch_credits", side_effect=fake_fetch_credits), \
+         patch.object(verifier, "_load_cache", return_value=None), \
+         patch.object(verifier, "_save_cache"):
+
+        entry, kind, matched_via = verifier._find_tmdb_entry(
+            film_title="Başka Bir Film",
+            cast_names=CAST_NAMES,
+            director_names=[],
+            original_title="SOME FILM",
+        )
+
+    assert entry is not None, "Küçük cast (3 kişi) için 2/3 eşleşme kabul edilmeliydi; None döndü."
+    assert entry["id"] == MOVIE_ID
     assert matched_via == "original_title", (
         f"matched_via 'original_title' olmalıydı, '{matched_via}' döndü"
     )
