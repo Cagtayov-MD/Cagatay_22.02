@@ -323,17 +323,22 @@ class PipelineRunner:
                       f"{info['resolution']} | {info['fps']} FPS")
             xml_info = resolve_xml_sidecar(video_path, log_cb=self._log)
 
-            # Audio başlatma: audio_only → seri, video+audio → arka planda paralel
+            # Audio başlatma: scope'a göre dallan
             audio_result = None
             audio_future = None
             executor = None
             if scope == "audio_only":
+                # Sadece ses — seri çalıştır
                 audio_result = self._run_audio(video_path, work_dir)
-            else:
-                # video_only ve video+audio → her zaman audio başlat (paralel)
+            elif scope == "video+audio":
+                # Video + Ses — audio arka planda paralel çalışsın
                 executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
                 audio_future = executor.submit(self._run_audio, video_path, work_dir)
                 self._log("  [AUDIO] Ses analizi arka planda başlatıldı (paralel mod)")
+            else:
+                # video_only — ses analizi tamamen atlanıyor
+                self._log("  [AUDIO] Scope=video_only — ses analizi atlanıyor")
+                audio_result = {"status": "skipped", "reason": "scope=video_only"}
 
             # Varsayılanlar (audio_only için)
             ocr_lines = []
@@ -710,7 +715,7 @@ class PipelineRunner:
                     audio_result = {"status": "error", "error": str(ae)}
 
             # ══ TRANSCRIPT ÖZETİ (Gemini) ═════════════════════════
-            if audio_result and isinstance(audio_result, dict):
+            if audio_result and isinstance(audio_result, dict) and audio_result.get("status") != "skipped":
                 raw_transcript = audio_result.get("transcript", "")
                 # transcript may be a list of segment dicts or a plain string
                 if isinstance(raw_transcript, list):
