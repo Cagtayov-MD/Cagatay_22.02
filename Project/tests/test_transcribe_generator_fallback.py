@@ -62,7 +62,7 @@ def test_transcribe_falls_back_when_segment_generator_crashes(monkeypatch, tmp_p
 
     result = stage._transcribe(
         audio_path=str(wav),
-        opts={"whisper_model": "large-v3", "whisper_language": "tr", "beam_size": 5},
+        opts={"whisper_model": "large-v3", "whisper_language": "tr", "beam_size": 1},
         diarization=[],
     )
 

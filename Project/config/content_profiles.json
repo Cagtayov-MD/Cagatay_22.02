@@ -11,7 +11,7 @@
     "whisper_model": "large-v3",
     "whisper_language": "tr",
     "compute_type": "float16",
-    "beam_size": 3,
+    "beam_size": 1,
     "ocr_enabled": true,
     "ocr_engine": "hybrid",
     "qwen_fallback_on_handwriting": true,
@@ -33,7 +33,7 @@
     "whisper_model": "large-v3",
     "whisper_language": "tr",
     "compute_type": "float16",
-    "beam_size": 3,
+    "beam_size": 1,
     "ocr_enabled": true,
     "match_parse_enabled": true,
     "parse_segments": ["first_10", "last_10"]

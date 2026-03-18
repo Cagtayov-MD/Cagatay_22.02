@@ -850,7 +850,7 @@ class PipelineRunner:
                 "compute_type":     self.config.get("compute_type", "float16"),
                 "max_speakers":     self.config.get("max_speakers", 10),
                 "ollama_model":     self.config.get("ollama_model", "llama3.1:8b"),
-                "beam_size":        self.config.get("beam_size", 3),
+                "beam_size":        self.config.get("beam_size", 1),
             },
         }
 
