@@ -141,7 +141,7 @@ class MainWindow(QMainWindow):
         self._queue_stop_requested = False
         self._queue_skip_requested = False
         self._queue_thread = None
-        self._queue_profile_name = "FilmDizi-Paddle"
+        self._queue_profile_name = "FilmDizi-Hybrid"
         self._path_info_labels = {}
 
         self.signals = PipelineSignals()
@@ -230,7 +230,7 @@ class MainWindow(QMainWindow):
         icerik_row = QHBoxLayout()
         icerik_row.addWidget(QLabel("İçerik:"))
         self.content_combo = QComboBox()
-        self.content_combo.addItems(["FilmDizi-Hybrid", "FilmDizi-Paddle", "FilmDizi-ONEOCR", "FilmDiziQwen", "Spor", "StudyoProgram", "MuzikProgram", "KisaHaber"])
+        self.content_combo.addItems(["FilmDizi-Hybrid", "Spor", "StudyoProgram", "MuzikProgram", "KisaHaber"])
         self.content_combo.currentTextChanged.connect(self._on_profile_changed)
         icerik_row.addWidget(self.content_combo)
         lay.addLayout(icerik_row)
@@ -418,7 +418,7 @@ class MainWindow(QMainWindow):
             from ui.dag_widget import DAGWidget
             grp = QGroupBox("Pipeline DAG")
             lay = QVBoxLayout(grp)
-            initial_profile = self.content_combo.currentText() if hasattr(self, "content_combo") else "FilmDizi-Paddle"
+            initial_profile = self.content_combo.currentText() if hasattr(self, "content_combo") else "FilmDizi-Hybrid"
             self.dag_widget = DAGWidget(profile_name=initial_profile)
             self.dag_widget.setMinimumHeight(180)
             lay.addWidget(self.dag_widget)

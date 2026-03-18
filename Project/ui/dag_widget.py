@@ -49,7 +49,7 @@ H_GAP      = 70
 class DAGWidget(QWidget):
     """Pipeline DAG diyagramı — QPainter ile native dark theme."""
 
-    def __init__(self, profile_name="FilmDizi-Paddle", parent=None):
+    def __init__(self, profile_name="FilmDizi-Hybrid", parent=None):
         super().__init__(parent)
         self.profile_name = profile_name
         self._dag = get_dag(profile_name)

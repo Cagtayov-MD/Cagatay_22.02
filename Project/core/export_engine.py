@@ -1230,7 +1230,7 @@ class ExportEngine:
             },
             "processing": {
                 "scope": scope,
-                "content_type": content_profile_name or "FilmDizi-Paddle",
+                "content_type": content_profile_name or "FilmDizi-Hybrid",
                 "ocr_engine": "PaddleOCR (GPU)",
                 "first_segment_min": first_min,
                 "last_segment_min": last_min,

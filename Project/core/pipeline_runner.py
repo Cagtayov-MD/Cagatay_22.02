@@ -185,9 +185,9 @@ class PipelineRunner:
     def run(self, video_path, scope="video_only",
             first_min=6.0, last_min=10.0, content_profile: dict | None = None) -> dict:
         # İçerik profilinden scope/first_min/last_min değerlerini uygula
-        profile_name = "FilmDizi-Paddle"
+        profile_name = "FilmDizi-Hybrid"
         if content_profile:
-            profile_name = content_profile.get("_name", "FilmDizi-Paddle")
+            profile_name = content_profile.get("_name", "FilmDizi-Hybrid")
             scope      = content_profile.get("scope", scope)
             try:
                 first_min = float(content_profile.get("first_segment_minutes", first_min))
@@ -528,7 +528,7 @@ class PipelineRunner:
 
                             # ── Profil bazlı dallanma ──
                             _matched_via = getattr(tmdb_result, 'matched_via', '')
-                            if (profile_name in ("FilmDizi-Paddle", "FilmDiziQwen", "FilmDizi-Hybrid")
+                            if (profile_name == "FilmDizi-Hybrid"
                                     and _matched_via == "title"):
                                 # TMDB LOCK: OCR verisi silinir, TMDB kanonik veri yazılır
                                 cdata = self._apply_tmdb_credits(cdata, tmdb_result)
@@ -850,7 +850,7 @@ class PipelineRunner:
                 "compute_type":     self.config.get("compute_type", "float16"),
                 "max_speakers":     self.config.get("max_speakers", 10),
                 "ollama_model":     self.config.get("ollama_model", "llama3.1:8b"),
-                "beam_size":        self.config.get("beam_size", 5),
+                "beam_size":        self.config.get("beam_size", 3),
             },
         }
 

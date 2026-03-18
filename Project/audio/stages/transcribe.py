@@ -102,11 +102,11 @@ class TranscribeStage:
         language = opts.get("whisper_language", "tr")
         # beam_size is a decoding parameter; batch_size kept as legacy fallback only
         try:
-            _raw_beam = opts.get("beam_size") if opts.get("beam_size") is not None else opts.get("batch_size", 5)
+            _raw_beam = opts.get("beam_size") if opts.get("beam_size") is not None else opts.get("batch_size", 3)
             beam_size = min(int(_raw_beam), 10)
         except (ValueError, TypeError):
-            self._log("  [Whisper] Geçersiz beam_size — varsayılan 5 kullanılıyor")
-            beam_size = 5
+            self._log("  [Whisper] Geçersiz beam_size — varsayılan 3 kullanılıyor")
+            beam_size = 3
 
         device = VRAMManager.get_device()
         compute_type = self._resolve_compute_type(opts.get("compute_type", "float16"), device)
