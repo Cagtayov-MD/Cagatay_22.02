@@ -1,9 +1,9 @@
-"""credits_qa.py — TMDB cast eksikliği kontrol modülü.
+"""credits_qa.py — TMDB cast/crew eksikliği kontrol modülü.
 
-TMDB doğrulama başarılı olduğunda OCR'dan gelen oyuncu satırlarını TMDB cast listesiyle
-karşılaştırır.  TMDB'de bulunmayan yüksek güvenilirlikli oyuncu isimlerini raporlar.
+TMDB doğrulama başarılı olduğunda OCR'dan gelen oyuncu ve ekip satırlarını TMDB listesiyle
+karşılaştırır.  TMDB'de bulunmayan yüksek güvenilirlikli isimleri raporlar.
 
-Sadece cast/oyuncu kontrolü yapar — crew/ekip umurumuzda değil.
+Cast ve crew kontrolü yapar.
 LLM kullanmaz, tamamen deterministik.
 """
 
@@ -223,5 +223,138 @@ def check_missing_actors(
         ocr_actor_count=raw_ocr_count,
         tmdb_looks_incomplete=tmdb_looks_incomplete,
         missing_actors=candidates,
+        summary=summary,
+    )
+
+
+# ── Crew QA veri sınıfı ───────────────────────────────────────────────────────
+@dataclass
+class CrewQA:
+    tmdb_crew_count: int
+    ocr_crew_count: int
+    missing_crew: List[MissingActor] = field(default_factory=list)
+    summary: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "tmdb_crew_count":    self.tmdb_crew_count,
+            "ocr_crew_count":     self.ocr_crew_count,
+            "missing_crew_count": len(self.missing_crew),
+            "missing_crew":       [a.to_dict() for a in self.missing_crew],
+            "summary":            self.summary,
+        }
+
+
+# ── Crew QA fonksiyonu ────────────────────────────────────────────────────────
+_MIN_WORDS_CREW = 1   # Crew için tek kelimeli isim de geçerli
+
+def check_missing_crew(
+    ocr_results: list,
+    tmdb_crew: list,
+) -> CrewQA:
+    """OCR satırlarından TMDB'de eksik crew üyelerini tespit eder.
+
+    Parameters
+    ----------
+    ocr_results:
+        OCRLine nesneleri veya dict listesi.
+        Beklenen alanlar: text, avg_confidence/confidence,
+        seen_count/frame_count, first_seen/first_seen_sec.
+    tmdb_crew:
+        TMDB'den gelen ekip listesi; her eleman "name" ve/veya "job"
+        içeren bir dict'tir.
+
+    Returns
+    -------
+    CrewQA
+        Eksik crew üyelerini içeren rapor nesnesi.
+        ``missing_crew`` boşsa ``summary`` da boş bırakılır.
+    """
+    # ── TMDB crew isimlerini normalize et ─────────────────────────────────────
+    tmdb_names_norm: list[str] = []
+    for entry in (tmdb_crew or []):
+        raw = entry.get("name") or ""
+        n = _normalize(raw)
+        if n:
+            tmdb_names_norm.append(n)
+
+    tmdb_count = len(tmdb_names_norm)
+
+    # ── OCR satırlarını filtrele ───────────────────────────────────────────────
+    candidates: list[MissingActor] = []
+
+    for line in (ocr_results or []):
+        # Değerleri hem OCRLine dataclass hem dict formatından oku
+        if hasattr(line, "text"):
+            text       = line.text or ""
+            conf       = getattr(line, "avg_confidence", 0.0)
+            seen       = getattr(line, "seen_count", 1)
+            first_sec  = getattr(line, "first_seen", 0.0)
+        else:
+            text       = line.get("text") or ""
+            conf       = line.get("avg_confidence", line.get("confidence", 0.0))
+            seen       = line.get("seen_count", line.get("frame_count", 1))
+            first_sec  = line.get("first_seen", line.get("first_seen_sec", 0.0))
+
+        text = text.strip()
+
+        # Filtre 1: En az _MIN_WORDS_CREW kelime
+        if len(text.split()) < _MIN_WORDS_CREW:
+            continue
+
+        # Filtre 2: OCR güveni >= MIN_CONFIDENCE
+        if conf < MIN_CONFIDENCE:
+            continue
+
+        # Filtre 3: En az MIN_SEEN_FRAMES frame VEYA açılış jeneriği
+        is_opening = first_sec <= OPENING_CUTOFF_S
+        if seen < MIN_SEEN_FRAMES and not is_opening:
+            continue
+
+        # Filtre 4: TMDB crew listesiyle eşleşmiyor (sadece name ile)
+        norm = _normalize(text)
+        if not norm:
+            continue
+
+        best_match = ""
+        best_sim   = 0.0
+        for tmdb_norm in tmdb_names_norm:
+            s = _similarity(norm, tmdb_norm)
+            if s > best_sim:
+                best_sim   = s
+                best_match = tmdb_norm
+
+        if best_sim >= MATCH_THRESHOLD:
+            continue  # Zaten TMDB'de var
+
+        candidates.append(MissingActor(
+            name=text,
+            confidence=conf,
+            seen_count=seen,
+            first_seen_sec=first_sec,
+            is_opening_credit=is_opening,
+            best_tmdb_match=best_match,
+            similarity=round(best_sim, 4),
+        ))
+
+    # ── Sırala: açılış jeneriği önce, sonra seen_count azalan ─────────────────
+    candidates.sort(key=lambda a: (not a.is_opening_credit, -a.seen_count))
+
+    raw_ocr_count = len(ocr_results) if ocr_results else 0
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    n = len(candidates)
+    if n == 0:
+        summary = ""
+    elif n <= 3:
+        names = ", ".join(a.name for a in candidates)
+        summary = f"⚠️ {n} crew üyesi TMDB'de eksik görünüyor: {names}"
+    else:
+        summary = f"⚠️ {n} crew üyesi TMDB'de eksik. TMDB kaydı muhtemelen eksik doldurulmuş."
+
+    return CrewQA(
+        tmdb_crew_count=tmdb_count,
+        ocr_crew_count=raw_ocr_count,
+        missing_crew=candidates,
         summary=summary,
     )
