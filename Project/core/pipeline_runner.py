@@ -33,7 +33,7 @@ from core.qwen_verifier import QwenVerifier
 from core.llm_cast_filter import LLMCastFilter
 from core.vlm_reader import VLMReader
 from core.name_verify import NameVerifier
-from core.xml_sidecar import resolve_xml_sidecar
+from core.xml_sidecar import resolve_xml_sidecar, XmlSidecarInfo
 from utils.stats_logger import StatsLogger
 
 # OneOCR — opsiyonel (sadece Windows 11)
@@ -239,7 +239,7 @@ class PipelineRunner:
         self._log(f"  Mod    : {self.config.get('difficulty','medium')}")
         self._log(f"  NameDB : {len(self._name_db)} isim yüklü")
 
-        xml_path = None
+        xml_info: XmlSidecarInfo | None = None
         try:
             # ── TextFilter mode bağlantısı ──────────────────────
             self._text_filter = TextFilter.from_config(self.config)
@@ -321,7 +321,7 @@ class PipelineRunner:
                         resolution=info["resolution"])
             self._log(f"  OK: {info['duration_human']} | "
                       f"{info['resolution']} | {info['fps']} FPS")
-            xml_path = resolve_xml_sidecar(video_path, log_cb=self._log)
+            xml_info = resolve_xml_sidecar(video_path, log_cb=self._log)
 
             # Audio başlatma: audio_only → seri, video+audio → arka planda paralel
             audio_result = None
@@ -522,6 +522,10 @@ class PipelineRunner:
                 if _tmdb_enabled and not (content_profile or {}).get("match_parse_enabled"):
                     if film_title_from_filename:
                         cdata["film_title"] = film_title_from_filename
+                    # XML sidecar'dan gelen orijinal başlığı cdata'ya ekle (TMDB Strategy 1b için)
+                    if xml_info and xml_info.original_title:
+                        cdata["original_title"] = xml_info.original_title
+                        self._log(f"  [XML→TMDB] Orijinal başlık TMDB'ye iletiliyor: '{xml_info.original_title}'")
                     try:
                         tmdb_result = self._run_tmdb(cdata, work_dir)
                         if tmdb_result and (tmdb_result.updated or tmdb_result.matched_id):
@@ -787,7 +791,7 @@ class PipelineRunner:
                     work_dir=work_dir,
                     content_profile_name=profile_name,
                     ts=export_ts,
-                    xml_path=xml_path,
+                    xml_path=xml_info.xml_path if xml_info else "",
                 )
             except Exception as e:
                 self._log(f"  [DATABASE] Yazma hatası (pipeline etkilenmedi): {e}")
@@ -804,6 +808,12 @@ class PipelineRunner:
             self._log(f"  Kullanıcı : {user_tp}")
             self._log(f"{'='*60}")
 
+            xml_sidecar_dict = {
+                "path": xml_info.xml_path,
+                "original_title": xml_info.original_title,
+                "turkish_title": xml_info.turkish_title,
+            } if xml_info else None
+
             return {
                 "report_json":       jp,
                 "report_txt":        tp,
@@ -815,7 +825,7 @@ class PipelineRunner:
                 "ocr_lines":         len(ocr_lines),
                 "tmdb_result":       tmdb_result,
                 "audio_result":      audio_result,
-                "xml_sidecar":       xml_path,
+                "xml_sidecar":       xml_sidecar_dict,
             }
 
         except Exception as e:
