@@ -533,19 +533,36 @@ class PipelineRunner:
                                 # TMDB LOCK: OCR verisi silinir, TMDB kanonik veri yazılır
                                 cdata = self._apply_tmdb_credits(cdata, tmdb_result)
                                 self._log(f"  [TMDB] LOCK aktif — cast:{cdata['total_actors']} crew:{cdata['total_crew']}")
-                                # QA: OCR'da olup TMDB'de olmayan oyuncular
+                                # QA: OCR'da olup TMDB'de olmayan oyuncular ve crew
                                 if ocr_lines:
                                     try:
-                                        from core.credits_qa import check_missing_actors
+                                        from core.credits_qa import check_missing_actors, check_missing_crew, CreditsQA
+                                        import dataclasses
+
+                                        # Cast QA
                                         qa = check_missing_actors(
                                             ocr_results=ocr_lines,
                                             tmdb_cast=cdata.get("cast", []),
                                         )
-                                        if qa.missing_actors:
+
+                                        # Crew QA
+                                        missing_crew = check_missing_crew(
+                                            ocr_results=ocr_lines,
+                                            tmdb_crew=cdata.get("crew", []),
+                                        )
+
+                                        # İkisini birleştir
+                                        if missing_crew:
+                                            qa = dataclasses.replace(qa, missing_crew=missing_crew)
+
+                                        if qa.missing_actors or qa.missing_crew:
                                             cdata["credits_qa"] = qa.to_dict()
-                                            self._log(f"  {qa.summary}")
-                                    except Exception as e:
-                                        self._log(f"  [QA] {e}")
+                                            if qa.missing_actors:
+                                                self._log(f"  {qa.summary}")
+                                            if qa.missing_crew:
+                                                self._log(f"  ⚠️ {len(qa.missing_crew)} isim TMDB crew'da eksik.")
+                                    except Exception as _qa_err:
+                                        self._log(f"  [QA] credits_qa hatası: {_qa_err}")
                             else:
                                 # REFERANS MODU: film adıyla eşleşmedi veya sadece oyuncularla bulundu
                                 if _matched_via == "cast_only":

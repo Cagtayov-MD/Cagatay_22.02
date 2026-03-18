@@ -241,3 +241,114 @@ def test_qa12_both_empty():
     result = check_missing_actors([], [])
     assert isinstance(result, CreditsQA)
     assert result.missing_actors == []
+
+
+# ════════════════════════════════════════════════════════════════════
+#  CREW QA testleri (QA-C01 .. QA-C08)
+# ════════════════════════════════════════════════════════════════════
+
+from core.credits_qa import check_missing_crew, MissingCrewMember
+
+
+def _tmdb_crew(*names):
+    return [{"name": n} for n in names]
+
+
+# ── QA-C01: Eksik crew üyesi tespit edilir ────────────────────────
+def test_qac01_missing_crew_detected():
+    ocr = [_line("IVAN VOLKMAN")]
+    tmdb = _tmdb_crew("Ray Milland", "Lionel Lindon")
+    result = check_missing_crew(ocr, tmdb)
+    assert len(result) == 1
+    assert result[0].name == "IVAN VOLKMAN"
+
+
+# ── QA-C02: TMDB'de olan crew üyesi işaretlenmez ─────────────────
+def test_qac02_crew_in_tmdb_not_flagged():
+    ocr = [_line("Lionel Lindon")]
+    tmdb = _tmdb_crew("Lionel Lindon")
+    result = check_missing_crew(ocr, tmdb)
+    assert len(result) == 0
+
+
+# ── QA-C03: Rol başlığı blacklist'i süzer ────────────────────────
+def test_qac03_role_title_filtered():
+    ocr = [
+        _line("Art Director"),
+        _line("Assistant Director"),
+        _line("Film Editor"),
+        _line("Directed By"),
+    ]
+    result = check_missing_crew(ocr, [])
+    assert len(result) == 0
+
+
+# ── QA-C04: Düşük güven süzülür ──────────────────────────────────
+def test_qac04_low_confidence_filtered():
+    ocr = [_line("WALTER KELLER", conf=MIN_CONFIDENCE - 0.01)]
+    result = check_missing_crew(ocr, [])
+    assert len(result) == 0
+
+
+# ── QA-C05: Tek kelime süzülür ───────────────────────────────────
+def test_qac05_single_word_filtered():
+    ocr = [_line("KELLER")]
+    result = check_missing_crew(ocr, [])
+    assert len(result) == 0
+
+
+# ── QA-C06: Sıralama — açılış jeneriği önce ──────────────────────
+def test_qac06_sorting():
+    ocr = [
+        _line("CREW LATE",    seen=10, first_sec=OPENING_CUTOFF_S + 5),
+        _line("CREW OPENING", seen=2,  first_sec=OPENING_CUTOFF_S - 5),
+    ]
+    result = check_missing_crew(ocr, [])
+    assert result[0].name == "CREW OPENING"
+    assert result[1].name == "CREW LATE"
+
+
+# ── QA-C07: MissingCrewMember.to_dict() yapısı ───────────────────
+def test_qac07_to_dict_structure():
+    ocr = [_line("IVAN VOLKMAN")]
+    result = check_missing_crew(ocr, [])
+    assert len(result) == 1
+    d = result[0].to_dict()
+    assert "name"           in d
+    assert "job"            in d
+    assert "confidence"     in d
+    assert "seen_frames"    in d
+    assert "first_seen_sec" in d
+    assert "opening_credit" in d
+    assert "closest_tmdb"   in d
+    assert "similarity"     in d
+
+
+# ── QA-C08: CreditsQA.missing_crew alanı + to_dict ───────────────
+def test_qac08_credits_qa_missing_crew_field():
+    import dataclasses
+    from core.credits_qa import CreditsQA, MissingCrewMember
+
+    crew_member = MissingCrewMember(
+        name="IVAN VOLKMAN",
+        job="Assistant Director",
+        confidence=0.867,
+        seen_count=9,
+        first_seen_sec=59.0,
+        is_opening_credit=False,
+        best_tmdb_match="",
+        similarity=0.0,
+    )
+    qa = CreditsQA(
+        tmdb_cast_count=11,
+        ocr_actor_count=131,
+        tmdb_looks_incomplete=False,
+        missing_crew=[crew_member],
+    )
+    d = qa.to_dict()
+    assert "missing_crew_count" in d
+    assert d["missing_crew_count"] == 1
+    assert d["missing_crew"][0]["name"] == "IVAN VOLKMAN"
+    # Eski alanlar hala orada
+    assert "tmdb_cast_count" in d
+    assert "missing_actors"  in d
