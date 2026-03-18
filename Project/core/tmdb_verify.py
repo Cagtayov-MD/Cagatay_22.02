@@ -133,6 +133,7 @@ class TMDBVerifyResult:
     reverse_score: float = 0.0          # Ters doğrulama puanı
     reverse_breakdown: Dict[str, Any] = None  # Puan detayları
     rejected: bool = False              # Ters doğrulama tarafından reddedildi mi
+    ocr_title: str = ""                 # accept öncesi OCR'dan gelen orijinal başlık
 
     def __post_init__(self):
         if self.cast is None:
@@ -540,6 +541,14 @@ class TMDBVerify:
         if not original_title:
             original_title = (tmdb_entry.get("original_title") or tmdb_entry.get("original_name") or "").strip()
 
+        # OCR'dan gelen orijinal başlığı koru — TMDB ile ezilmeden önce sakla
+        # (Başarılı TMDB eşleşmesinde, canonicalization flag'ından bağımsız olarak)
+        if tmdb_title:
+            _ocr_film_title = (cdata.get("film_title") or "").strip()
+            if _ocr_film_title and _ocr_film_title != tmdb_title:
+                if not cdata.get("ocr_title"):
+                    cdata["ocr_title"] = _ocr_film_title
+
         if updated:
             cdata["tmdb_verified"] = True
             cdata["tmdb_title"]    = tmdb_title
@@ -561,6 +570,7 @@ class TMDBVerify:
             matched_via=matched_via,
             reverse_score=_rv_score,
             reverse_breakdown=_rv_breakdown,
+            ocr_title=film_title,
         )
 
     # ── TMDB'de eşleşme bul ─────────────────────────────────────────

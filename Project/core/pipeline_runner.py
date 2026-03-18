@@ -1068,8 +1068,12 @@ class PipelineRunner:
         cdata.pop("_verification_log_text", None)
         cdata.pop("_verification_log", None)
 
-        # Bug 1: film_title'ı TMDB başlığıyla güncelle
+        # OCR başlığını koru — TMDB başlığıyla ezilmeden önce sakla
         if tmdb_result.matched_title:
+            _current_film_title = (cdata.get("film_title") or "").strip()
+            if _current_film_title and _current_film_title != tmdb_result.matched_title:
+                if not cdata.get("ocr_title"):
+                    cdata["ocr_title"] = _current_film_title
             cdata["film_title"] = tmdb_result.matched_title
 
         # Bug 2: year'ı TMDB'den güncelle
