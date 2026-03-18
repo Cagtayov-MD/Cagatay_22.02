@@ -214,9 +214,11 @@ class AudioPipeline:
         # Dil tespiti başarısız (unknown/hata) olursa config'deki whisper_language'ı kullan.
         # None geçilmesi Whisper'ın her segment için kendi dil tespiti yapmasına yol açar
         # ve Türkçe içeriği yanlış dilde transcribe etme riskini doğurur.
-        _whisper_lang = result.get("detected_language", options.get("whisper_language", "tr"))
-        if _whisper_lang in ("unknown", None, ""):
+        _whisper_lang = result.get("detected_language")
+        if _whisper_lang in (None, ""):
             _whisper_lang = options.get("whisper_language", "tr")
+        elif _whisper_lang == "unknown":
+            _whisper_lang = None  # Whisper kendi dil tespitini yapsın
 
         if "transcribe" in stages_to_run and clean_wav:
             self._log(f"\n[E] TRANSCRIBE")
