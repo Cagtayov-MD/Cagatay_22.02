@@ -122,6 +122,9 @@ class TMDBVerifyResult:
     genres: List[str] = None
     original_title: str = ""
     matched_via: str = ""  # "title" veya "cast_only" — LOCK kararı için
+    reverse_score: float = 0.0          # Ters doğrulama puanı
+    reverse_breakdown: Dict[str, Any] = None  # Puan detayları
+    rejected: bool = False              # Ters doğrulama tarafından reddedildi mi
 
     def __post_init__(self):
         if self.cast is None:
@@ -132,6 +135,8 @@ class TMDBVerifyResult:
             self.keywords = []
         if self.genres is None:
             self.genres = []
+        if self.reverse_breakdown is None:
+            self.reverse_breakdown = {}
 
 
 class TMDBClient:
@@ -425,6 +430,53 @@ class TMDBVerify:
             return TMDBVerifyResult(False, "tmdb credits fetch failed",
                                     matched_title=tmdb_title, matched_id=tmdb_id)
 
+        # ── İleri yön eşleşme sayısı (ters doğrulama için) ──
+        _tmdb_cast_names = self._extract_names(credits_data, section="cast")
+        _forward_hits    = self._count_matches(cast_names, _tmdb_cast_names)
+        _forward_misses  = len(cast_names) - _forward_hits
+
+        # ── OCR yılı kaynakları (öncelik sırasıyla) ──
+        _ocr_year = 0
+        _raw_year = cdata.get("year") or cdata.get("_ocr_year")
+        if _raw_year:
+            try:
+                _ocr_year = int(str(_raw_year)[:4])
+            except (ValueError, TypeError):
+                pass
+        if not _ocr_year:
+            # Dosya adından parse: ilk 4 haneli sayı 1900-2030 arasında
+            import re as _re
+            _fname = str(cdata.get("filename") or cdata.get("_source_file") or "")
+            _m = _re.search(r'\b(1[9][0-9]{2}|20[0-2][0-9])\b', _fname)
+            if _m:
+                try:
+                    _ocr_year = int(_m.group(1))
+                except ValueError:
+                    pass
+
+        # ── Ters doğrulama ──
+        _rv_accepted, _rv_score, _rv_breakdown = self._reverse_validate(
+            ocr_title=film_title,
+            ocr_cast_names=cast_names,
+            ocr_director_names=director_names,
+            ocr_year=_ocr_year,
+            tmdb_entry=tmdb_entry,
+            credits_data=credits_data,
+            forward_hits=_forward_hits,
+            forward_misses=_forward_misses,
+        )
+
+        if not _rv_accepted:
+            return TMDBVerifyResult(
+                updated=False,
+                reason="reverse_validation_rejected",
+                matched_title=tmdb_title,
+                matched_id=0,
+                reverse_score=_rv_score,
+                reverse_breakdown=_rv_breakdown,
+                rejected=True,
+            )
+
         # Cast kanonikleştir
         updated, hits, misses = self._canonicalize(cdata, credits_data)
 
@@ -487,6 +539,8 @@ class TMDBVerify:
             genres=tmdb_genres,
             original_title=original_title,
             matched_via=matched_via,
+            reverse_score=_rv_score,
+            reverse_breakdown=_rv_breakdown,
         )
 
     # ── TMDB'de eşleşme bul ─────────────────────────────────────────
@@ -770,3 +824,253 @@ class TMDBVerify:
                     updated = True
 
         return updated, hits, misses
+
+    # ── Ters Doğrulama ──────────────────────────────────────────────
+    def _reverse_validate(
+        self,
+        ocr_title: str,
+        ocr_cast_names: List[str],
+        ocr_director_names: List[str],
+        ocr_year: int,
+        tmdb_entry: dict,
+        credits_data: dict,
+        forward_hits: int,
+        forward_misses: int,
+    ) -> tuple:
+        """
+        Ters doğrulama: TMDB'den gelen filmin OCR verimizle ne kadar uyuştuğunu ölçer.
+
+        İleri yönde film bulunduktan ve credits çekildikten sonra çağrılır.
+        "Bu TMDB filmi gerçekten bizim filmimiz mi?" sorusunu sorar.
+
+        Return: (accepted: bool, score: float, breakdown: dict)
+        """
+        _THRESHOLD = 4.0
+
+        tmdb_title = (tmdb_entry.get("name") or tmdb_entry.get("title") or "").strip()
+        tmdb_original_title = (
+            tmdb_entry.get("original_title") or tmdb_entry.get("original_name") or ""
+        ).strip()
+        date_str = (tmdb_entry.get("first_air_date") or tmdb_entry.get("release_date") or "")
+        tmdb_year = 0
+        if date_str and len(date_str) >= 4:
+            try:
+                tmdb_year = int(date_str[:4])
+            except ValueError:
+                pass
+
+        score = 0.0
+        breakdown: Dict[str, Any] = {}
+
+        self._log(
+            f"  [TMDB] Ters doğrulama başlatılıyor: '{tmdb_title}' (id:{tmdb_entry.get('id', 0)})"
+        )
+
+        # ── 1. Başlık eşleşme kalitesi (max +2.5 / max -2.0) ──────────
+        title_pos = 0.0
+        title_neg = 0.0
+        fuzzy_score = 0
+
+        if ocr_title and tmdb_title:
+            # Tam eşleşme (normalize edilmiş)
+            if _norm(ocr_title) == _norm(tmdb_title) or (
+                tmdb_original_title and _norm(ocr_title) == _norm(tmdb_original_title)
+            ):
+                title_pos = 2.5
+                fuzzy_score = 100
+            else:
+                titles_to_check = [tmdb_title]
+                if tmdb_original_title:
+                    titles_to_check.append(tmdb_original_title)
+
+                best_fuzzy = 0
+                if HAS_RAPIDFUZZ:
+                    for t in titles_to_check:
+                        s = fuzz.WRatio(ocr_title, t)
+                        if s > best_fuzzy:
+                            best_fuzzy = s
+                fuzzy_score = best_fuzzy
+
+                if best_fuzzy >= 90:
+                    title_pos = 2.0
+                elif best_fuzzy >= 80:
+                    title_pos = 1.0
+                else:
+                    # Kısmi eşleşme: başlık birinin içinde geçiyor mu?
+                    ocr_lower  = ocr_title.lower()
+                    tmdb_lower = tmdb_title.lower()
+                    orig_lower = tmdb_original_title.lower() if tmdb_original_title else ""
+                    if (
+                        ocr_lower in tmdb_lower
+                        or tmdb_lower in ocr_lower
+                        or (orig_lower and (ocr_lower in orig_lower or orig_lower in ocr_lower))
+                    ):
+                        title_pos = 0.5
+                    else:
+                        title_pos = 0.0
+
+                # Başlık uyumsuzluğu cezası
+                if best_fuzzy < 60:
+                    title_neg = -2.0
+                elif best_fuzzy < 70:
+                    title_neg = -1.0
+
+        title_net = title_pos + title_neg
+        score += title_net
+        breakdown["title"] = {
+            "ocr": ocr_title,
+            "tmdb": tmdb_title,
+            "fuzzy": fuzzy_score,
+            "pos": title_pos,
+            "neg": title_neg,
+            "net": title_net,
+        }
+        self._log(
+            f"  [TMDB]   Başlık: '{ocr_title}' vs '{tmdb_title}' → "
+            f"fuzzy={fuzzy_score} → +{title_pos} / {title_neg}"
+        )
+
+        # ── 2. Yönetmen çapraz kontrolü (max +2.5 / max -2.5) ─────────
+        director_pos = 0.0
+        director_neg = 0.0
+
+        if ocr_director_names:
+            tmdb_crew_names = self._extract_names(credits_data, section="crew")
+            tmdb_director_names = [
+                (item.get("name") or "").strip()
+                for item in (credits_data.get("crew") or [])
+                if (item.get("job") or "").lower() == "director"
+                and (item.get("name") or "").strip()
+            ]
+
+            director_found   = False
+            director_similar = False
+
+            for d in ocr_director_names:
+                if _fuzzy_match(d, tmdb_director_names, threshold=95):
+                    director_found = True
+                    break
+                if _fuzzy_match(d, tmdb_director_names, threshold=80):
+                    director_similar = True
+                elif _fuzzy_match(d, tmdb_crew_names, threshold=82):
+                    director_similar = True
+
+            if director_found:
+                director_pos = 2.5
+            elif director_similar:
+                director_pos = 1.5
+            else:
+                director_neg = -2.5
+
+            self._log(
+                f"  [TMDB]   Yönetmen: {ocr_director_names!r} vs crew → "
+                f"{'eşleşme var' if director_found or director_similar else 'eşleşme yok'} → "
+                f"+{director_pos} / {director_neg}"
+            )
+        else:
+            self._log("  [TMDB]   Yönetmen: bilgi yok → +0.0 / 0.0")
+
+        director_net = director_pos + director_neg
+        score += director_net
+        breakdown["director"] = {
+            "ocr": ocr_director_names,
+            "pos": director_pos,
+            "neg": director_neg,
+            "net": director_net,
+        }
+
+        # ── 3. Cast eşleşme ORANI (max +3.0 / max -3.0) ──────────────
+        cast_pos = 0.0
+        cast_neg = 0.0
+        total = forward_hits + forward_misses
+        ratio = (forward_hits / total) if total > 0 else 0.0
+        ratio_pct = ratio * 100
+
+        # Pozitif
+        if ratio >= 0.50:
+            cast_pos = 3.0
+        elif ratio >= 0.30:
+            cast_pos = 2.0
+        elif ratio >= 0.15:
+            cast_pos = 1.0
+        elif ratio >= 0.05:
+            cast_pos = 0.5
+        else:
+            cast_pos = 0.0
+
+        # Negatif
+        if ratio < 0.05:
+            cast_neg = -3.0
+        elif ratio < 0.10:
+            cast_neg = -2.0
+        elif ratio < 0.15:
+            cast_neg = -1.0
+
+        cast_net = cast_pos + cast_neg
+        score += cast_net
+        breakdown["cast"] = {
+            "hits": forward_hits,
+            "total": total,
+            "ratio_pct": round(ratio_pct, 1),
+            "pos": cast_pos,
+            "neg": cast_neg,
+            "net": cast_net,
+        }
+        self._log(
+            f"  [TMDB]   Cast oranı: {forward_hits}/{total} = {ratio_pct:.1f}% → "
+            f"+{cast_pos} / {cast_neg}"
+        )
+
+        # ── 4. Yıl uyumu (max +2.0 / max -3.0) ───────────────────────
+        year_pos = 0.0
+        year_neg = 0.0
+
+        if ocr_year and tmdb_year:
+            year_diff = abs(ocr_year - tmdb_year)
+
+            # Pozitif
+            if year_diff <= 2:
+                year_pos = 2.0
+            elif year_diff <= 5:
+                year_pos = 1.0
+            elif year_diff <= 10:
+                year_pos = 0.5
+
+            # Negatif
+            if year_diff > 20:
+                year_neg = -3.0
+            elif year_diff > 10:
+                year_neg = -2.0
+            elif year_diff > 5:
+                year_neg = -1.0
+
+            self._log(
+                f"  [TMDB]   Yıl: {ocr_year} vs {tmdb_year} = {year_diff} yıl fark → "
+                f"+{year_pos} / {year_neg}"
+            )
+        else:
+            year_diff = None
+            self._log("  [TMDB]   Yıl: bilinmiyor → +0.0 / 0.0")
+
+        year_net = year_pos + year_neg
+        score += year_net
+        breakdown["year"] = {
+            "ocr": ocr_year,
+            "tmdb": tmdb_year,
+            "diff": year_diff,
+            "pos": year_pos,
+            "neg": year_neg,
+            "net": year_net,
+        }
+
+        # ── Karar ─────────────────────────────────────────────────────
+        accepted = score >= _THRESHOLD
+        breakdown["total"]     = round(score, 2)
+        breakdown["threshold"] = _THRESHOLD
+
+        status = "✅ ACCEPT" if accepted else "❌ REJECT"
+        self._log(
+            f"  [TMDB]   Toplam: {score:.1f} / 10.0 → {status} (eşik: {_THRESHOLD})"
+        )
+
+        return accepted, round(score, 2), breakdown
