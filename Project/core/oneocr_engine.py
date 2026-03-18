@@ -22,7 +22,6 @@ Kısıtlar:
 
 Kullanım:
     content_profiles.json'da "ocr_engine": "oneocr" ile etkinleşir.
-    FilmDiziONEOCR profili bu motoru kullanır.
 
 Gereksinimler:
     pip install oneocr

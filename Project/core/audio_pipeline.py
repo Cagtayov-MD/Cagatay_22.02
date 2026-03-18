@@ -228,7 +228,7 @@ class AudioPipeline:
                     "whisper_model": options.get("whisper_model", "large-v3"),
                     "whisper_language": _whisper_lang,
                     "compute_type": options.get("compute_type", "float16"),
-                    "beam_size": options.get("beam_size", 5),
+                    "beam_size": options.get("beam_size", 3),
                     "tmdb_cast": self.config.get("tmdb_cast", []),
                 },
             )

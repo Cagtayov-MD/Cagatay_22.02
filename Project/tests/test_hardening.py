@@ -70,7 +70,7 @@ def test_beam_size_falls_back_to_batch_size(monkeypatch):
 
 
 def test_beam_size_invalid_string_uses_fallback():
-    """BEAM-02: non-numeric beam_size emits warning and uses default 5."""
+    """BEAM-02: non-numeric beam_size emits warning and uses default 3."""
     from audio.stages.transcribe import TranscribeStage
     stage = TranscribeStage()
     logs = []
@@ -86,18 +86,18 @@ def test_beam_size_invalid_string_uses_fallback():
     def patched_transcribe(audio_path, opts, diarization=None):
         # Replicate the beam_size parsing logic to confirm safe fallback
         try:
-            _raw = opts.get("beam_size") if opts.get("beam_size") is not None else opts.get("batch_size", 5)
+            _raw = opts.get("beam_size") if opts.get("beam_size") is not None else opts.get("batch_size", 3)
             beam_size = min(int(_raw), 10)
         except (ValueError, TypeError):
-            stage._log("  [Whisper] Geçersiz beam_size — varsayılan 5 kullanılıyor")
-            beam_size = 5
+            stage._log("  [Whisper] Geçersiz beam_size — varsayılan 3 kullanılıyor")
+            beam_size = 3
         captured["beam_size"] = beam_size
         return {"status": "error", "segments": [], "total_segments": 0,
                 "stage_time_sec": 0.0, "error": "test_only"}
 
     stage._transcribe = patched_transcribe
     stage._run_legacy("fake.wav", options={"beam_size": "bad_value"})
-    assert captured.get("beam_size") == 5
+    assert captured.get("beam_size") == 3
     assert any("Geçersiz beam_size" in m for m in logs)
 
 
@@ -108,7 +108,7 @@ def test_beam_size_capped_at_10():
     captured = {}
 
     def patched_transcribe(audio_path, opts, diarization=None):
-        _raw = opts.get("beam_size") if opts.get("beam_size") is not None else opts.get("batch_size", 5)
+        _raw = opts.get("beam_size") if opts.get("beam_size") is not None else opts.get("batch_size", 3)
         beam_size = min(int(_raw), 10)
         captured["beam_size"] = beam_size
         return {"status": "error", "segments": [], "total_segments": 0,
