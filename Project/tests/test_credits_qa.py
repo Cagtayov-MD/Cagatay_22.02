@@ -322,3 +322,31 @@ def test_crew_qa07_fuzzy_match_not_flagged():
     tmdb = _tmdb_crew("Walter E. Keller")
     result = check_missing_crew(ocr, tmdb)
     assert len(result.missing_crew) == 0
+
+
+# ── Crew QA-BL-01: "Art Director" filtered by blacklist ──────────────────────
+
+def test_crew_qa_bl01_art_director_filtered():
+    ocr = [_line("Art Director")]
+    tmdb = _tmdb_crew("Ray Milland")
+    result = check_missing_crew(ocr, tmdb)
+    assert len(result.missing_crew) == 0
+
+
+# ── Crew QA-BL-02: "Directed By" filtered by blacklist ───────────────────────
+
+def test_crew_qa_bl02_directed_by_filtered():
+    ocr = [_line("Directed By")]
+    tmdb = _tmdb_crew("Ray Milland")
+    result = check_missing_crew(ocr, tmdb)
+    assert len(result.missing_crew) == 0
+
+
+# ── Crew QA-BL-03: Real name not in blacklist still passes ───────────────────
+
+def test_crew_qa_bl03_real_name_passes():
+    ocr = [_line("Ivan Volkman")]
+    tmdb = _tmdb_crew("Ray Milland")
+    result = check_missing_crew(ocr, tmdb)
+    assert len(result.missing_crew) == 1
+    assert result.missing_crew[0].name == "Ivan Volkman"

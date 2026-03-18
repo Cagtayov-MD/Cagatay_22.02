@@ -22,6 +22,33 @@ OPENING_CUTOFF_S = 45.0   # Açılış jeneriği sınırı (saniye)
 MATCH_THRESHOLD  = 0.75   # TMDB eşleşme eşiği
 
 
+# ── Crew rol başlığı blacklist'i (exact match, lowercase) ────────────────────
+# OCR'da okunan rol başlığı satırlarının crew ismi olarak yanlış algılanmasını önler.
+_CREW_ROLE_BLACKLIST_EXACT = frozenset({
+    "art director", "assistant director", "first assistant director",
+    "second assistant director", "director of photography",
+    "film editor", "film edtor",
+    "set decorations", "set decoration", "set decorator",
+    "makeup supervision", "makeup supervisor",
+    "special effects", "special effects coordinator",
+    "optical effects", "optical effects coordinator",
+    "costume design", "costumes designed by", "costumes, designed by",
+    "sound", "music", "screenplay by", "directed by",
+    "with", "and", "presents", "certificate", "approved",
+    "the end", "end", "production", "a republic production",
+    "produced by", "executive producer", "producer",
+    "written by", "story by", "original story by",
+    "director", "re-recording mixer", "supervising sound editor",
+    "visual effects supervisor", "casting", "casting by",
+    "hair and makeup", "wardrobe", "wirdrobe",
+    "script supervisor", "property master", "gaffer",
+    "key grip", "best boy electric", "best boy grip",
+    "stunt coordinator", "stunt coordinators",
+    "unit production manager", "production manager",
+    "location manager", "transportation coordinator",
+})
+
+
 # ── Benzerlik backend (rapidfuzz varsa, yoksa Jaccard fallback) ───────────────
 def _jaccard_similarity(a: str, b: str) -> float:
     """Token-bazlı Jaccard benzerliği — rapidfuzz yokken fallback."""
@@ -304,6 +331,10 @@ def check_missing_crew(
 
         # Filtre 2: OCR güveni >= MIN_CONFIDENCE
         if conf < MIN_CONFIDENCE:
+            continue
+
+        # Filtre 2b: Rol başlığı blacklist kontrolü
+        if _normalize(text) in _CREW_ROLE_BLACKLIST_EXACT:
             continue
 
         # Filtre 3: En az MIN_SEEN_FRAMES frame VEYA açılış jeneriği
