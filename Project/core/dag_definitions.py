@@ -47,31 +47,12 @@ SPOR_DAG = {
     },
 }
 
-FILM_DIZI_ONEOCR_DAG = {
-    "VIDEO_INPUT": {
-        "label": "VIDEO_INPUT",
-        "children": ["OCR_BRANCH"],
-    },
-    "OCR_BRANCH": {
-        "label": "OCR (OneOCR)",
-        "steps": [
-            "Frame Extract",
-            "Text Filter",
-            "OneOCR Read",
-            "Credits Parse",
-            "Name Verify",
-            "Export",
-        ],
-    },
-}
-
 PROFILE_DAGS = {
-    "FilmDizi": FILM_DIZI_DAG,
-    "FilmDiziONEOCR": FILM_DIZI_ONEOCR_DAG,
+    "FilmDizi-Hybrid": FILM_DIZI_DAG,
     "Spor": SPOR_DAG,
 }
 
 
 def get_dag(profile_name: str) -> dict:
-    """Profil adına göre DAG tanımını döndür. Bilinmeyenler için FilmDizi kullan."""
+    """Profil adına göre DAG tanımını döndür. Bilinmeyenler için FilmDizi-Hybrid kullan."""
     return PROFILE_DAGS.get(profile_name, FILM_DIZI_DAG)
