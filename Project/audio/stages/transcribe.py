@@ -159,6 +159,8 @@ class TranscribeStage:
                 vad_filter=True,
                 vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=200),
                 initial_prompt=initial_prompt if initial_prompt else None,
+                condition_on_previous_text=False,
+                no_speech_threshold=0.6,
             )
 
             self._log(f"  [Whisper] Dil: {info.language} (olasilik: {info.language_probability:.2f})")
@@ -268,6 +270,8 @@ class TranscribeStage:
             vad_filter=True,
             vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=200),
             initial_prompt=initial_prompt if initial_prompt else None,
+            condition_on_previous_text=False,
+            no_speech_threshold=0.6,
         )
         self._log(f"  [Whisper] Fallback dil: {info2.language} (olasilik: {info2.language_probability:.2f})")
 

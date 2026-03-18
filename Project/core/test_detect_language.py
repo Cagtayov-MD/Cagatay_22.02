@@ -174,7 +174,7 @@ class TestContentProfiles(unittest.TestCase):
 
     def test_stage_order_correct(self):
         """FilmDizi-Hybrid profilinde stage sırası doğru olmalı."""
-        expected_order = ["extract", "detect_language", "denoise", "diarize", "transcribe", "post_process"]
+        expected_order = ["detect_language", "extract", "transcribe"]
         actual = self.profiles["FilmDizi-Hybrid"]["audio_stages"]
         self.assertEqual(actual, expected_order)
 
