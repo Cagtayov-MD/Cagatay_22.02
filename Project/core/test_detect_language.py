@@ -161,15 +161,15 @@ class TestContentProfiles(unittest.TestCase):
                     f"{profile_name} profilinde compute_type float16 değil"
                 )
 
-    def test_beam_size_3_in_active_profiles(self):
-        """Aktif profillerde beam_size 3 olmalı."""
+    def test_beam_size_1_in_active_profiles(self):
+        """Aktif profillerde beam_size 1 olmalı."""
         active_profiles = ["FilmDizi-Hybrid", "Spor"]
         for profile_name in active_profiles:
             with self.subTest(profile=profile_name):
                 profile = self.profiles.get(profile_name, {})
                 self.assertEqual(
-                    profile.get("beam_size"), 3,
-                    f"{profile_name} profilinde beam_size 3 değil"
+                    profile.get("beam_size"), 1,
+                    f"{profile_name} profilinde beam_size 1 değil"
                 )
 
     def test_stage_order_correct(self):
