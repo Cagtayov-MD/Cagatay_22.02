@@ -22,9 +22,9 @@ def _select_audio_stages(config):
     if stages is None:
         program_type = config.get("program_type", "film_dizi")
         if program_type in ("film_dizi", "kisa_haber"):
-            stages = ["extract", "transcribe"]
+            stages = ["detect_language", "extract", "transcribe"]
         else:
-            stages = ["extract", "denoise", "diarize", "transcribe", "post_process"]
+            stages = ["detect_language", "extract", "denoise", "diarize", "transcribe", "post_process"]
     return stages
 
 
@@ -73,18 +73,18 @@ def test_audio_only_scope_calls_run_audio_serially():
 
 
 def test_film_dizi_profile_uses_extract_and_transcribe_only():
-    """ASR-ALWAYS-03: Film/Dizi program_type uses only ['extract', 'transcribe'] stages."""
+    """ASR-ALWAYS-03: Film/Dizi program_type uses only ['detect_language', 'extract', 'transcribe'] stages."""
     stages = _select_audio_stages({"program_type": "film_dizi"})
-    assert stages == ["extract", "transcribe"], (
-        f"Film/Dizi için beklenen ['extract', 'transcribe'], alınan: {stages}"
+    assert stages == ["detect_language", "extract", "transcribe"], (
+        f"Film/Dizi için beklenen ['detect_language', 'extract', 'transcribe'], alınan: {stages}"
     )
     assert "post_process" not in stages, "post_process (Ollama) film_dizi profilinde olmamalı"
     assert "denoise" not in stages, "denoise film_dizi profilinde olmamalı"
 
 
 def test_kisa_haber_profile_uses_extract_and_transcribe_only():
-    """ASR-ALWAYS-04: kisa_haber profile also uses only ['extract', 'transcribe'] stages."""
+    """ASR-ALWAYS-04: kisa_haber profile also uses only ['detect_language', 'extract', 'transcribe'] stages."""
     stages = _select_audio_stages({"program_type": "kisa_haber"})
-    assert stages == ["extract", "transcribe"], (
-        f"kisa_haber için beklenen ['extract', 'transcribe'], alınan: {stages}"
+    assert stages == ["detect_language", "extract", "transcribe"], (
+        f"kisa_haber için beklenen ['detect_language', 'extract', 'transcribe'], alınan: {stages}"
     )

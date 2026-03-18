@@ -64,6 +64,15 @@ class PostProcessStage:
         model = opts.get("ollama_model") or None  # None → provider default
         tmdb_cast = opts.get("tmdb_cast", [])
 
+        # Ollama model adını Gemini'ye gönderme — Gemini kendi default modelini kullansın
+        if provider == "gemini" and model and (
+            ":" in model
+            or model.startswith("llama")
+            or model.startswith("mistral")
+            or model.startswith("qwen")
+        ):
+            model = None
+
         # For Ollama provider: validate URL and check availability
         if provider == "ollama":
             if not self._validate_ollama_url(base_url):
