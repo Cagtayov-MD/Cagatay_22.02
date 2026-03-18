@@ -389,8 +389,18 @@ class TMDBVerify:
         if not cast_names and not director_names:
             return TMDBVerifyResult(False, "no cast or directors to verify")
 
+        # ── Orijinal başlık: cdata'dan al (OCR/Gemini tarafından çıkarılmış olabilir) ──
+        original_title_input = (
+            (cdata.get("original_title") or "").strip() or
+            (cdata.get("original_name") or "").strip() or
+            (cdata.get("_gemini_suggested_title") or "").strip()
+        )
+
         # TMDB'de eşleşme bul
-        tmdb_entry, kind, matched_via = self._find_tmdb_entry(film_title, cast_names, director_names)
+        tmdb_entry, kind, matched_via = self._find_tmdb_entry(
+            film_title, cast_names, director_names,
+            original_title=original_title_input,
+        )
 
         if not tmdb_entry:
             self._log(f"  [TMDB] Eşleşme bulunamadı")
@@ -482,13 +492,16 @@ class TMDBVerify:
     # ── TMDB'de eşleşme bul ─────────────────────────────────────────
     def _find_tmdb_entry(self, film_title: str,
                          cast_names: List[str],
-                         director_names: List[str] = None) -> tuple:
+                         director_names: List[str] = None,
+                         original_title: str = "") -> tuple:
         """
         Strateji:
           1. Film adıyla search/multi → top 10 sonucu oyuncularla doğrula
              (birden fazla başlık varyantı denenir; örn. "Madam" → "Madame")
              - film_adı + 2 oyuncu → %100 güven
              - film_adı + 1 oyuncu + yönetmen (TMDB crew'unda) → %100 güven
+          1b. Strateji 1 başarısız + original_title mevcut → original title ile tekrar ara
+              (aynı mantık; Türkçe/yerel başlık TMDB'de bulunamayan durumlarda devreye girer)
           2. Film adı yoksa her oyuncuyla/yönetmenle search/person → combined_credits doğrula
              (combined_credits başarısız olursa known_for fallback)
              - combined_credits cast + crew bölümleri taranır; yönetmenler crew'den eşleşir
@@ -543,6 +556,51 @@ class TMDBVerify:
                     self._log(f"  [TMDB] film adı + yönetmen eşleşti (oyuncu eşleşmedi) → kabul")
                     return r, kind, "title"
             # Bu başlık denemesinde eşleşme yoksa sonraki varyantı dene
+
+        # ── Strateji 1b: Orijinal başlıkla ara (TR/yerel başlık başarısız olduysa) ──
+        # film_title ve original_title farklıysa ve original_title doluysa dene
+        _norm_film   = _norm(film_title or "")
+        _norm_orig   = _norm(original_title or "")
+        _orig_usable = bool(original_title and _norm_orig and _norm_orig != _norm_film)
+        if _orig_usable:
+            self._log(f"  [TMDB] Orijinal başlıkla arama deneniyor: '{original_title}'")
+            for orig_attempt in _title_candidates(original_title):
+                self._log(f"  [TMDB] Aranan orijinal başlık: '{orig_attempt}'")
+                cache_key = f"search_multi_{_norm(orig_attempt)}"
+                results = self._load_cache(cache_key)
+                if results is None:
+                    try:
+                        results = self.client.search_multi(orig_attempt)
+                        self._save_cache(cache_key, results)
+                    except Exception as e:
+                        self._log(f"  [TMDB] Orijinal başlık arama hatası: {e}")
+                        results = []
+
+                self._log(f"  [TMDB] {len(results or [])} sonuç bulundu")
+                for r in (results or [])[:10]:
+                    kind = r.get("media_type", "")
+                    title = r.get("name") or r.get("title") or "?"
+                    if kind not in ("tv", "movie"):
+                        continue
+                    self._log(f"  [TMDB] Kontrol: '{title}' ({kind}, id:{r['id']})")
+                    credits = self._fetch_credits(kind, r["id"])
+                    if not credits:
+                        continue
+                    tmdb_names = self._extract_names(credits)
+                    matched    = self._count_matches(cast_names, tmdb_names)
+                    self._log(f"  [TMDB]   → {matched}/{len(cast_names)} oyuncu eşleşti")
+                    if matched >= 2:
+                        self._log(f"  [TMDB] orijinal başlık + {matched} oyuncu eşleşti → %100 güven")
+                        return r, kind, "original_title"
+                    if matched >= 1 and director_names and _director_matches_crew(credits):
+                        self._log(f"  [TMDB] orijinal başlık + {matched} oyuncu + yönetmen eşleşti → %100 güven")
+                        return r, kind, "original_title"
+                    if matched == 0 and director_names and _director_matches_crew(credits):
+                        self._log(f"  [TMDB] orijinal başlık + yönetmen eşleşti (oyuncu eşleşmedi) → kabul")
+                        return r, kind, "original_title"
+                # Bu orijinal başlık denemesinde eşleşme yoksa sonraki varyantı dene
+        elif original_title and not _orig_usable:
+            self._log(f"  [TMDB] Orijinal başlık yerel başlıkla aynı, tekrar aranmıyor")
 
         # ── Strateji 2: Oyuncularla ara ──
         self._log(f"  [TMDB] Film adıyla eşleşme yok veya film adı yanlış, oyuncularla aranıyor...")
