@@ -156,7 +156,7 @@ def test_strategy2_director_contributes_via_crew():
          patch.object(verifier, "_load_cache", return_value=None), \
          patch.object(verifier, "_save_cache"):
 
-        entry, kind = verifier._find_tmdb_entry(
+        entry, kind, _ = verifier._find_tmdb_entry(
             film_title="",  # Film adı yok — Strategy 2 tetiklenmeli
             cast_names=["Isabelle Huppert", "Jean-Francois Balmer"],
             director_names=["Claude Chabrol"],
@@ -208,7 +208,7 @@ def test_strategy2_director_no_double_count_for_actor_director():
          patch.object(verifier, "_save_cache"):
 
         # Sadece 1 kişi arıyoruz; count en fazla 1 olmalı → MIN_ACTOR_MATCH=3 geçilemez
-        entry, kind = verifier._find_tmdb_entry(
+        entry, kind, _ = verifier._find_tmdb_entry(
             film_title="",
             cast_names=["Actor One"],
             director_names=[],
@@ -258,7 +258,7 @@ def test_strategy1_director_only_no_cast():
          patch.object(verifier, "_load_cache", return_value=None), \
          patch.object(verifier, "_save_cache"):
 
-        entry, kind = verifier._find_tmdb_entry(
+        entry, kind, _ = verifier._find_tmdb_entry(
             film_title="Teşkilat",
             cast_names=[],
             director_names=["Ozan Bodur"],
@@ -314,7 +314,7 @@ def test_strategy2_director_only_no_cast():
          patch.object(verifier, "_load_cache", return_value=None), \
          patch.object(verifier, "_save_cache"):
 
-        entry, kind = verifier._find_tmdb_entry(
+        entry, kind, _ = verifier._find_tmdb_entry(
             film_title="",
             cast_names=[],
             director_names=["Ozan Bodur"],
@@ -368,7 +368,7 @@ def test_strategy2_cast_present_still_uses_min_actor_match():
          patch.object(verifier, "_load_cache", return_value=None), \
          patch.object(verifier, "_save_cache"):
 
-        entry, kind = verifier._find_tmdb_entry(
+        entry, kind, _ = verifier._find_tmdb_entry(
             film_title="",
             cast_names=["Actor A", "Actor B"],
             director_names=[],

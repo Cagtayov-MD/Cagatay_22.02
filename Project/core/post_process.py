@@ -60,9 +60,23 @@ class PostProcessStage:
         """
         t0 = time.time()
         provider = opts.get("llm_provider") or _llm.get_provider()
+        ollama_url_explicitly_set = "ollama_url" in opts
         base_url = normalize_ollama_url(opts.get("ollama_url", "http://localhost:11434"))
         model = opts.get("ollama_model") or None  # None → provider default
         tmdb_cast = opts.get("tmdb_cast", [])
+
+        # Validate ollama_url whenever it is explicitly provided (regardless of provider)
+        if ollama_url_explicitly_set and not self._validate_ollama_url(base_url):
+            self._log(f"  [PostProcess] Geçersiz ollama_url={base_url!r} — post-process atlanıyor")
+            processed = self._mark_low_confidence(segments) if segments else []
+            return {
+                "status": "skipped",
+                "segments": processed,
+                "corrections": 0,
+                "summary_tr": "",
+                "stage_time_sec": round(time.time() - t0, 2),
+                "error": "invalid_ollama_url",
+            }
 
         # For Ollama provider: validate URL and check availability
         if provider == "ollama":

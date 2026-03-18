@@ -298,7 +298,7 @@ def test_chat_logs_http_error(monkeypatch):
         )
 
     monkeypatch.setattr("urllib.request.urlopen", raise_http)
-    result = stage._chat("prompt", "system", "http://localhost:11434", "llama3.1:8b")
+    result = stage._chat("prompt", "system", "ollama", "http://localhost:11434", "llama3.1:8b")
     assert result == ""
     assert any("500" in m for m in logs)
 
@@ -315,7 +315,7 @@ def test_chat_logs_url_error(monkeypatch):
         raise urllib.error.URLError("Connection refused")
 
     monkeypatch.setattr("urllib.request.urlopen", raise_url)
-    result = stage._chat("prompt", "system", "http://localhost:11434", "llama3.1:8b")
+    result = stage._chat("prompt", "system", "ollama", "http://localhost:11434", "llama3.1:8b")
     assert result == ""
     assert any("bağlantı" in m.lower() or "Connection refused" in m for m in logs)
 
@@ -331,7 +331,7 @@ def test_chat_logs_timeout_error(monkeypatch):
         raise TimeoutError("timed out")
 
     monkeypatch.setattr("urllib.request.urlopen", raise_timeout)
-    result = stage._chat("prompt", "system", "http://localhost:11434", "llama3.1:8b")
+    result = stage._chat("prompt", "system", "ollama", "http://localhost:11434", "llama3.1:8b")
     assert result == ""
     assert any("zaman aşımı" in m.lower() or "timeout" in m.lower() for m in logs)
 
