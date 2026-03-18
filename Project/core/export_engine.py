@@ -1602,7 +1602,11 @@ class ExportEngine:
         else:
             summary = None
             if audio_result and isinstance(audio_result, dict):
-                summary = audio_result.get("summary") or audio_result.get("summary_tr") or audio_result.get("ollama_summary")
+                summary_raw = audio_result.get("summary") or audio_result.get("summary_tr") or audio_result.get("ollama_summary")
+                if isinstance(summary_raw, dict):
+                    summary = summary_raw.get("tr") or summary_raw.get("en") or ""
+                else:
+                    summary = summary_raw
             if summary:
                 L.append(f"\n  {summary}")
             else:
