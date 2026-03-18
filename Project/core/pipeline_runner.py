@@ -33,6 +33,7 @@ from core.qwen_verifier import QwenVerifier
 from core.llm_cast_filter import LLMCastFilter
 from core.vlm_reader import VLMReader
 from core.name_verify import NameVerifier
+from core.xml_sidecar import resolve_xml_sidecar
 from utils.stats_logger import StatsLogger
 
 # OneOCR — opsiyonel (sadece Windows 11)
@@ -238,6 +239,7 @@ class PipelineRunner:
         self._log(f"  Mod    : {self.config.get('difficulty','medium')}")
         self._log(f"  NameDB : {len(self._name_db)} isim yüklü")
 
+        xml_path = None
         try:
             # ── TextFilter mode bağlantısı ──────────────────────
             self._text_filter = TextFilter.from_config(self.config)
@@ -319,6 +321,7 @@ class PipelineRunner:
                         resolution=info["resolution"])
             self._log(f"  OK: {info['duration_human']} | "
                       f"{info['resolution']} | {info['fps']} FPS")
+            xml_path = resolve_xml_sidecar(video_path, log_cb=self._log)
 
             # Audio başlatma: audio_only → seri, video+audio → arka planda paralel
             audio_result = None
@@ -784,6 +787,7 @@ class PipelineRunner:
                     work_dir=work_dir,
                     content_profile_name=profile_name,
                     ts=export_ts,
+                    xml_path=xml_path,
                 )
             except Exception as e:
                 self._log(f"  [DATABASE] Yazma hatası (pipeline etkilenmedi): {e}")
@@ -811,6 +815,7 @@ class PipelineRunner:
                 "ocr_lines":         len(ocr_lines),
                 "tmdb_result":       tmdb_result,
                 "audio_result":      audio_result,
+                "xml_sidecar":       xml_path,
             }
 
         except Exception as e:
@@ -1316,7 +1321,8 @@ class PipelineRunner:
     def _write_database(self, video_info: dict, credits_data: dict,
                          credits_raw, ocr_lines: list, stage_stats: dict,
                          audio_result, work_dir: str,
-                         content_profile_name: str, ts: str) -> None:
+                         content_profile_name: str, ts: str,
+                         xml_path: str = "") -> None:
         """DATABASE dizinine pipeline çıktılarının bir kopyasını yaz."""
         if not self.config.get("database_enabled", True):
             return
@@ -1345,6 +1351,12 @@ class PipelineRunner:
                 if src.is_file():
                     dst = _safe_path(db_dir / src.name)
                     shutil.copy2(src, dst)
+
+        # 1b. XML sidecar dosyasını DB klasörüne kopyala
+        if xml_path and Path(xml_path).is_file():
+            xml_dst = _safe_path(db_dir / Path(xml_path).name)
+            shutil.copy2(xml_path, xml_dst)
+            self._log(f"  [DATABASE] XML sidecar kopyalandı: {Path(xml_path).name}")
 
         # 2. OCR dual-score JSON yaz
         ocr_scores = self._build_ocr_scores(ocr_lines, credits_data)

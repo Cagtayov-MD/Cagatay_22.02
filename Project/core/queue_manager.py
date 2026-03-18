@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from datetime import datetime
 
+from core.xml_sidecar import find_xml_sidecar
+
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mkv", ".mov", ".ts", ".wmv"}
 
 
@@ -23,6 +25,7 @@ class VideoItem:
     duration_sec: float | None = None   # tamamlanma süresi
     error_msg: str = ""
     added_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    xml_path: str = ""
 
 
 class VideoQueueManager:
@@ -39,7 +42,8 @@ class VideoQueueManager:
                 p = str(Path(p).resolve())
                 ext = Path(p).suffix.lower()
                 if ext in VIDEO_EXTENSIONS and p not in existing and os.path.isfile(p):
-                    self._items.append(VideoItem(path=p))
+                    xml_path = find_xml_sidecar(p) or ""
+                    self._items.append(VideoItem(path=p, xml_path=xml_path))
                     existing.add(p)
                     added += 1
             return added
