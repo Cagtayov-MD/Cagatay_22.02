@@ -1,0 +1,204 @@
+name: PR Tavsiye Raporu
+
+on:
+  pull_request:
+    branches: [ main ]
+    types: [ opened, synchronize, reopened ]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  tavsiye-raporu:
+    runs-on: self-hosted
+    env:
+      VENV_ACTIVATE: "F:\\Root\\venv\\Scripts\\Activate.ps1"
+      PROJE_DIZINI: "F:\\REPO_GitHub\\Cagatay_22.02\\Project"
+
+    steps:
+
+      # ── 0. Repo'yu çek ──
+      - name: Repo'yu çek
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      # ── 1. YAPISAL KONTROL — "Bu iş çalışıyor mu?" ──
+      - name: "① Yapısal Kontrol"
+        id: yapisal
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          . "$env:VENV_ACTIVATE"
+          Set-Location "$env:PROJE_DIZINI"
+
+          $sorunlar = @()
+
+          # Değişen Python dosyalarını bul
+          $pyFiles = git diff --name-only "origin/${{ github.base_ref }}...HEAD" -- '*.py' 2>&1
+          $pyFiles = $pyFiles | Where-Object { $_ -ne "" -and (Test-Path $_) }
+          $pyCount = ($pyFiles | Measure-Object).Count
+
+          # Her dosyayı syntax kontrolünden geçir
+          foreach ($f in $pyFiles) {
+            $result = python -c "import py_compile; py_compile.compile('$f', doraise=True)" 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              $sorunlar += $f
+            }
+          }
+
+          # Ana modüllerin import edilebilirliğini kontrol et
+          $importSonuc = python -c @"
+          import sys
+          sys.path.insert(0, '.')
+          failed = []
+          for mod in ['core.audio_worker', 'core.audio_pipeline', 'core.name_verify']:
+              try:
+                  __import__(mod)
+              except Exception as e:
+                  failed.append(f'{mod}: {e}')
+          if failed:
+              print('FAIL:' + '|'.join(failed))
+          else:
+              print('OK')
+          "@ 2>&1
+
+          $importBasarisiz = $importSonuc | Where-Object { $_ -like "FAIL:*" }
+
+          # Sonucu oluştur
+          if ($sorunlar.Count -eq 0 -and -not $importBasarisiz) {
+            if ($pyCount -gt 0) {
+              $msg = "✅ Değişen $pyCount Python dosyasının hepsi syntax açısından temiz. Ana modüller sorunsuz import ediliyor."
+            } else {
+              $msg = "✅ Bu PR'da Python dosyası değişikliği yok. Ana modüller sorunsuz import ediliyor."
+            }
+          } else {
+            $parcalar = @()
+            if ($sorunlar.Count -gt 0) {
+              $parcalar += "⚠️ $($sorunlar.Count) dosyada syntax sorunu var ($($sorunlar -join ', '))."
+            }
+            if ($importBasarisiz) {
+              $hangi = ($importBasarisiz -replace '^FAIL:', '' -split '\|' | ForEach-Object { ($_ -split ':')[0] }) -join ', '
+              $parcalar += "⚠️ Şu modüller import edilemiyor: $hangi — bağımlılık eksik olabilir."
+            }
+            $msg = $parcalar -join " "
+          }
+
+          # GITHUB_OUTPUT — multiline safe
+          $delim = "EOF_YAPISAL_$(Get-Random)"
+          "YAPISAL_SONUC<<$delim" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          $msg | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          $delim | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # ── 2. BAĞLAM KONTROLÜ — "Amacımızı destekliyor mu?" ──
+      - name: "② Bağlam Kontrolü"
+        id: baglam
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $degisen = git diff --name-only "origin/${{ github.base_ref }}...HEAD" 2>&1 | Where-Object { $_ -ne "" }
+          $toplamCount = ($degisen | Measure-Object).Count
+
+          $ocrCount    = ($degisen | Where-Object { $_ -match "ocr|frame|credits|name_verify|export" } | Measure-Object).Count
+          $asrCount    = ($degisen | Where-Object { $_ -match "audio|asr|whisper|transcri" } | Measure-Object).Count
+          $uiCount     = ($degisen | Where-Object { $_ -match "ui/" } | Measure-Object).Count
+          $configCount = ($degisen | Where-Object { $_ -match "config|dag_def|\.json|\.env" } | Measure-Object).Count
+          $testCount   = ($degisen | Where-Object { $_ -match "test" } | Measure-Object).Count
+
+          $kategoriler = @()
+          if ($ocrCount -gt 0)    { $kategoriler += "📸 OCR dalında $ocrCount dosya" }
+          if ($asrCount -gt 0)    { $kategoriler += "🎙️ ASR dalında $asrCount dosya" }
+          if ($uiCount -gt 0)     { $kategoriler += "🖥️ UI katmanında $uiCount dosya" }
+          if ($configCount -gt 0) { $kategoriler += "⚙️ Config/DAG katmanında $configCount dosya" }
+          if ($testCount -gt 0)   { $kategoriler += "🧪 Test kapsamında $testCount dosya" }
+
+          if ($kategoriler.Count -eq 0) {
+            $msg = "Bu PR toplamda $toplamCount dosyayı etkiliyor. Değişiklikler bilinen kategori kalıplarıyla eşleşmedi — dokümantasyon veya yapılandırma güncellemesi olabilir."
+          } elseif ($kategoriler.Count -eq 1) {
+            $msg = "Bu PR toplamda $toplamCount dosyayı etkiliyor. Ağırlıklı olarak $($kategoriler[0]) üzerinde çalışma yapılmış."
+          } else {
+            $ana = $kategoriler[0]
+            $diger = ($kategoriler[1..($kategoriler.Count-1)] -join ", ")
+            $msg = "Bu PR toplamda $toplamCount dosyayı etkiliyor. Ağırlıklı olarak $ana üzerinde çalışma yapılmış. Ek olarak $diger değişiklik var."
+          }
+
+          $delim = "EOF_BAGLAM_$(Get-Random)"
+          "BAGLAM_SONUC<<$delim" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          $msg | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          $delim | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # ── 3. ÇAKIŞMA KONTROLÜ — "Başka mekanizmaları bozuyor mu?" ──
+      - name: "③ Çakışma Kontrolü"
+        id: cakisma
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          . "$env:VENV_ACTIVATE"
+          Set-Location "$env:PROJE_DIZINI"
+
+          $testDosyalari = Get-ChildItem "tests/" -Filter "test_*.py" -ErrorAction SilentlyContinue
+          $toplamTest = ($testDosyalari | Measure-Object).Count
+
+          if ($toplamTest -eq 0) {
+            $msg = "ℹ️ `tests/` klasöründe çalıştırılabilecek test dosyası bulunamadı. Test kapsamı henüz oluşturulmamış olabilir."
+          } else {
+            # pytest'i toplu çalıştır, çıktıyı al
+            $pytest_cikti = python -m pytest tests/ --tb=line -q 2>&1
+            $exitCode = $LASTEXITCODE
+
+            # Geçen ve kalan test sayısını özetle
+            $gecenSatir  = $pytest_cikti | Where-Object { $_ -match "passed" } | Select-Object -Last 1
+            $basarisizlar = $pytest_cikti | Where-Object { $_ -match "FAILED " } 
+
+            if ($exitCode -eq 0) {
+              $msg = "✅ Mevcut $toplamTest test dosyasındaki testlerin tamamı başarıyla geçti. Bu değişiklik mevcut çalışma mekanizmalarını etkilemiyor."
+            } else {
+              $failCount = ($basarisizlar | Measure-Object).Count
+              $failIsimleri = $basarisizlar | ForEach-Object {
+                if ($_ -match "FAILED (.+?) -") { $matches[1] } else { $_ }
+              }
+              $failOzet = ($failIsimleri | Select-Object -First 5) -join ", "
+              $msg = "⚠️ $toplamTest test dosyasından bazı testler başarısız oldu ($failCount hata). Başarısız alanlar: $failOzet — bu alanları etkileyen değişiklikler olabilir."
+            }
+          }
+
+          $delim = "EOF_CAKISMA_$(Get-Random)"
+          "CAKISMA_SONUC<<$delim" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          $msg | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          $delim | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # ── 4. TAVSİYE RAPORUNU PR'A YAZ ──
+      - name: "📋 Tavsiye Raporunu PR'a Yaz"
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const yapisal = `${{ steps.yapisal.outputs.YAPISAL_SONUC }}`;
+            const baglam  = `${{ steps.baglam.outputs.BAGLAM_SONUC }}`;
+            const cakisma = `${{ steps.cakisma.outputs.CAKISMA_SONUC }}`;
+
+            const body = [
+              '## 📋 PR Tavsiye Raporu',
+              '',
+              '### ① Yapısal Kontrol — "Bu iş çalışıyor mu?"',
+              yapisal,
+              '',
+              '### ② Bağlam Kontrolü — "Amacımızı destekliyor mu?"',
+              baglam,
+              '',
+              '### ③ Çakışma Kontrolü — "Başka mekanizmaları bozuyor mu?"',
+              cakisma,
+              '',
+              '---',
+              '> 🤖 *Bu rapor otomatik oluşturulmuştur. Kontrol mekanizması değildir, tavsiye niteliğindedir.*',
+              '> *Merge kararı insan inisiyatifindedir.*',
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
