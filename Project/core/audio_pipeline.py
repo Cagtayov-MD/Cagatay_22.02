@@ -251,8 +251,15 @@ class AudioPipeline:
         # ══════════════════════════════════════════════════════
         # [F] POST_PROCESS
         # ══════════════════════════════════════════════════════
-        if "post_process" in stages_to_run and transcribe_result.get("segments") and language_is_turkish:
+        # post_process_all_languages=True ise dil Türkçe olmasa da post_process çalışır.
+        # Bu özellikle OrijinalDilFilm profili için gereklidir: tespit edilen dilde özet alınır.
+        _post_process_all_langs = bool(self.config.get("post_process_all_languages", False))
+        _post_process_lang_ok = language_is_turkish or _post_process_all_langs
+        if "post_process" in stages_to_run and transcribe_result.get("segments") and _post_process_lang_ok:
             self._log(f"\n[F] POST_PROCESS")
+            if not language_is_turkish:
+                _detected = result.get("detected_language", "unknown").upper()
+                self._log(f"  [POST_PROCESS] Dil: {_detected} (post_process_all_languages=true)")
             post = PostProcessStage(log_cb=self._log)
             # Pre-check Ollama availability to fail fast
             ollama_url = self.config.get("ollama_url", "http://localhost:11434")

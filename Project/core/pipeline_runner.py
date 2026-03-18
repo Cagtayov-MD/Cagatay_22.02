@@ -202,9 +202,11 @@ class PipelineRunner:
             _profile_merge_keys = (
                 "audio_stages", "whisper_model", "whisper_language",
                 "compute_type", "beam_size", "ocr_engine",
-                "tmdb_enabled", "tmdb_person_verify",
+                "tmdb_enabled", "tmdb_person_verify", "tmdb_lenient_match",
                 "gemini_enabled", "llm_cast_filter", "blok2_enabled",
                 "qwen_fallback_on_handwriting",
+                "post_process_all_languages", "guest_actor_enabled",
+                "content_type",
             )
             for _pk in _profile_merge_keys:
                 if _pk in content_profile:
@@ -847,6 +849,11 @@ class PipelineRunner:
 
         self._log(f"  [Audio] Stages: {stages}")
 
+        # whisper_language "auto" ise dil tespiti pipeline'a bırakılır
+        _whisper_lang_cfg = self.config.get("whisper_language", "tr")
+        if str(_whisper_lang_cfg).strip().lower() in ("auto", ""):
+            _whisper_lang_cfg = None  # None → audio_pipeline detect_language'ı kullanır
+
         audio_cfg = {
             "program_type": self.config.get("program_type", "film_dizi"),
             "hf_token":     self.config.get("hf_token", ""),
@@ -854,10 +861,11 @@ class PipelineRunner:
             "ollama_url":   self.config.get("ollama_url", "http://localhost:11434"),
             "tmdb_cast":    self.config.get("tmdb_cast", []),
             "stages": stages,
+            "post_process_all_languages": bool(self.config.get("post_process_all_languages", False)),
             "options": {
                 "denoise_enabled":  "denoise" in stages,
                 "whisper_model":    self.config.get("whisper_model", "large-v3"),
-                "whisper_language": self.config.get("whisper_language", "tr"),
+                "whisper_language": _whisper_lang_cfg if _whisper_lang_cfg is not None else "tr",
                 # float16 varsayılan; CPU'da TranscribeStage otomatik int8'e döner.
                 "compute_type":     self.config.get("compute_type", "float16"),
                 "max_speakers":     self.config.get("max_speakers", 10),
