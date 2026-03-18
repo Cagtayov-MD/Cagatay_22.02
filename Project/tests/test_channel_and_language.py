@@ -699,5 +699,67 @@ class TestEndToEndScenarios(unittest.TestCase):
         self.assertFalse(result["has_cast_reference"])
 
 
+class TestAudioPipelineUnknownLanguage(unittest.TestCase):
+    """Dil tespiti 'unknown' geldiğinde Whisper'ın kendi tespitine izin verilmeli."""
+
+    @patch("core.audio_pipeline.TranscribeStage")
+    @patch("core.audio_pipeline.ExtractStage")
+    @patch("core.audio_pipeline.LanguageDetectionStage")
+    def test_unknown_language_passes_none_to_whisper(self, mock_lang_stage,
+                                                     mock_extract_stage,
+                                                     mock_transcribe_stage):
+        mock_lang_stage.return_value.run.return_value = {
+            "detected_language": "unknown",
+            "language_is_turkish": False,
+            "confidence": 0.12,
+            "samples": [],
+            "selected_channel": None,
+            "stage_time_sec": 0.1,
+            "status": "ok",
+        }
+        mock_extract_stage.return_value.run.return_value = {
+            "status": "ok",
+            "wav_16k": "/tmp/fake16k.wav",
+            "wav_48k": "/tmp/fake48k.wav",
+            "duration_sec": 120.0,
+            "selected_channel": None,
+            "stage_time_sec": 0.1,
+        }
+
+        captured = {}
+
+        def _fake_transcribe(wav_path, diarization, options):
+            captured["whisper_language"] = options.get("whisper_language")
+            return {
+                "stage_time_sec": 0.1,
+                "status": "ok",
+                "segments": [
+                    {"start": 0.0, "end": 1.0, "text": "مرحبا", "speaker": "S1"}
+                ],
+                "total_segments": 1,
+                "detected_language": "ar",
+            }
+
+        mock_transcribe_stage.return_value.run.side_effect = _fake_transcribe
+
+        from core.audio_pipeline import AudioPipeline
+
+        pipeline = AudioPipeline(
+            config={
+                "video_path": "/tmp/fake_video.mp4",
+                "work_dir": "/tmp/audio_pipeline_lang",
+                "options": {"whisper_language": "tr"},
+                "stages": ["detect_language", "extract", "transcribe"],
+            },
+            log_cb=lambda *args, **kwargs: None,
+        )
+
+        result = pipeline.run()
+
+        self.assertIsNone(captured.get("whisper_language"))
+        self.assertEqual(result.get("detected_language"), "ar")
+        self.assertEqual(result.get("transcript")[0]["text"], "مرحبا")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

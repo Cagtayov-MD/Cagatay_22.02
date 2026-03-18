@@ -737,6 +737,9 @@ class PipelineRunner:
 
             # ══ TRANSCRIPT ÖZETİ (Gemini) ═════════════════════════
             if audio_result and isinstance(audio_result, dict) and audio_result.get("status") != "skipped":
+                transcript_lang = audio_result.get("detected_language") or "unknown"
+                audio_result.setdefault("transcript_language", transcript_lang)
+                audio_result.setdefault("report_language", "tr")
                 raw_transcript = audio_result.get("transcript", "")
                 # transcript may be a list of segment dicts or a plain string
                 if isinstance(raw_transcript, list):
@@ -766,6 +769,7 @@ class PipelineRunner:
                             if summary:
                                 audio_result["summary"] = summary
                                 audio_result["summary_model"] = summary.get("model_used", "")
+                                audio_result["summary_language"] = "tr"
                         except Exception as _sum_e:
                             self._log(f"  [Summarizer] Özet hatası (pipeline etkilenmedi): {_sum_e}")
                     else:

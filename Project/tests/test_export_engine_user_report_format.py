@@ -70,3 +70,30 @@ def test_upper_word_turkish_dotted_i_preserved():
     from core.export_engine import _upper_word_turkish
 
     assert _upper_word_turkish("İstanbul") == "İSTANBUL"
+
+
+def test_format_language_block_emits_all_languages():
+    from core.export_engine import _format_language_block
+
+    lines = _format_language_block({
+        "transcript_language": "en",
+        "summary_language": "tr",
+        "report_language": "tr",
+    })
+
+    assert any("Transcript" in line and "EN (İNG)" in line for line in lines)
+    assert any("Özet" in line and "TR (TR)" in line for line in lines)
+    assert any("Rapor" in line and "TR (TR)" in line for line in lines)
+
+
+def test_format_language_block_ignores_missing_values():
+    from core.export_engine import _format_language_block
+
+    lines = _format_language_block({
+        "transcript_language": "ar",
+        # summary_language intentionally missing
+        "report_language": "tr",
+    })
+
+    assert any("AR (ARA)" in line for line in lines)
+    assert not any("Özet" in line for line in lines)

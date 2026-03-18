@@ -3,6 +3,7 @@ import json, os, re, unicodedata
 from datetime import datetime
 from pathlib import Path
 
+from core.gemini_summarizer import get_language_label
 from utils.time_utils import fmt_hms as _fmt_hms_shared
 
 
@@ -1180,6 +1181,37 @@ def _canonicalize_crew(crew: list[dict]) -> list[dict]:
     out.sort(key=lambda r: (_norm_key(r.get("role", "")), _norm_key(r.get("name", ""))))
     return out
 
+def _format_language_block(audio_result: dict | None) -> list[str]:
+    """ASR çıktısındaki dil bilgilerini rapora uygun satırlara dönüştür."""
+    if not audio_result or not isinstance(audio_result, dict):
+        return []
+
+    transcript_lang = (
+        audio_result.get("transcript_language")
+        or audio_result.get("detected_language")
+        or ""
+    )
+    summary_lang = audio_result.get("summary_language") or ""
+    report_lang = audio_result.get("report_language") or ""
+
+    def _fmt(label: str, code: str | None) -> str | None:
+        if not code:
+            return None
+        label_code = get_language_label(code)
+        return f"  {label:<13}: {code.upper()} ({label_code})"
+
+    lines = []
+    for label, code in (
+        ("Transcript", transcript_lang),
+        ("Özet", summary_lang),
+        ("Rapor", report_lang),
+    ):
+        line = _fmt(label, code)
+        if line:
+            lines.append(line)
+
+    return lines
+
 class ExportEngine:
     def __init__(self, output_dir, name_db=None):
         self.out = Path(output_dir)
@@ -1528,6 +1560,8 @@ class ExportEngine:
             asr_engine = audio_result.get("asr_engine") or "ASR"
             asr_model = audio_result.get("whisper_model") or audio_result.get("model", "—")
             L.append(f"  ASR Motor  : {asr_engine} ({asr_model})")
+            for lang_line in _format_language_block(audio_result):
+                L.append(lang_line)
         else:
             L.append(f"  ASR Motor  : —")
 
