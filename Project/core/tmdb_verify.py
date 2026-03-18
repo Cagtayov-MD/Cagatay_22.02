@@ -462,28 +462,40 @@ class TMDBVerify:
                 except ValueError:
                     pass
 
-        # ── Ters doğrulama ──
-        _rv_accepted, _rv_score, _rv_breakdown = self._reverse_validate(
-            ocr_title=film_title,
-            ocr_cast_names=cast_names,
-            ocr_director_names=director_names,
-            ocr_year=_ocr_year,
-            tmdb_entry=tmdb_entry,
-            credits_data=credits_data,
-            forward_hits=_forward_hits,
-            forward_misses=_forward_misses,
-        )
-
-        if not _rv_accepted:
-            return TMDBVerifyResult(
-                updated=False,
-                reason="reverse_validation_rejected",
-                matched_title=tmdb_title,
-                matched_id=0,
-                reverse_score=_rv_score,
-                reverse_breakdown=_rv_breakdown,
-                rejected=True,
+        # ── Yüksek güven: reverse validation'ı atla ──
+        _total_cast = len(cast_names)
+        _hit_ratio = (_forward_hits / _total_cast) if _total_cast > 0 else 0.0
+        if _hit_ratio >= 0.90 and _forward_hits >= 3:
+            self._log(
+                f"  [TMDB] Yüksek güven: {_forward_hits}/{_total_cast} = "
+                f"{_hit_ratio*100:.0f}% eşleşme → ters doğrulama atlandı"
             )
+            _rv_accepted = True
+            _rv_score = 0.0
+            _rv_breakdown = {"skipped": True, "reason": "high_confidence_bypass"}
+        else:
+            # ── Ters doğrulama ──
+            _rv_accepted, _rv_score, _rv_breakdown = self._reverse_validate(
+                ocr_title=film_title,
+                ocr_cast_names=cast_names,
+                ocr_director_names=director_names,
+                ocr_year=_ocr_year,
+                tmdb_entry=tmdb_entry,
+                credits_data=credits_data,
+                forward_hits=_forward_hits,
+                forward_misses=_forward_misses,
+            )
+
+            if not _rv_accepted:
+                return TMDBVerifyResult(
+                    updated=False,
+                    reason="reverse_validation_rejected",
+                    matched_title=tmdb_title,
+                    matched_id=0,
+                    reverse_score=_rv_score,
+                    reverse_breakdown=_rv_breakdown,
+                    rejected=True,
+                )
 
         # Cast kanonikleştir
         updated, hits, misses = self._canonicalize(cdata, credits_data)
@@ -925,12 +937,6 @@ class TMDBVerify:
                             title_pos = 0.5
                         else:
                             title_pos = 0.0
-
-                    # Aynı dilde başlık uyumsuzluğu cezası
-                    if fuzzy_score < 60:
-                        title_neg = -4.0
-                    elif fuzzy_score < 70:
-                        title_neg = -1.0
 
         title_net = title_pos + title_neg
         score += title_net

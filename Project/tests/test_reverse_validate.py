@@ -10,10 +10,12 @@ REVVAL-06: verify_credits Kulübe senaryosunda rejected=True ve matched_id=0 dö
 REVVAL-07: verify_credits doğru film senaryosunda rejected=False döndürmeli
 REVVAL-08: OCR yılı dosya adından parse edilmeli
 REVVAL-09: Başlık farklı dil → başlık kategorisi atlanır (0.0/0.0)
-REVVAL-10: Başlık aynı dil ama tamamen farklı → -4.0 ceza
+REVVAL-10: Başlık aynı dil ama tamamen farklı → ceza yok (neg=0.0)
 REVVAL-11: Cast bonus — ≥8 hits → +3.0 bonus; ≥5 → +2.0; ≥3 → +1.0
 REVVAL-12: Dinamik eşik — aktif kategorilere orantılı (max × 0.40)
 REVVAL-13: Cast negatif ceza — hits ≥ 3 ise ceza yok
+REVVAL-14: Başlık cezası kaldırıldı — düşük fuzzy skorda neg=0.0
+REVVAL-15: Yüksek güven bypass — %90+ oranında ters doğrulama atlanır
 """
 from __future__ import annotations
 
@@ -406,8 +408,11 @@ def test_verify_credits_correct_film_accepted():
     assert result.matched_id == FIGHT_CLUB_ID, (
         f"matched_id={FIGHT_CLUB_ID} bekleniyor, aldık: {result.matched_id}"
     )
-    assert result.reverse_score >= 4.0, (
-        f"reverse_score eşiğin üzerinde olmalı: {result.reverse_score}"
+    # Yüksek güven bypass aktifse reverse_score=0.0 olur ama film yine de kabul edilir;
+    # bypass yoksa normal skor eşiğin üzerinde olmalı.
+    bypass_active = result.reverse_breakdown.get("skipped", False)
+    assert bypass_active or result.reverse_score >= 4.0, (
+        f"Film kabul edilmeli: bypass={bypass_active}, reverse_score={result.reverse_score}"
     )
 
 
@@ -506,13 +511,14 @@ def test_title_different_language_skipped():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# REVVAL-10: Başlık aynı dil ama tamamen farklı → -4.0 ceza
+# REVVAL-10: Başlık aynı dil ama tamamen farklı → ceza yok (nötr)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_title_same_language_mismatch_heavy_penalty():
     """
     REVVAL-10: OCR "Yalının Kuşları" (Türkçe), TMDB title "Ölüm Yolu" (Türkçe)
-    → aynı dil, tamamen farklı isim → fuzzy çok düşük → -4.0 ceza.
+    → aynı dil, tamamen farklı isim → fuzzy çok düşük → ceza yok (neg=0.0).
+    Başlık tutarsa bonus alır, tutmazsa nötr kalır; asla ceza uygulanmaz.
     """
     verifier, _ = _make_verifier()
 
@@ -536,8 +542,8 @@ def test_title_same_language_mismatch_heavy_penalty():
         forward_misses=0,
     )
 
-    assert breakdown["title"]["neg"] == -4.0, (
-        f"Aynı dil, tamamen farklı isim → -4.0 ceza bekleniyor: {breakdown['title']}"
+    assert breakdown["title"]["neg"] == 0.0, (
+        f"Aynı dil, tamamen farklı isim → ceza yok (neg=0.0) bekleniyor: {breakdown['title']}"
     )
     assert breakdown["title"]["compare"] == "Ölüm Yolu", (
         "Türkçe OCR, Türkçe TMDB başlığıyla karşılaştırılmalı"
@@ -710,4 +716,114 @@ def test_cast_neg_suppressed_when_hits_ge_3():
 
     assert breakdown2["cast"]["neg"] == -2.0, (
         f"hits=2 < 3, ratio≈9.5% → cast_neg=-2.0 bekleniyor: {breakdown2['cast']}"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REVVAL-14: Başlık cezası kaldırıldı — düşük fuzzy skorda neg=0.0
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_title_penalty_removed():
+    """
+    REVVAL-14: OCR "New York'taki Jandarma" (Türkçe), TMDB title "Tatlı Bela New York'ta" (Türkçe)
+    → aynı dil, farklı isim → düşük fuzzy skoru → neg=0.0 (ceza kaldırıldı), pos=0.0 (bonus da yok).
+    """
+    verifier, _ = _make_verifier()
+
+    entry = {
+        "id": 4728,
+        "title": "Tatlı Bela New York'ta",
+        "original_title": "Le Gendarme à New-York",
+        "release_date": "1965-01-01",
+        "media_type": "movie",
+    }
+    credits = {"cast": [], "crew": []}
+
+    _, _, breakdown = verifier._reverse_validate(
+        ocr_title="New York'taki Jandarma",
+        ocr_cast_names=[],
+        ocr_director_names=[],
+        ocr_year=0,
+        tmdb_entry=entry,
+        credits_data=credits,
+        forward_hits=0,
+        forward_misses=0,
+    )
+
+    assert breakdown["title"]["neg"] == 0.0, (
+        f"Düşük fuzzy skorda bile ceza olmamalı (neg=0.0): {breakdown['title']}"
+    )
+    assert breakdown["title"]["pos"] == 0.0, (
+        f"Düşük fuzzy skorda bonus da olmamalı (pos=0.0): {breakdown['title']}"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REVVAL-15: Yüksek güven bypass — %90+ oranında ters doğrulama atlanır
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_high_confidence_bypass():
+    """
+    REVVAL-15: forward_hits=7, toplam cast=7 → ratio=%100 ≥ %90 ve hits ≥ 3
+    → verify_credits ters doğrulamayı atlar, result.rejected=False olur
+    ve reverse_breakdown içinde 'skipped': True bulunur.
+    """
+    verifier, _ = _make_verifier()
+
+    tmdb_entry = {
+        "id": 4728,
+        "title": "Tatlı Bela New York'ta",
+        "original_title": "Le Gendarme à New-York",
+        "release_date": "1965-01-01",
+        "media_type": "movie",
+    }
+    tmdb_credits = {
+        "cast": [
+            {"name": "Louis de Funès"},
+            {"name": "Michel Galabru"},
+            {"name": "Christian Marin"},
+            {"name": "Guy Grosso"},
+            {"name": "Jean Lefebvre"},
+            {"name": "Maria Gabriella Giorgelli"},
+            {"name": "Claude Gensac"},
+        ],
+        "crew": [{"name": "Jean Girault", "job": "Director"}],
+    }
+
+    ocr_cast = [
+        {"actor_name": "Louis de Funès",             "confidence": 0.9},
+        {"actor_name": "Michel Galabru",              "confidence": 0.9},
+        {"actor_name": "Christian Marin",             "confidence": 0.9},
+        {"actor_name": "Guy Grosso",                  "confidence": 0.9},
+        {"actor_name": "Jean Lefebvre",               "confidence": 0.9},
+        {"actor_name": "Maria Gabriella Giorgelli",   "confidence": 0.9},
+        {"actor_name": "Claude Gensac",               "confidence": 0.9},
+    ]
+
+    cdata = {
+        "film_title": "New York'taki Jandarma",
+        "cast": ocr_cast,
+        "directors": [{"name": "Jean Girault"}],
+    }
+
+    with patch.object(verifier, "_find_tmdb_entry",
+                      return_value=(tmdb_entry, "movie", "cast_only")), \
+         patch.object(verifier, "_fetch_credits",
+                      return_value=tmdb_credits), \
+         patch.object(verifier.client, "get_movie_details",
+                      return_value={"genres": [], "original_title": "Le Gendarme à New-York"}), \
+         patch.object(verifier.client, "get_movie_keywords", return_value=[]), \
+         patch.object(verifier, "_save_cache"), \
+         patch.object(verifier, "_load_cache", return_value=None):
+
+        result = verifier.verify_credits(cdata)
+
+    assert result.rejected is False, (
+        f"Yüksek güven bypass ile rejected=False bekleniyor, aldık: {result.rejected}"
+    )
+    assert result.reverse_breakdown.get("skipped") is True, (
+        f"reverse_breakdown içinde 'skipped': True bekleniyor: {result.reverse_breakdown}"
+    )
+    assert result.reverse_breakdown.get("reason") == "high_confidence_bypass", (
+        f"reverse_breakdown['reason'] == 'high_confidence_bypass' bekleniyor: {result.reverse_breakdown}"
     )
