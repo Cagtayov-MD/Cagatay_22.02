@@ -985,7 +985,8 @@ class PipelineRunner:
         cdata["keywords_source"] = "tmdb_only"
 
         # ── OCR'da var, TMDB'de yok → crew'a merge et ────────────────────────
-        # _verified_crew_roles: {job_key: [{"name": ..., "confidence": ...}, ...]}
+        # _verified_crew_roles: {job_key: ["Name", ...]} veya {job_key: [{"name": ..., "confidence": ...}, ...]}
+        _DEFAULT_OCR_CONFIDENCE = 0.85
         ocr_crew_roles = cdata.get("_verified_crew_roles") or {}
         if ocr_crew_roles:
             tmdb_crew_names = {_norm_name(c["name"]) for c in crew if c.get("name")}
@@ -993,7 +994,14 @@ class PipelineRunner:
                 if not isinstance(persons, list):
                     persons = [persons]
                 for person in persons:
-                    name = (person.get("name") or "").strip()
+                    if isinstance(person, str):
+                        name = person.strip()
+                        confidence = _DEFAULT_OCR_CONFIDENCE
+                    elif isinstance(person, dict):
+                        name = (person.get("name") or "").strip()
+                        confidence = float(person.get("confidence", _DEFAULT_OCR_CONFIDENCE))
+                    else:
+                        continue
                     if not name:
                         continue
                     if _norm_name(name) in tmdb_crew_names:
@@ -1005,7 +1013,7 @@ class PipelineRunner:
                         "role_tr": self._JOB_TR.get(role_key, role_key),
                         "role_category": "crew",
                         "raw": "ocr_verified",
-                        "confidence": float(person.get("confidence", 0.85)),
+                        "confidence": confidence,
                         "frame": "ocr",
                     })
                     tmdb_crew_names.add(_norm_name(name))  # tekrar eklemeyi önle

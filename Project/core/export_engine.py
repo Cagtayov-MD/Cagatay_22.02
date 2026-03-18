@@ -1294,9 +1294,19 @@ class ExportEngine:
 
         original_title = (
             cr.get("tmdb_original_title") or
-            cr.get("original_title") or cr.get("original_name") or
-            cr.get("film_title") or film_name_tr
+            cr.get("original_title") or
+            cr.get("original_name") or
+            ""
         ).strip()
+
+        # Eğer orijinal başlık hâlâ boşsa ve film_title farklıysa → film_title'ı kullan
+        # (film_title ile film_name_tr aynıysa Türkçe demektir, gösterme)
+        if not original_title:
+            ft = (cr.get("film_title") or "").strip()
+            if ft and (not film_name_tr or ft.lower() != film_name_tr.lower()):
+                original_title = ft
+            if not original_title:
+                original_title = "VERİ YOK"
 
         year = str(cr.get("year") or "")
         resolution = fi.get("resolution", "")
