@@ -91,7 +91,7 @@ def test_resolve_xml_sidecar_not_found_logs_warning():
     assert result is None
     assert len(logs) == 1
     assert "⚠️" in logs[0]
-    assert "silinmiş/bulunamadı" in logs[0]
+    assert "silinmiş" in logs[0]
     assert "GÜN_BATISI.xml" in logs[0]
 
 
@@ -156,7 +156,7 @@ def test_parse_xml_sidecar_broken_xml():
 
 
 def test_resolve_xml_sidecar_no_titles_returns_none():
-    """XS-09: XML bulunup başlık bilgisi yoksa None döndürür."""
+    """XS-09: XML bulunup başlık bilgisi yoksa None döndürür ve ✅ loglanmaz."""
     from core.xml_sidecar import resolve_xml_sidecar
 
     logs = []
@@ -170,6 +170,8 @@ def test_resolve_xml_sidecar_no_titles_returns_none():
 
     assert result is None
     assert any("⚠️" in msg and "başlık bilgisi bulunamadı" in msg for msg in logs)
+    # ✅ mesajı yazılmamalı — çelişkili log olmamalı
+    assert not any("✅" in msg for msg in logs)
 
 
 def test_resolve_xml_sidecar_only_original_title():
@@ -189,3 +191,60 @@ def test_resolve_xml_sidecar_only_original_title():
     assert isinstance(result, XmlSidecarInfo)
     assert result.original_title == "THE SUNDOWNERS"
     assert result.turkish_title == ""
+
+
+def test_parse_xml_sidecar_real_format():
+    """XS-11: Gerçek SOURCE_DATA/WIP_METADATA/ASSET yapısından başlık çeker."""
+    from core.xml_sidecar import parse_xml_sidecar
+
+    xml_content = (
+        "<SOURCE_DATA>"
+        "<WIP_METADATA>"
+        "<ASSET>"
+        "<ACLS />"
+        "<OBJECTID>027E18A2-CAB9-01EF-8BDE-001000100100</OBJECTID>"
+        "<MEDIAID>1950-2118-1-0000-90-1</MEDIAID>"
+        "<REPOSITORY>TRT1</REPOSITORY>"
+        "<TITLE>THE SUNDOWNERS</TITLE>"
+        "<TYPE>VIDEO</TYPE>"
+        "</ASSET>"
+        "</WIP_METADATA>"
+        "</SOURCE_DATA>"
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        xml = Path(tmpdir) / "web_client_cag_1950-2118-1-0000-90-1-GÜN_BATISI.xml"
+        xml.write_text(xml_content, encoding="utf-8")
+        info = parse_xml_sidecar(str(xml))
+
+    assert info.original_title == "THE SUNDOWNERS"
+    assert info.mediaid == "1950-2118-1-0000-90-1"
+    assert info.repository == "TRT1"
+
+
+def test_resolve_xml_sidecar_real_format_no_conflicting_log():
+    """XS-12: Gerçek format XML'de başlık bulununca sadece ✅ loglanır, ⚠️ loglanmaz."""
+    from core.xml_sidecar import resolve_xml_sidecar, XmlSidecarInfo
+
+    xml_content = (
+        "<SOURCE_DATA><WIP_METADATA><ASSET>"
+        "<MEDIAID>1950-2118-1-0000-90-1</MEDIAID>"
+        "<REPOSITORY>TRT1</REPOSITORY>"
+        "<TITLE>THE SUNDOWNERS</TITLE>"
+        "</ASSET></WIP_METADATA></SOURCE_DATA>"
+    )
+
+    logs = []
+    with tempfile.TemporaryDirectory() as tmpdir:
+        video = Path(tmpdir) / "web_client_cag_1950-2118-1-0000-90-1-GÜN_BATISI.mp4"
+        xml   = Path(tmpdir) / "web_client_cag_1950-2118-1-0000-90-1-GÜN_BATISI.xml"
+        video.touch()
+        xml.write_text(xml_content, encoding="utf-8")
+
+        result = resolve_xml_sidecar(str(video), log_cb=logs.append)
+
+    assert isinstance(result, XmlSidecarInfo)
+    assert result.original_title == "THE SUNDOWNERS"
+    # Sadece ✅ loglanmalı, ⚠️ olmamalı
+    assert any("✅" in msg for msg in logs)
+    assert not any("⚠️" in msg for msg in logs)
