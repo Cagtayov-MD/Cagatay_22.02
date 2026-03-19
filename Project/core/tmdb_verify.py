@@ -343,11 +343,27 @@ class TMDBVerify:
                 if len(name) >= 3 and name not in director_names:
                     director_names.append(name)
 
-        if not cast_names and not director_names:
+        # Yönetmen dışındaki doğrulanmış crew isimleri (senarist, yapımcı, vb.)
+        crew_names: List[str] = []
+        for row in (cdata.get("crew") or []):
+            if not isinstance(row, dict):
+                continue
+            job = (row.get("job") or row.get("role") or "").lower()
+            # Zaten director_names'e girenleri atla
+            if "yönetmen" in job or "yonetmen" in job or "director" in job:
+                continue
+            name = (row.get("name") or "").strip()
+            if len(name) >= 3 and name not in director_names and name not in cast_names:
+                crew_names.append(name)
+
+        if not cast_names and not director_names and not crew_names:
             return TMDBVerifyResult(False, "no cast or directors to verify")
 
         if not cast_names:
-            self._log(f"  [TMDB] Cast boş ama {len(director_names)} yönetmen var — yönetmenle aramaya devam ediliyor")
+            if director_names or crew_names:
+                self._log(
+                    f"  [TMDB] Cast boş — yönetmen={len(director_names)}, diğer crew={len(crew_names)} kişiyle aranıyor"
+                )
 
         # ── Anomali tespiti: gerçek dışı yüksek cast sayısı ──
         if len(cast_names) > 500:
@@ -400,7 +416,7 @@ class TMDBVerify:
 
         cast_names = qualified_names
 
-        if not cast_names and not director_names:
+        if not cast_names and not director_names and not crew_names:
             return TMDBVerifyResult(False, "no cast or directors to verify")
 
         # ── Orijinal başlık: cdata'dan al (OCR/Gemini tarafından çıkarılmış olabilir) ──
@@ -414,6 +430,7 @@ class TMDBVerify:
         tmdb_entry, kind, matched_via = self._find_tmdb_entry(
             film_title, cast_names, director_names,
             original_title=original_title_input,
+            crew_names=crew_names,
         )
 
         if not tmdb_entry:
@@ -577,7 +594,8 @@ class TMDBVerify:
     def _find_tmdb_entry(self, film_title: str,
                          cast_names: List[str],
                          director_names: List[str] = None,
-                         original_title: str = "") -> tuple:
+                         original_title: str = "",
+                         crew_names: List[str] = None) -> tuple:
         """
         Strateji:
           1. Film adıyla search/multi → top 10 sonucu oyuncularla doğrula
@@ -593,6 +611,7 @@ class TMDBVerify:
              - son doğrulama: TMDB cast + crew isimleri karşılaştırılır
         """
         director_names = director_names or []
+        crew_names = crew_names or []
 
         def _director_matches_crew(credits: dict) -> bool:
             """TMDB crew'unda yönetmen eşleşmesi var mı?"""
@@ -706,8 +725,23 @@ class TMDBVerify:
         cast_names_set = set(cast_names)
         actor_candidates = [n for n in cast_names if not _looks_like_company(n)]
         filtered_directors = [d for d in director_names if d not in cast_names_set][:5]
-        self._log(f"  [TMDB] Aranan kişiler (oyuncu+yönetmen): oyuncu={actor_candidates[:5]}, yönetmen={filtered_directors}")
-        persons_to_search = actor_candidates[:20] + [d for d in director_names if d not in cast_names_set]
+
+        # Yönetmen dışı crew — tekil, şirket olmayan, cast/director'da olmayanlar
+        all_known = cast_names_set | set(director_names)
+        filtered_crew = [
+            n for n in crew_names
+            if n not in all_known and not _looks_like_company(n)
+        ][:10]  # En fazla 10 crew ismi — rate limit bütçesini korumak için
+
+        self._log(
+            f"  [TMDB] Aranan kişiler: oyuncu={actor_candidates[:5]}, "
+            f"yönetmen={filtered_directors}, diğer_crew={filtered_crew[:3]}"
+        )
+        persons_to_search = (
+            actor_candidates[:20]
+            + [d for d in director_names if d not in cast_names_set]
+            + filtered_crew
+        )
 
         for idx, actor in enumerate(persons_to_search):
             # Her 5 kişide bir ek bekleme — rate limit güvenliği

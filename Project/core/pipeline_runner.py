@@ -532,6 +532,40 @@ class PipelineRunner:
                             status="completed")
                 self._log(f"  OK: İsim doğrulama tamamlandı ({verify_elapsed:.1f}s)")
 
+                # ── _verified_crew_roles → cdata["crew"] köprüsü ──────────────────────
+                # NAME_VERIFY stage'i crew isimlerini _verified_crew_roles dict'ine yazar.
+                # Ama cdata["crew"] boşsa (OCR'da crew kredisi bulunamadıysa) TMDB hiçbir
+                # isim görmez. Strateji 2 için _verified_crew_roles'u cdata["crew"]'a
+                # düz liste olarak aktar.
+                _vr = cdata.get("_verified_crew_roles") or {}
+                if _vr and len(cdata.get("crew") or []) <= 2:
+                    _bridge_crew = []
+                    for role_key, persons in _vr.items():
+                        if not isinstance(persons, list):
+                            persons = [persons]
+                        for p in persons:
+                            if isinstance(p, str):
+                                name = p.strip()
+                            elif isinstance(p, dict):
+                                name = (p.get("name") or "").strip()
+                            else:
+                                continue
+                            if name and len(name) >= 3:
+                                _bridge_crew.append({
+                                    "name": name,
+                                    "job": role_key,
+                                    "role": role_key,
+                                    "confidence": float(p.get("confidence", 0.85)) if isinstance(p, dict) else 0.85,
+                                    "raw": "name_verify_bridge",
+                                })
+                    if _bridge_crew:
+                        cdata["crew"] = _bridge_crew
+                        cdata["total_crew"] = len(_bridge_crew)
+                        self._log(
+                            f"  [TMDB Bridge] _verified_crew_roles → cdata['crew'] aktarıldı: "
+                            f"{len(_bridge_crew)} kişi"
+                        )
+
                 # ══ ESKI TMDB FILM ARAMASINI KORU (opsiyonel, eski profiller için) ══
                 tmdb_matched = False
                 tmdb_result = None
