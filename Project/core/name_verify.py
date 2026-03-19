@@ -24,6 +24,33 @@ Kullanım:
 import re
 import unicodedata
 
+try:
+    from rapidfuzz import fuzz as _rf_fuzz, process as _rf_process
+    _HAS_RAPIDFUZZ = True
+except Exception:
+    _HAS_RAPIDFUZZ = False
+
+
+def _norm_name(s: str) -> str:
+    """Karşılaştırma için normalize: küçük harf, sadece alfanumerik."""
+    return "".join(ch for ch in (s or "").lower() if ch.isalnum())
+
+
+def _fuzzy_name_match(query: str, choices: list, threshold: int = 82) -> bool:
+    """İsim fuzzy eşleşmesi — query, choices içinde eşleşiyor mu?"""
+    if not query or not choices:
+        return False
+    qn = _norm_name(query)
+    for c in choices:
+        if _norm_name(c) == qn:
+            return True
+    if _HAS_RAPIDFUZZ:
+        res = _rf_process.extractOne(
+            query, choices, scorer=_rf_fuzz.WRatio, score_cutoff=threshold
+        )
+        return res is not None
+    return False
+
 # ═══════════════════════════════════════════════════════════════════
 # KATMAN 1 — HARD BLACKLIST
 # ═══════════════════════════════════════════════════════════════════
@@ -566,3 +593,195 @@ class NameVerifier:
                   f"çıkarılan: {dropped})")
 
         return verified_cast
+
+    # ─────────────────────────────────────────────────────
+    # VERIFY AS SERIES — Dizi bazlı TMDB doğrulama
+    # ─────────────────────────────────────────────────────
+
+    def verify_as_series(self, title: str, director_names: list) -> dict | None:
+        """Dizi adı + yönetmen kombinasyonu ile TMDB'de doğrulama yapar.
+
+        Tek tek isim aramak yerine dizi adıyla arama yapar ve yönetmen
+        eşleşmesini kontrol eder. Eşleşme bulunursa dizi cast/crew bilgisini döner.
+
+        Args:
+            title: Dizi adı (dosya adından çıkarılmış).
+            director_names: Yönetmen adları listesi (OCR/credits_parse çıktısından).
+
+        Returns:
+            dict with {tmdb_entry, credits, matched_via, tmdb_id, tmdb_title, media_type}
+            veya eşleşme bulunamazsa None.
+        """
+        if not self._tmdb_client or not title:
+            self._log("  [NAME_VERIFY/Dizi] TMDB client yok veya başlık boş — atlanıyor")
+            return None
+
+        self._log(f"\n  ── NAME VERIFY: DİZİ MODU ──")
+        self._log(f"  [NAME_VERIFY/Dizi] Aranan: '{title}' | Yönetmenler: {director_names}")
+
+        try:
+            results = self._tmdb_client.search_multi(title)
+        except Exception as e:
+            self._log(f"  [NAME_VERIFY/Dizi] TMDB arama hatası: {e}")
+            return None
+
+        self._log(f"  [NAME_VERIFY/Dizi] {len(results or [])} TMDB sonucu")
+
+        for r in (results or [])[:10]:
+            if r.get("media_type") != "tv":
+                continue
+
+            tmdb_title = r.get("name") or r.get("title") or "?"
+            tmdb_id = r.get("id")
+
+            try:
+                credits = self._tmdb_client.get_tv_credits(int(tmdb_id))
+            except Exception as e:
+                self._log(f"  [NAME_VERIFY/Dizi] Credits çekme hatası (id:{tmdb_id}): {e}")
+                continue
+
+            if not credits:
+                continue
+
+            tmdb_crew_names = [
+                item.get("name", "") for item in (credits.get("crew") or [])
+                if item.get("name")
+            ]
+
+            # Yönetmen eşleşmesi — hiç yönetmen bilgisi yoksa başlık eşleşmesi yeterli
+            if director_names:
+                director_match = any(
+                    _fuzzy_name_match(d, tmdb_crew_names) for d in director_names if d
+                )
+                if not director_match:
+                    self._log(
+                        f"  [NAME_VERIFY/Dizi] '{tmdb_title}' (id:{tmdb_id}) — yönetmen eşleşmedi"
+                    )
+                    continue
+                self._log(
+                    f"  [NAME_VERIFY/Dizi] '{tmdb_title}' (id:{tmdb_id}) — yönetmen eşleşti ✓"
+                )
+            else:
+                self._log(
+                    f"  [NAME_VERIFY/Dizi] '{tmdb_title}' (id:{tmdb_id}) — yönetmen bilgisi yok, başlık eşleşmesi kabul edildi"
+                )
+
+            self._add_log(
+                "TMDB_SERIES", "DİZİ", title, tmdb_title, "kept", "series_title_director",
+                {"tmdb_id": tmdb_id, "media_type": "tv"},
+            )
+            return {
+                "tmdb_entry": r,
+                "credits": credits,
+                "matched_via": "series_title_director",
+                "tmdb_id": tmdb_id,
+                "tmdb_title": tmdb_title,
+                "media_type": "tv",
+            }
+
+        self._log(f"  [NAME_VERIFY/Dizi] Eşleşme bulunamadı")
+        return None
+
+    # ─────────────────────────────────────────────────────
+    # VERIFY AS FILM — Film bazlı TMDB doğrulama
+    # ─────────────────────────────────────────────────────
+
+    def verify_as_film(self, title: str, director_names: list,
+                       top_actors: list) -> dict | None:
+        """Film adı + yönetmen + 1-2 oyuncu kombinasyonu ile TMDB'de doğrulama yapar.
+
+        Tek tek isim aramak yerine film adıyla arama yapar, ardından yönetmen
+        ve en az 1 oyuncu eşleşmesini kontrol eder.
+
+        Args:
+            title: Film adı (dosya adından çıkarılmış).
+            director_names: Yönetmen adları listesi (OCR/credits_parse çıktısından).
+            top_actors: En yüksek confidence'lı 1-2 oyuncu adı (OCR'dan).
+
+        Returns:
+            dict with {tmdb_entry, credits, matched_via, tmdb_id, tmdb_title, media_type}
+            veya eşleşme bulunamazsa None.
+        """
+        if not self._tmdb_client or not title:
+            self._log("  [NAME_VERIFY/Film] TMDB client yok veya başlık boş — atlanıyor")
+            return None
+
+        self._log(f"\n  ── NAME VERIFY: FİLM MODU ──")
+        self._log(
+            f"  [NAME_VERIFY/Film] Aranan: '{title}' | "
+            f"Yönetmenler: {director_names} | Oyuncular: {top_actors}"
+        )
+
+        try:
+            results = self._tmdb_client.search_multi(title)
+        except Exception as e:
+            self._log(f"  [NAME_VERIFY/Film] TMDB arama hatası: {e}")
+            return None
+
+        self._log(f"  [NAME_VERIFY/Film] {len(results or [])} TMDB sonucu")
+
+        for r in (results or [])[:10]:
+            if r.get("media_type") != "movie":
+                continue
+
+            tmdb_title = r.get("title") or r.get("name") or "?"
+            tmdb_id = r.get("id")
+
+            try:
+                credits = self._tmdb_client.get_movie_credits(int(tmdb_id))
+            except Exception as e:
+                self._log(f"  [NAME_VERIFY/Film] Credits çekme hatası (id:{tmdb_id}): {e}")
+                continue
+
+            if not credits:
+                continue
+
+            tmdb_cast_names = [
+                item.get("name", "") for item in (credits.get("cast") or [])
+                if item.get("name")
+            ]
+            tmdb_crew_names = [
+                item.get("name", "") for item in (credits.get("crew") or [])
+                if item.get("name")
+            ]
+
+            # Yönetmen eşleşmesi
+            director_match = True
+            if director_names:
+                director_match = any(
+                    _fuzzy_name_match(d, tmdb_crew_names) for d in director_names if d
+                )
+
+            # Oyuncu eşleşmesi — top_actors'dan en az 1 eşleşmeli
+            actor_matches = sum(
+                1 for a in top_actors if a and _fuzzy_name_match(a, tmdb_cast_names)
+            )
+
+            if director_match and actor_matches >= 1:
+                self._log(
+                    f"  [NAME_VERIFY/Film] '{tmdb_title}' (id:{tmdb_id}) — "
+                    f"yönetmen ✓ | {actor_matches}/{len(top_actors)} oyuncu eşleşti ✓"
+                )
+                self._add_log(
+                    "TMDB_FILM", "FİLM", title, tmdb_title, "kept",
+                    "film_title_director_cast",
+                    {"tmdb_id": tmdb_id, "media_type": "movie",
+                     "actor_matches": actor_matches},
+                )
+                return {
+                    "tmdb_entry": r,
+                    "credits": credits,
+                    "matched_via": "film_title_director_cast",
+                    "tmdb_id": tmdb_id,
+                    "tmdb_title": tmdb_title,
+                    "media_type": "movie",
+                }
+
+            self._log(
+                f"  [NAME_VERIFY/Film] '{tmdb_title}' (id:{tmdb_id}) — "
+                f"yönetmen={'✓' if director_match else '✗'} | "
+                f"{actor_matches}/{len(top_actors)} oyuncu eşleşti"
+            )
+
+        self._log(f"  [NAME_VERIFY/Film] Eşleşme bulunamadı")
+        return None

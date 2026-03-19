@@ -458,27 +458,20 @@ class PipelineRunner:
                 # Snapshot before filters (DATABASE credits_raw için)
                 cdata_raw = copy.deepcopy(cdata)
 
-                # ── Pre-TMDB: Gemini cast ayıklamasını TMDB'den önce her zaman çalıştır
-                # Dosya adından gelen başlığı anchor olarak koru
+                # ── Dosya adı anchor'ını koru ────────────────────────────────────
+                # Gemini cast ayıklaması artık NAME_VERIFY fallback olarak çalışır.
                 if film_title_from_filename:
                     cdata["film_title"] = film_title_from_filename
-                self._run_gemini_cast_extract(ocr_lines, cdata)
-                # Gemini film_title'ı ezmiş olabilir — dosya adı anchor'ını geri yükle
-                if film_title_from_filename and cdata.get("film_title") != film_title_from_filename:
-                    gemini_title = cdata.get("film_title", "")
-                    cdata["film_title"] = film_title_from_filename
-                    cdata["_gemini_suggested_title"] = gemini_title
-                    self._log(f"  [Anchor] Gemini başlığı '{gemini_title}' → dosya adı anchor'ı korundu: '{film_title_from_filename}'")
 
-                # ══ [6/6] NAME_VERIFY — Katmanlı İsim Doğrulama ══════
-                # TMDB artık kutsal kaynak değil, doğrulama katmanlarından biri.
-                # Film merkezli değil, kişi merkezli doğrulama.
-                # Katmanlar: Blacklist → NameDB → TMDB Person Search
+                # ══ [6/6] NAME_VERIFY — İçerik Tipine Göre Doğrulama ══════
+                # Yeni strateji: tek tek kişi aramak yerine içerik adı + yönetmen/oyuncu
+                # kombinasyonu ile TMDB'de film/dizi eşleşmesi yapılır.
+                # Eşleşme bulunamazsa Gemini 2.5 Flash fallback devreye girer.
                 self._log(f"\n[6/6] NAME_VERIFY")
                 t = time.time()
                 self.stats.start_stage("NAME_VERIFY")
 
-                # TMDB client hazırla (person search için)
+                # TMDB client hazırla
                 _tmdb_client = None
                 _tmdb_enabled = bool((content_profile or {}).get("tmdb_enabled", True))
                 if _tmdb_enabled:
@@ -501,27 +494,118 @@ class PipelineRunner:
                     log_cb=self._log,
                 )
 
-                # ── Yapım Ekibi doğrulama ──
-                from core.export_engine import _map_crew_to_roles, _OUTPUT_ROLES
+                # ── Yönetmen adlarını çıkar ──
                 director_names_raw = []
                 for d in (cdata.get("directors") or []):
                     if isinstance(d, str):
                         director_names_raw.append(d.strip())
                     elif isinstance(d, dict):
                         director_names_raw.append(str(d.get("name", "")).strip())
+                director_names_raw = [n for n in director_names_raw if n]
 
-                crew_roles = _map_crew_to_roles(
-                    cdata.get("technical_crew") or cdata.get("crew") or [],
-                    director_names_raw)
-                crew_roles = verifier.verify_crew(crew_roles)
+                # ── Dosya adından dizi/film ayrımını yap ──
+                # Format: {prefix}_{YYYY}-{XXXX}-{B}-{SSSS}-{XX}-{X}-{BAŞLIK}
+                # B (3. blok) = 0 → dizi, 1 → film
+                # _ID_PATTERN benzeri: 4 rakam - 2-4 rakam - 1+ rakam - 4 rakam
+                _id_match = re.search(r'\d{4}-\d{2,4}-(\d+)-\d{4}', vname)
+                _content_flag = _id_match.group(1) if _id_match else None
+                _is_series = (_content_flag == "0")
+                self._log(
+                    f"  [NAME_VERIFY] İçerik tipi: "
+                    f"{'DİZİ' if _is_series else 'FİLM'} (flag={_content_flag})"
+                )
 
-                # Doğrulanmış crew verisini cdata'ya geri yaz
-                cdata["_verified_crew_roles"] = crew_roles
+                # ── İçerik tipine göre TMDB doğrulama ──
+                _nv_title = film_title_from_filename or cdata.get("film_title", "")
+                nv_match = None
 
-                # ── Oyuncu listesi doğrulama ──
-                if cdata.get("cast"):
-                    cdata["cast"] = verifier.verify_cast(cdata.get("cast", []))
-                    cdata["total_actors"] = len(cdata["cast"])
+                if _is_series:
+                    # Dizi: başlık + yönetmen kombinasyonu
+                    nv_match = verifier.verify_as_series(
+                        title=_nv_title,
+                        director_names=director_names_raw,
+                    )
+                else:
+                    # Film: başlık + yönetmen + 1-2 oyuncu kombinasyonu
+                    _top_actors = []
+                    _cast_sorted = sorted(
+                        [e for e in (cdata.get("cast") or []) if isinstance(e, dict)],
+                        key=lambda x: (float(x["confidence"]) if isinstance(x.get("confidence"), (int, float)) else 0.0),
+                        reverse=True,
+                    )
+                    for _entry in _cast_sorted[:2]:
+                        _aname = (_entry.get("actor_name") or "").strip()
+                        if _aname:
+                            _top_actors.append(_aname)
+                    nv_match = verifier.verify_as_film(
+                        title=_nv_title,
+                        director_names=director_names_raw,
+                        top_actors=_top_actors,
+                    )
+
+                if nv_match:
+                    # ── Eşleşme bulundu: TMDB verisini cdata'ya uygula ──
+                    _nv_credits = nv_match.get("credits", {})
+                    _nv_tmdb_id = nv_match.get("tmdb_id")
+                    _nv_tmdb_title = nv_match.get("tmdb_title", "")
+                    _nv_media_type = nv_match.get("media_type", "")
+                    _nv_matched_via = nv_match.get("matched_via", "")
+
+                    self._log(
+                        f"  [NAME_VERIFY] ✓ Eşleşme: '{_nv_tmdb_title}' "
+                        f"({_nv_media_type}, id:{_nv_tmdb_id}, via:{_nv_matched_via})"
+                    )
+
+                    _tmdb_cast = [
+                        {
+                            "actor_name": item.get("name", ""),
+                            "is_verified_name": True,
+                            "is_tmdb_verified": True,
+                            "confidence": 0.9,
+                        }
+                        for item in (_nv_credits.get("cast") or [])[:50]
+                        if item.get("name")
+                    ]
+                    _tmdb_crew = [
+                        {
+                            "name": item.get("name", ""),
+                            "job": item.get("job", ""),
+                            "role": item.get("job", ""),
+                            "is_verified_name": True,
+                            "is_tmdb_verified": True,
+                        }
+                        for item in (_nv_credits.get("crew") or [])
+                        if item.get("name")
+                    ]
+                    if _tmdb_cast:
+                        cdata["cast"] = _tmdb_cast
+                        cdata["total_actors"] = len(_tmdb_cast)
+                    if _tmdb_crew:
+                        cdata["crew"] = _tmdb_crew
+                        cdata["technical_crew"] = _tmdb_crew
+                        cdata["total_crew"] = len(_tmdb_crew)
+
+                    cdata["name_verify_matched"] = True
+                    cdata["name_verify_method"] = _nv_matched_via
+                    cdata["name_verify_tmdb_id"] = _nv_tmdb_id
+                    cdata["name_verify_tmdb_title"] = _nv_tmdb_title
+                else:
+                    # ── Eşleşme bulunamadı: Gemini 2.5 Flash fallback ──
+                    self._log(
+                        "  [NAME_VERIFY] Eşleşme bulunamadı → "
+                        "Gemini 2.5 Flash fallback devreye giriyor"
+                    )
+                    self._run_gemini_cast_extract(ocr_lines, cdata)
+                    # Gemini film_title'ı ezmiş olabilir — dosya adı anchor'ını geri yükle
+                    if film_title_from_filename and cdata.get("film_title") != film_title_from_filename:
+                        gemini_title = cdata.get("film_title", "")
+                        cdata["film_title"] = film_title_from_filename
+                        cdata["_gemini_suggested_title"] = gemini_title
+                        self._log(
+                            f"  [Anchor] Gemini başlığı '{gemini_title}' → "
+                            f"dosya adı anchor'ı korundu: '{film_title_from_filename}'"
+                        )
+                    cdata["name_verify_matched"] = False
 
                 # ── Verification log kaydet ──
                 cdata["_verification_log"] = verifier.get_log()
