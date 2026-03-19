@@ -19,10 +19,10 @@ class TestQuickMatcherIsFilm(unittest.TestCase):
         from core.quick_match import QuickMatcher
         self.qm = QuickMatcher()
 
-    def test_film_flag_1_returns_true(self):
+    def test_film_third_block_one_returns_true(self):
         assert self.qm._is_film("1955-0019-1-0000-00-1") is True
 
-    def test_series_flag_0_returns_false(self):
+    def test_series_third_block_zero_returns_false(self):
         assert self.qm._is_film("1985-0128-0-0004-00-1") is False
 
     def test_empty_film_id_defaults_to_true(self):
@@ -31,7 +31,7 @@ class TestQuickMatcherIsFilm(unittest.TestCase):
     def test_short_film_id_defaults_to_true(self):
         assert self.qm._is_film("1955") is True
 
-    def test_unknown_flag_returns_true(self):
+    def test_third_block_non_zero_non_one_returns_true(self):
         # 3. blok 0 değilse film sayılır
         assert self.qm._is_film("1955-0019-2-0000-00-1") is True
 
