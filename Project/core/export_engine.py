@@ -1291,6 +1291,8 @@ class ExportEngine:
             },
             "credits": credits_data,
             "film_title": credits_data.get("film_title", ""),
+            "quick_match_method": credits_data.get("quick_match_method", "none"),
+            "quick_match_skipped_name_verify": credits_data.get("quick_match_skipped_name_verify", False),
             "keywords": keywords,
             "logos_detected": logos or [],
             "ocr_results": [

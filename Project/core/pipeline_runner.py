@@ -458,114 +458,185 @@ class PipelineRunner:
                 # Snapshot before filters (DATABASE credits_raw için)
                 cdata_raw = copy.deepcopy(cdata)
 
-                # ── Pre-TMDB: Gemini cast ayıklamasını TMDB'den önce her zaman çalıştır
-                # Dosya adından gelen başlığı anchor olarak koru
-                if film_title_from_filename:
-                    cdata["film_title"] = film_title_from_filename
-                self._run_gemini_cast_extract(ocr_lines, cdata)
-                # Gemini film_title'ı ezmiş olabilir — dosya adı anchor'ını geri yükle
-                if film_title_from_filename and cdata.get("film_title") != film_title_from_filename:
-                    gemini_title = cdata.get("film_title", "")
-                    cdata["film_title"] = film_title_from_filename
-                    cdata["_gemini_suggested_title"] = gemini_title
-                    self._log(f"  [Anchor] Gemini başlığı '{gemini_title}' → dosya adı anchor'ı korundu: '{film_title_from_filename}'")
-
-                # ══ [6/6] NAME_VERIFY — Katmanlı İsim Doğrulama ══════
-                # TMDB artık kutsal kaynak değil, doğrulama katmanlarından biri.
-                # Film merkezli değil, kişi merkezli doğrulama.
-                # Katmanlar: Blacklist → NameDB → TMDB Person Search
-                self._log(f"\n[6/6] NAME_VERIFY")
+                # ══ [5.5/6] QUICK_MATCH ══════════════════════════════
+                self._log(f"\n[5.5/6] QUICK_MATCH")
                 t = time.time()
-                self.stats.start_stage("NAME_VERIFY")
-
-                # TMDB client hazırla (person search için)
-                _tmdb_client = None
-                _tmdb_enabled = bool((content_profile or {}).get("tmdb_enabled", True))
-                if _tmdb_enabled:
-                    try:
-                        from core.tmdb_verify import TMDBClient
-                        _tmdb_api_key = get_tmdb_api_key()
-                        if _tmdb_api_key:
-                            _tmdb_client = TMDBClient(
-                                api_key=_tmdb_api_key,
-                                language="tr-TR",
-                                log_cb=self._log,
-                            )
-                    except Exception as e:
-                        self._log(f"  [TMDB] Client başlatılamadı: {e}")
-
-                # NameVerifier oluştur
-                verifier = NameVerifier(
-                    name_db=self._name_db,
-                    tmdb_client=_tmdb_client,
-                    log_cb=self._log,
-                )
-
-                # ── Yapım Ekibi doğrulama ──
-                from core.export_engine import _map_crew_to_roles, _OUTPUT_ROLES
-                director_names_raw = []
-                for d in (cdata.get("directors") or []):
-                    if isinstance(d, str):
-                        director_names_raw.append(d.strip())
-                    elif isinstance(d, dict):
-                        director_names_raw.append(str(d.get("name", "")).strip())
-
-                crew_roles = _map_crew_to_roles(
-                    cdata.get("technical_crew") or cdata.get("crew") or [],
-                    director_names_raw)
-                crew_roles = verifier.verify_crew(crew_roles)
-
-                # Doğrulanmış crew verisini cdata'ya geri yaz
-                cdata["_verified_crew_roles"] = crew_roles
-
-                # ── Oyuncu listesi doğrulama ──
-                if cdata.get("cast"):
-                    cdata["cast"] = verifier.verify_cast(cdata.get("cast", []))
-                    cdata["total_actors"] = len(cdata["cast"])
-
-                # ── Verification log kaydet ──
-                cdata["_verification_log"] = verifier.get_log()
-                cdata["_verification_log_text"] = verifier.get_log_text()
-
-                verify_elapsed = time.time() - t
-                self._stage("NAME_VERIFY", verify_elapsed,
-                            status="completed")
-                self._log(f"  OK: İsim doğrulama tamamlandı ({verify_elapsed:.1f}s)")
-
-                # ── _verified_crew_roles → cdata["crew"] köprüsü ──────────────────────
-                # NAME_VERIFY stage'i crew isimlerini _verified_crew_roles dict'ine yazar.
-                # Ama cdata["crew"] boşsa (OCR'da crew kredisi bulunamadıysa) TMDB hiçbir
-                # isim görmez. Strateji 2 için _verified_crew_roles'u cdata["crew"]'a
-                # düz liste olarak aktar.
-                _vr = cdata.get("_verified_crew_roles") or {}
-                if _vr and len(cdata.get("crew") or []) <= 2:
-                    _bridge_crew = []
-                    for role_key, persons in _vr.items():
-                        if not isinstance(persons, list):
-                            persons = [persons]
-                        for p in persons:
-                            if isinstance(p, str):
-                                name = p.strip()
-                            elif isinstance(p, dict):
-                                name = (p.get("name") or "").strip()
-                            else:
-                                continue
-                            if name and len(name) >= 3:
-                                _bridge_crew.append({
-                                    "name": name,
-                                    "job": role_key,
-                                    "role": role_key,
-                                    "confidence": float(p.get("confidence", 0.85)) if isinstance(p, dict) else 0.85,
-                                    "raw": "name_verify_bridge",
-                                })
-                    if _bridge_crew:
-                        cdata["crew"] = _bridge_crew
-                        cdata["total_crew"] = len(_bridge_crew)
+                self.stats.start_stage("QUICK_MATCH")
+                _quick_match_matched = False
+                try:
+                    from core.quick_match import QuickMatcher
+                    from core.export_engine import _extract_film_id
+                    _qm_film_id = _extract_film_id(vname)
+                    _qm_tmdb_client = None
+                    _qm_tmdb_enabled = bool((content_profile or {}).get("tmdb_enabled", True))
+                    if _qm_tmdb_enabled:
+                        try:
+                            from core.tmdb_verify import TMDBClient as _TMDBClient
+                            _qm_api_key = (
+                                self.config.get("tmdb_api_key") or
+                                get_tmdb_api_key()
+                            ).strip()
+                            if _qm_api_key:
+                                _qm_tmdb_client = _TMDBClient(
+                                    api_key=_qm_api_key,
+                                    bearer_token=(
+                                        self.config.get("tmdb_bearer_token") or
+                                        os.environ.get("TMDB_BEARER_TOKEN") or ""
+                                    ).strip(),
+                                    language=(
+                                        self.config.get("tmdb_language") or
+                                        os.environ.get("TMDB_LANGUAGE") or
+                                        "tr-TR"
+                                    ).strip(),
+                                    log_cb=self._log,
+                                )
+                        except Exception as _qm_e:
+                            self._log(f"  [QUICK_MATCH] TMDB client başlatılamadı: {_qm_e}")
+                    _qm_gemini_key = get_gemini_api_key() or ""
+                    qm = QuickMatcher(
+                        tmdb_client=_qm_tmdb_client,
+                        gemini_api_key=_qm_gemini_key,
+                        log_cb=self._log,
+                    )
+                    # Dosya adı anchor'ını film_title'a yaz (QUICK_MATCH için)
+                    if film_title_from_filename:
+                        cdata["film_title"] = film_title_from_filename
+                    qm_result = qm.match(cdata, ocr_lines, _qm_film_id)
+                    _quick_match_matched = qm_result["matched"]
+                    self._stage("QUICK_MATCH", time.time() - t,
+                                matched=_quick_match_matched,
+                                method=qm_result["method"])
+                    self._log(
+                        f"  OK: matched={_quick_match_matched} "
+                        f"method={qm_result['method']!r}"
+                    )
+                    if _quick_match_matched:
+                        cdata = qm_result["cdata"]
                         self._log(
-                            f"  [TMDB Bridge] _verified_crew_roles → cdata['crew'] aktarıldı: "
-                            f"{len(_bridge_crew)} kişi"
+                            f"  [QUICK_MATCH] ✓ Eşleşme bulundu → NAME_VERIFY atlanıyor"
                         )
+                    else:
+                        cdata = qm_result["cdata"]
+                except Exception as _qm_exc:
+                    self._stage("QUICK_MATCH", time.time() - t, status="error",
+                                error=str(_qm_exc))
+                    self._log(f"  [QUICK_MATCH] Hata: {_qm_exc}")
 
+                if not _quick_match_matched:
+                    # ── Pre-TMDB: Gemini cast ayıklamasını TMDB'den önce her zaman çalıştır
+                    # Dosya adından gelen başlığı anchor olarak koru
+                    if film_title_from_filename:
+                        cdata["film_title"] = film_title_from_filename
+                    self._run_gemini_cast_extract(ocr_lines, cdata)
+                    # Gemini film_title'ı ezmiş olabilir — dosya adı anchor'ını geri yükle
+                    if film_title_from_filename and cdata.get("film_title") != film_title_from_filename:
+                        gemini_title = cdata.get("film_title", "")
+                        cdata["film_title"] = film_title_from_filename
+                        cdata["_gemini_suggested_title"] = gemini_title
+                        self._log(f"  [Anchor] Gemini başlığı '{gemini_title}' → dosya adı anchor'ı korundu: '{film_title_from_filename}'")
+
+                _tmdb_enabled = bool((content_profile or {}).get("tmdb_enabled", True))
+                if not _quick_match_matched:
+                    # ══ [6/6] NAME_VERIFY — Katmanlı İsim Doğrulama ══════
+                    # TMDB artık kutsal kaynak değil, doğrulama katmanlarından biri.
+                    # Film merkezli değil, kişi merkezli doğrulama.
+                    # Katmanlar: Blacklist → NameDB → TMDB Person Search
+                    self._log(f"\n[6/6] NAME_VERIFY")
+                    t = time.time()
+                    self.stats.start_stage("NAME_VERIFY")
+
+                    # TMDB client hazırla (person search için)
+                    _tmdb_client = None
+                    if _tmdb_enabled:
+                        try:
+                            from core.tmdb_verify import TMDBClient
+                            _tmdb_api_key = get_tmdb_api_key()
+                            if _tmdb_api_key:
+                                _tmdb_client = TMDBClient(
+                                    api_key=_tmdb_api_key,
+                                    language="tr-TR",
+                                    log_cb=self._log,
+                                )
+                        except Exception as e:
+                            self._log(f"  [TMDB] Client başlatılamadı: {e}")
+
+                    # NameVerifier oluştur
+                    verifier = NameVerifier(
+                        name_db=self._name_db,
+                        tmdb_client=_tmdb_client,
+                        log_cb=self._log,
+                    )
+
+                    # ── Yapım Ekibi doğrulama ──
+                    from core.export_engine import _map_crew_to_roles, _OUTPUT_ROLES
+                    director_names_raw = []
+                    for d in (cdata.get("directors") or []):
+                        if isinstance(d, str):
+                            director_names_raw.append(d.strip())
+                        elif isinstance(d, dict):
+                            director_names_raw.append(str(d.get("name", "")).strip())
+
+                    crew_roles = _map_crew_to_roles(
+                        cdata.get("technical_crew") or cdata.get("crew") or [],
+                        director_names_raw)
+                    crew_roles = verifier.verify_crew(crew_roles)
+
+                    # Doğrulanmış crew verisini cdata'ya geri yaz
+                    cdata["_verified_crew_roles"] = crew_roles
+
+                    # ── Oyuncu listesi doğrulama ──
+                    if cdata.get("cast"):
+                        cdata["cast"] = verifier.verify_cast(cdata.get("cast", []))
+                        cdata["total_actors"] = len(cdata["cast"])
+
+                    # ── Verification log kaydet ──
+                    cdata["_verification_log"] = verifier.get_log()
+                    cdata["_verification_log_text"] = verifier.get_log_text()
+
+                    verify_elapsed = time.time() - t
+                    self._stage("NAME_VERIFY", verify_elapsed,
+                                status="completed")
+                    self._log(f"  OK: İsim doğrulama tamamlandı ({verify_elapsed:.1f}s)")
+
+                    # ── _verified_crew_roles → cdata["crew"] köprüsü ──────────────────────
+                    # NAME_VERIFY stage'i crew isimlerini _verified_crew_roles dict'ine yazar.
+                    # Ama cdata["crew"] boşsa (OCR'da crew kredisi bulunamadıysa) TMDB hiçbir
+                    # isim görmez. Strateji 2 için _verified_crew_roles'u cdata["crew"]'a
+                    # düz liste olarak aktar.
+                    _vr = cdata.get("_verified_crew_roles") or {}
+                    if _vr and len(cdata.get("crew") or []) <= 2:
+                        _bridge_crew = []
+                        for role_key, persons in _vr.items():
+                            if not isinstance(persons, list):
+                                persons = [persons]
+                            for p in persons:
+                                if isinstance(p, str):
+                                    name = p.strip()
+                                elif isinstance(p, dict):
+                                    name = (p.get("name") or "").strip()
+                                else:
+                                    continue
+                                if name and len(name) >= 3:
+                                    _bridge_crew.append({
+                                        "name": name,
+                                        "job": role_key,
+                                        "role": role_key,
+                                        "confidence": float(p.get("confidence", 0.85)) if isinstance(p, dict) else 0.85,
+                                        "raw": "name_verify_bridge",
+                                    })
+                        if _bridge_crew:
+                            cdata["crew"] = _bridge_crew
+                            cdata["total_crew"] = len(_bridge_crew)
+                            self._log(
+                                f"  [TMDB Bridge] _verified_crew_roles → cdata['crew'] aktarıldı: "
+                                f"{len(_bridge_crew)} kişi"
+                            )
+
+                else:
+                    # QUICK_MATCH başarılı — NAME_VERIFY atlandı
+                    self._stage("NAME_VERIFY", 0.0, status="skipped",
+                                reason="quick_match_succeeded")
+                    self._log("  [NAME_VERIFY] QUICK_MATCH eşleşme buldu — NAME_VERIFY atlandı")
                 # ══ ESKI TMDB FILM ARAMASINI KORU (opsiyonel, eski profiller için) ══
                 tmdb_matched = False
                 tmdb_result = None
