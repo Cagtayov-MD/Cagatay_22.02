@@ -569,6 +569,25 @@ class PipelineRunner:
                 # ══ ESKI TMDB FILM ARAMASINI KORU (opsiyonel, eski profiller için) ══
                 tmdb_matched = False
                 tmdb_result = None
+
+                # ══ [MATCH_VERIFY] Film/Dizi Akıllı Eşleştirme ══
+                if (content_profile or {}).get("match_parse_enabled", False):
+                    self._log(f"\n[MATCH_VERIFY] Akıllı eşleştirme başlatılıyor...")
+                    try:
+                        from core.match_verify import MatchVerifier
+                        _match_film_id = self._extract_film_id(vname)
+                        matcher = MatchVerifier(
+                            tmdb_client=_tmdb_client,
+                            gemini_api_key=get_gemini_api_key(),
+                            log_cb=self._log,
+                        )
+                        cdata = matcher.verify(cdata, film_id=_match_film_id)
+                        if (cdata.get("_match_verify_result") or {}).get("matched"):
+                            tmdb_matched = True
+                            self._log(f"  [MATCH_VERIFY] Eşleşme başarılı — eski TMDB bloğu atlanıyor")
+                    except Exception as e:
+                        self._log(f"  [MATCH_VERIFY] Hata: {e}")
+
                 if _tmdb_enabled and not (content_profile or {}).get("match_parse_enabled"):
                     if film_title_from_filename:
                         cdata["film_title"] = film_title_from_filename
@@ -1377,6 +1396,19 @@ class PipelineRunner:
                 break
 
         return stem
+
+    @staticmethod
+    def _extract_film_id(stem: str) -> str:
+        """Dosya adından film ID'sini çıkar.
+
+        Desteklenen format: ..._YYYY-NNNN-N-NNNN-NN-N-BAŞLIK
+        Örnek: 'bulent.teymur_1993-0466-1-0000-00-1-GEMMA' → '1993-0466-1-0000-00-1'
+        ID bulunamazsa boş string döndürür.
+        """
+        m = re.search(r'(\d{4}-\d{3,4}-\d-\d{3,4}-\d{2}-\d)', stem)
+        if m:
+            return m.group(1)
+        return ""
 
     @staticmethod
     def _empty_credits_data(film_title: str = "") -> dict:
