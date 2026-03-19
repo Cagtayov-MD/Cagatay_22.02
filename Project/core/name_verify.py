@@ -116,6 +116,57 @@ _CREW_BLACKLIST_EXACT = frozenset({
     "tapsyrysy boiynsha",
     # ── Sıfatlar / kısa bağlaçlar ──
     "re", "cr", "ir", "pa", "or", "and",
+    # ── Fransızca jenerik etiketleri ──
+    "cadreur",
+    "son",
+    "musique de",
+    "musiques additionnelles",
+    "musiques additionelles",  # OCR varyantı
+    "scripte",
+    "seripte",  # OCR varyantı
+    "régie", "regie",
+    "bruitage", "brultage",  # OCR varyantı
+    "mixage", "minage", "mirage",  # OCR varyantları
+    "maquillage",
+    "habilleur", "habllleur",  # OCR varyantı
+    "maintenance",
+    "groupiste",
+    "machinerie",
+    "chauffeurs",
+    "stagiaires", "staniaires",  # OCR varyantı
+    "laboratoire",
+    "repiquage",
+    "génériques", "genériques",  # OCR varyantı
+    "coordination",
+    "avec le concours de",
+    "avec la participation de",
+    "avec", "avee",  # OCR varyantı
+    "nous remercions",
+    "une coproduction",
+    "coproduction",
+    "coopérative",
+    "hotel",
+    "makonee", "makomee",  # lokasyon/otel adı + OCR
+    "assistant à la production",
+    "assistant a la production",
+    "assistant à la produetion",  # OCR varyantı
+    "assistant monteur",
+    "assistant opérateur",
+    "assistant operateur",
+    "assistants au son",
+    "secrétaires de production",
+    "secretaires de production",
+    "directeur de production",
+    "directeur de produetion",  # OCR varyantı
+    "supervision technique",
+    "supervision technlque",  # OCR varyantı
+    "chef électricien", "chef electricien",
+    "chef dlectricien", "chef eleetricien",  # OCR varyantları
+    "régisseur général", "regisseur général",
+    "régísseur général",  # OCR varyantı
+    "production exécutive", "production executive",
+    "produetion exécutive",
+    "assistant réalisateur", "assistant realisateur",
 })
 
 # Blacklist'te kelime içeren ifadeler (contains match)
