@@ -552,6 +552,107 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "monteur": "KURGU", "monteuse": "KURGU",
     "cutter": "KURGU", "schnitt": "KURGU",
     "montaggio": "KURGU", "montage": "KURGU",
+    # ─── YAPIMCI ───────────────────────────────────────────────────────────
+    # Fransızca
+    "producteur délégué": "YAPIMCI", "producteur delegue": "YAPIMCI",
+    "production exécutive": "YAPIMCI", "production executive": "YAPIMCI",
+    "produetion exécutive": "YAPIMCI",  # OCR varyantı
+    "coproduction": "YAPIMCI", "une coproduction": "YAPIMCI",
+    # İspanyolca
+    "producción": "YAPIMCI", "produccion": "YAPIMCI",
+    "productora": "YAPIMCI",
+    # Almanca
+    "hergestellt von": "YAPIMCI", "hersteller": "YAPIMCI",
+    # Arapça (Latin transkripsiyon)
+    "muntij": "YAPIMCI", "muntig": "YAPIMCI",
+    # Hintçe (transkripsiyon)
+    "nirmaata": "YAPIMCI", "nirmata": "YAPIMCI",
+    # ─── YÖNETMEN ──────────────────────────────────────────────────────────
+    # Fransızca
+    "realisation": "YÖNETMEN",
+    "reallsation": "YÖNETMEN",  # OCR varyantı
+    "réalisé par": "YÖNETMEN", "realise par": "YÖNETMEN",
+    "un film de": "YÖNETMEN",
+    # İspanyolca
+    "dirección": "YÖNETMEN", "direccion": "YÖNETMEN",
+    "director de": "YÖNETMEN",
+    # Almanca
+    "regie führte": "YÖNETMEN",
+    # Arapça transkripsiyon
+    "ikhraa": "YÖNETMEN", "iqraj": "YÖNETMEN",
+    # Hintçe transkripsiyon
+    "nirdeshak": "YÖNETMEN", "nirdeshika": "YÖNETMEN",
+    # ─── YÖNETMEN YARDIMCISI ──────────────────────────────────────────────
+    # Fransızca
+    "assistant réalisateur": "YÖNETMEN YARDIMCISI",
+    "assistant realisateur": "YÖNETMEN YARDIMCISI",
+    "assistante réalisatrice": "YÖNETMEN YARDIMCISI",
+    "2eme assistant réalisateur": "YÖNETMEN YARDIMCISI",
+    "2eme assistant realisateur": "YÖNETMEN YARDIMCISI",
+    "22me assistant realisateur": "YÖNETMEN YARDIMCISI",  # OCR varyantı
+    "2ème assistant réalisateur": "YÖNETMEN YARDIMCISI",
+    # İspanyolca
+    "ayudante de dirección": "YÖNETMEN YARDIMCISI",
+    "asistente de dirección": "YÖNETMEN YARDIMCISI",
+    # Almanca
+    "regieassistenz": "YÖNETMEN YARDIMCISI",
+    # Arapça transkripsiyon
+    "musaid al mukhraj": "YÖNETMEN YARDIMCISI",
+    # Hintçe transkripsiyon
+    "sahayak nirdeshak": "YÖNETMEN YARDIMCISI",
+    # ─── GÖRÜNTÜ YÖNETMENİ ────────────────────────────────────────────────
+    # Fransızca
+    "chef opérateur": "GÖRÜNTÜ YÖNETMENİ",
+    "chef operateur": "GÖRÜNTÜ YÖNETMENİ",
+    # İspanyolca
+    "director de fotografía": "GÖRÜNTÜ YÖNETMENİ",
+    "director de fotografia": "GÖRÜNTÜ YÖNETMENİ",
+    # Almanca
+    "kameraführung": "GÖRÜNTÜ YÖNETMENİ",
+    "bildgestaltung": "GÖRÜNTÜ YÖNETMENİ",
+    # Arapça transkripsiyon
+    "mudeer taswiir": "GÖRÜNTÜ YÖNETMENİ",
+    # Hintçe transkripsiyon
+    "chitragrahi": "GÖRÜNTÜ YÖNETMENİ",
+    # ─── SENARYO ──────────────────────────────────────────────────────────
+    # Fransızca
+    "scénario": "SENARYO", "scenario": "SENARYO",
+    "adaptation et dialogues de": "SENARYO",
+    "adaptation": "SENARYO",
+    "d'après son roman": "SENARYO",
+    # İspanyolca
+    "guión": "SENARYO", "guion": "SENARYO",
+    # Almanca
+    "drehbuch von": "SENARYO",
+    # Arapça transkripsiyon
+    "sinaryu": "SENARYO", "nass": "SENARYO",
+    # Hintçe transkripsiyon
+    "patakatha": "SENARYO", "patkatha": "SENARYO",
+    # ─── KAMERA ───────────────────────────────────────────────────────────
+    # Fransızca
+    "cadreur": "KAMERA",
+    "opérateur de prise de vue": "KAMERA",
+    "operateur de prise de vue": "KAMERA",
+    # İspanyolca
+    "operador de cámara": "KAMERA", "operador de camara": "KAMERA",
+    # Almanca
+    "kameraoperateur": "KAMERA", "kamerabedienung": "KAMERA",
+    # Arapça transkripsiyon
+    "musawwir": "KAMERA",
+    # Hintçe transkripsiyon
+    "kaimraaman": "KAMERA", "kamraman": "KAMERA",
+    # ─── KURGU ────────────────────────────────────────────────────────────
+    # Fransızca
+    "assistant monteur": "KURGU",
+    # İspanyolca
+    "montaje": "KURGU", "edición": "KURGU",
+    "editor de montaje": "KURGU",
+    # Almanca
+    "schnittführung": "KURGU",
+    # Arapça transkripsiyon
+    "montaaj": "KURGU",
+    # Hintçe transkripsiyon
+    "sampadak": "KURGU", "sampadan": "KURGU",
 }
 
 

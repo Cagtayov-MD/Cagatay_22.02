@@ -33,6 +33,19 @@ def _norm(s: str) -> str:
     return "".join(ch for ch in (s or "").lower() if ch.isalnum())
 
 
+def parse_imdb_characters(characters_raw: str | None) -> list[str]:
+    """IMDB characters alanını parse et: '["Malo"]' → ['Malo']"""
+    if not characters_raw:
+        return []
+    try:
+        parsed = json.loads(characters_raw)
+        if isinstance(parsed, list):
+            return [str(c) for c in parsed]
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return [characters_raw]
+
+
 _TURKISH_CHARS = frozenset("çşğıöüÇŞĞİÖÜ")
 
 
@@ -225,6 +238,15 @@ class TMDBClient:
             f"{self.BASE}/search/person",
             self._params({"query": query}),
         ).get("results") or []
+
+    def find_by_imdb_id(self, imdb_id: str) -> Optional[Dict[str, Any]]:
+        """IMDB tconst → TMDB eşleştirmesi. /find/{imdb_id} endpoint'i kullanır."""
+        data = self._request(
+            f"{self.BASE}/find/{imdb_id}",
+            self._params({"external_source": "imdb_id"}),
+        )
+        results = data.get("movie_results") or data.get("tv_results") or []
+        return results[0] if results else None
 
     def get_tv_details(self, tv_id: int) -> Dict[str, Any]:
         return self._request(
