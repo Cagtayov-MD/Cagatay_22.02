@@ -624,6 +624,34 @@ class TurkishNameDB:
             return result[0], round(result[1] / 100.0, 3)
         return None, 0.0
 
+    def _fuzzy_find_top2(
+        self, text: str, threshold: int = 0
+    ) -> list[tuple[str, float]]:
+        """RapidFuzz ile en yakın 2 canonical ismi döndür.
+
+        _fuzzy_find()'ın imzasını/kontratını değiştirmeden üst-2 aday
+        almanın ayrı yolu. Mevcut çağrı noktaları etkilenmez.
+
+        Args:
+            text: OCR metni
+            threshold: Minimum skor (0–100 arası); 0 = kısıtsız
+
+        Returns:
+            En fazla 2 elemanlı liste: [(canonical_name, score_0_to_1), ...]
+            RapidFuzz yoksa veya aday bulunamazsa boş liste.
+        """
+        if not HAS_RAPIDFUZZ:
+            return []
+        if not self._all_names:
+            return []
+        results = rf_process.extract(
+            text, self._all_names,
+            scorer=fuzz.WRatio,
+            score_cutoff=threshold,
+            limit=2,
+        )
+        return [(r[0], round(r[1] / 100.0, 3)) for r in results]
+
     def correct_line(self, line: str) -> str:
         """
         Tek OCR satırını düzelt.
