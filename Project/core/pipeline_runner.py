@@ -208,7 +208,7 @@ class PipelineRunner:
                 "compute_type", "beam_size", "ocr_engine",
                 "tmdb_enabled", "tmdb_person_verify",
                 "gemini_enabled", "llm_cast_filter", "blok2_enabled",
-                "qwen_fallback_on_handwriting",
+                "qwen_fallback_on_handwriting", "imdb_enabled",
             )
             for _pk in _profile_merge_keys:
                 if _pk in content_profile:
@@ -356,6 +356,7 @@ class PipelineRunner:
             cdata = self._empty_credits_data(film_title_from_filename)
             cdata_raw = None
             tmdb_result = None
+            imdb_result = None
 
             # Profil bazlı OCR kontrolü
             ocr_enabled = bool(content_profile.get("ocr_enabled", True)) if content_profile else True
@@ -650,10 +651,40 @@ class PipelineRunner:
                             f"{len(_bridge_crew)} kişi"
                         )
 
+                # ══ IMDb DuckDB DOĞRULAMA (TMDB'den önce) ══
+                imdb_matched = False
+                _imdb_enabled = bool((content_profile or {}).get("imdb_enabled", True))
+                if _imdb_enabled:
+                    try:
+                        from core.imdb_lookup import IMDBLookup
+                        _imdb_lookup = IMDBLookup(log_cb=self._log)
+                        if _imdb_lookup.enabled():
+                            self._log("  [IMDb] DuckDB doğrulama başlatılıyor...")
+                            imdb_result = _imdb_lookup.lookup(cdata)
+                            if imdb_result and imdb_result.matched:
+                                self._log(
+                                    f"  [IMDb] ✓ Eşleşme: '{imdb_result.title}' "
+                                    f"({imdb_result.title_type}, tconst:{imdb_result.tconst}, "
+                                    f"via:{imdb_result.matched_via})"
+                                )
+                                imdb_matched = True
+                                cdata = self._apply_imdb_credits(cdata, imdb_result)
+                                self._log(
+                                    f"  [IMDb] LOCK aktif — "
+                                    f"cast:{cdata['total_actors']} crew:{cdata['total_crew']}"
+                                )
+                            else:
+                                reason = imdb_result.reason if imdb_result else "lookup failed"
+                                self._log(f"  [IMDb] Eşleşme bulunamadı ({reason}) → TMDB'ye geçiliyor")
+                        else:
+                            self._log("  [IMDb] DuckDB mevcut değil — atlanıyor")
+                    except Exception as e:
+                        self._log(f"  [IMDb] Hata: {e} — TMDB'ye geçiliyor")
+
                 # ══ ESKI TMDB FILM ARAMASINI KORU (opsiyonel, eski profiller için) ══
                 tmdb_matched = False
                 tmdb_result = None
-                if _tmdb_enabled and not (content_profile or {}).get("match_parse_enabled"):
+                if _tmdb_enabled and not imdb_matched and not (content_profile or {}).get("match_parse_enabled"):
                     if film_title_from_filename:
                         cdata["film_title"] = film_title_from_filename
                     # XML sidecar'dan gelen orijinal başlığı cdata'ya ekle (TMDB Strategy 1b için)
@@ -728,10 +759,10 @@ class PipelineRunner:
                     except Exception as e:
                         self._log(f"  [TMDB Film] Hata: {e}")
 
-                # ══ BLOK2: TMDB eşleşmedi → VLM ile derin okuma ══
-                if not tmdb_matched:
+                # ══ BLOK2: TMDB/IMDb eşleşmedi → VLM ile derin okuma ══
+                if not tmdb_matched and not imdb_matched:
                     if self._blok2_enabled and self._vlm_reader.enabled and self._vlm_reader.is_available():
-                        self._log("\n[BLOK2] TMDB eşleşmedi — VLM ile derin okuma başlatılıyor...")
+                        self._log("\n[BLOK2] TMDB/IMDb eşleşmedi — VLM ile derin okuma başlatılıyor...")
                         vlm_t = time.time()
                         vlm_ocr_lines = []
                         for frame_info in candidates:
@@ -759,16 +790,16 @@ class PipelineRunner:
                                 f"toplam: {len(ocr_lines)} satır ({time.time()-vlm_t:.1f}s)"
                             )
                     else:
-                        if not tmdb_matched:
+                        if not tmdb_matched and not imdb_matched:
                             self._log("  [BLOK2] Pasif — config'de blok2_enabled=false")
                             if not cdata.get("gemini_extracted"):
                                 self._run_gemini_cast_extract(ocr_lines, cdata)
 
                 # ══ [LLM] LLM_CAST_FILTER (opsiyonel) ════════════════
-                # Sadece TMDB eşleşmezse LLM devreye girsin
-                if not tmdb_matched:
+                # Sadece TMDB/IMDb eşleşmezse LLM devreye girsin
+                if not tmdb_matched and not imdb_matched:
                     if self._llm_filter_enabled:
-                        self._log(f"\n[LLM] Cast Filtreleme (TMDB eşleşmedi)")
+                        self._log(f"\n[LLM] Cast Filtreleme (TMDB/IMDb eşleşmedi)")
                         t = time.time()
                         import core.llm_provider as _llm_prov
                         _active_provider = _llm_prov.get_provider()
@@ -789,12 +820,12 @@ class PipelineRunner:
                         if llm_elapsed > 0.1:
                             self._log(f"  [LLM] Cast filtreleme: {llm_elapsed:.1f}s")
                 else:
-                    self._log(f"\n[LLM] TMDB eşleşti — LLM filtresi atlanıyor")
+                    self._log(f"\n[LLM] IMDb/TMDB eşleşti — LLM filtresi atlanıyor")
 
                 # ══ [GOOGLE_VI] Akıllı tetik ════════════════════════════
-                # TMDB miss + düşük çözünürlük veya non-standard font ise Google VI çağır
+                # TMDB/IMDb miss + düşük çözünürlük veya non-standard font ise Google VI çağır
                 vi_decision = self._decide_google_vi(
-                    tmdb_matched=tmdb_matched,
+                    tmdb_matched=(tmdb_matched or imdb_matched),
                     resolution=info.get("resolution", ""),
                     ocr_lines=ocr_lines,
                     segment_duration_min=(first_min + last_min),
@@ -972,6 +1003,7 @@ class PipelineRunner:
                 "credits":           cdata,
                 "ocr_lines":         len(ocr_lines),
                 "tmdb_result":       tmdb_result,
+                "imdb_result":       imdb_result,
                 "audio_result":      audio_result,
                 "xml_sidecar":       xml_sidecar_dict,
             }
@@ -1215,6 +1247,131 @@ class PipelineRunner:
             if (c.get("job") or "").lower() in ("director", "yönetmen", "yonetmen")
         ])
         cdata["_tmdb_keywords"] = [k for k in tmdb_keywords if k]
+
+        return cdata
+
+    def _apply_imdb_credits(self, cdata: dict, imdb_result) -> dict:
+        """IMDb doğrulama başarılıysa rapor içeriğini IMDb kanonik verisiyle doldur."""
+        import re as _re
+        import unicodedata as _unicodedata
+
+        def _norm_name(s: str) -> str:
+            nfkd = _unicodedata.normalize("NFKD", s)
+            ascii_ = nfkd.encode("ascii", "ignore").decode("ascii")
+            return _re.sub(r"[^a-z0-9]", "", ascii_.lower())
+
+        # cast listesi: imdb_result.cast → cdata["cast"]
+        cast = []
+        for item in (imdb_result.cast or []):
+            name = (item.get("actor_name") or item.get("name") or "").strip()
+            if not name:
+                continue
+            cast.append({
+                "actor_name": name,
+                "character_name": (item.get("character_name") or "").strip(),
+                "role": "Cast",
+                "role_category": "cast",
+                "raw": "imdb",
+                "confidence": float(item.get("confidence", 1.0)),
+                "frame": "imdb",
+                "is_verified_name": True,
+                "is_imdb_verified": True,
+            })
+
+        # crew listesi: imdb_result.crew → cdata["crew"], cdata["technical_crew"]
+        crew = []
+        for item in (imdb_result.crew or []):
+            name = (item.get("name") or "").strip()
+            if not name:
+                continue
+            job = (item.get("job") or item.get("role") or "").strip()
+            crew.append({
+                "name": name,
+                "job": job,
+                "role": job or "Crew",
+                "role_tr": self._JOB_TR.get(job, job),
+                "role_category": "crew",
+                "raw": "imdb",
+                "confidence": float(item.get("confidence", 1.0)),
+                "frame": "imdb",
+                "is_imdb_verified": True,
+            })
+
+        # directors: imdb_result.directors → cdata["directors"]
+        directors = list(imdb_result.directors or [])
+
+        cdata["cast"] = cast
+        cdata["crew"] = crew
+        cdata["technical_crew"] = crew
+        cdata["directors"] = directors
+        cdata["total_actors"] = len(cast)
+        cdata["total_crew"] = len(crew)
+        cdata["verification_status"] = "imdb_verified"
+        cdata["keywords_source"] = "imdb_only"
+
+        # ── OCR'da var, IMDb'de yok → crew'a merge et ────────────────────────
+        _DEFAULT_OCR_CONFIDENCE = 0.85
+        ocr_crew_roles = cdata.get("_verified_crew_roles") or {}
+        if ocr_crew_roles:
+            imdb_crew_names = {_norm_name(c["name"]) for c in crew if c.get("name")}
+            for role_key, persons in ocr_crew_roles.items():
+                if not isinstance(persons, list):
+                    persons = [persons]
+                for person in persons:
+                    if isinstance(person, str):
+                        name = person.strip()
+                        confidence = _DEFAULT_OCR_CONFIDENCE
+                    elif isinstance(person, dict):
+                        name = (person.get("name") or "").strip()
+                        confidence = float(person.get("confidence", _DEFAULT_OCR_CONFIDENCE))
+                    else:
+                        continue
+                    if not name:
+                        continue
+                    if _norm_name(name) in imdb_crew_names:
+                        continue  # Zaten IMDb'de var
+                    crew.append({
+                        "name": name,
+                        "job": role_key,
+                        "role": role_key,
+                        "role_tr": self._JOB_TR.get(role_key, role_key),
+                        "role_category": "crew",
+                        "raw": "ocr_verified",
+                        "confidence": confidence,
+                        "frame": "ocr",
+                    })
+                    imdb_crew_names.add(_norm_name(name))
+            # merge sonrası toplamları güncelle
+            cdata["crew"] = crew
+            cdata["technical_crew"] = crew
+            cdata["total_crew"] = len(crew)
+
+        # IMDb lock aktif — NAME_VERIFY'dan kalan _verified_crew_roles geçersiz
+        cdata.pop("_verified_crew_roles", None)
+        cdata.pop("_verification_log_text", None)
+        cdata.pop("_verification_log", None)
+
+        # film_title: imdb_result.title → cdata["film_title"] (ocr_title'ı sakla)
+        if imdb_result.title:
+            _current_film_title = (cdata.get("film_title") or "").strip()
+            if _current_film_title and _current_film_title != imdb_result.title:
+                if not cdata.get("ocr_title"):
+                    cdata["ocr_title"] = _current_film_title
+            cdata["film_title"] = imdb_result.title
+
+        # year: imdb_result.year → cdata["year"]
+        if imdb_result.year:
+            cdata["year"] = imdb_result.year
+
+        # _tmdb_keywords: [imdb_result.title] + director isimleri
+        imdb_keywords = []
+        if imdb_result.title:
+            imdb_keywords.append(imdb_result.title)
+        for d in (imdb_result.directors or []):
+            name = (d.get("name") or "").strip() if isinstance(d, dict) else str(d).strip()
+            if name:
+                imdb_keywords.append(name)
+        cdata["_tmdb_keywords"] = [k for k in imdb_keywords if k]
 
         return cdata
 
