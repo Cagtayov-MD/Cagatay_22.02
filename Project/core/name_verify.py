@@ -167,6 +167,10 @@ _CREW_BLACKLIST_EXACT = frozenset({
     "production exécutive", "production executive",
     "produetion exécutive",
     "assistant réalisateur", "assistant realisateur",
+    # ── Ülke / şehir / marka adları (kişi ismi değil) ──
+    "france", "cameroun", "cameroon",
+    "fodic",        # Fonds pour le Développement de l'Industrie Cinématographique
+    "presentent", "présentent",  # "présente/présentent" = firma tanıtım ifadesi
 })
 
 # Blacklist'te kelime içeren ifadeler (contains match)
@@ -179,6 +183,19 @@ _CREW_BLACKLIST_CONTAINS = frozenset({
     "filmed at", "filmed in",
     "panavision", "in hollywood",
     "bolum",  # bölüm bilgisi
+    # ── Fransız/Kamerun kurum ve mekan kalıpları ──
+    "ministere", "ministère",         # bakanlık adları
+    "ecole", "école",                 # okul adları
+    "universite", "université",       # üniversite adları
+    "eleves", "élèves",               # "öğrenciler" kalıbı
+    "publique",                       # "LES ELEVES DE L'ECOLE PUBLIQUE..." kalıbı
+    "cooperative", "coopérative",     # kooperatif adları
+    "federation", "fédération",       # federasyon adları
+    "association",                    # dernek adları
+    "avec le concours",               # "with the support of" kalıbı
+    "avec la participation",          # "with the participation of" kalıbı
+    "une production",                 # şirket adı kalıbı
+    "les films",                      # yapım şirketi kalıbı (Les Films Terre Africaine vb.)
 })
 
 # Regex ile yakalanacak kalıplar

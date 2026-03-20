@@ -656,6 +656,68 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
 }
 
 
+# Kurum/mekan/ülke kalıpları — kişi ismi olmaması gereken tokenlar
+_INSTITUTION_TOKENS = frozenset({
+    "hotel", "france", "cameroun", "cameroon", "ministere", "ministère",
+    "ecole", "école", "universite", "université", "hospital", "theatre",
+    "theater", "cinema", "studio", "studios", "production", "productions",
+    "films", "pictures", "entertainment", "international", "national",
+    "association", "federation", "fédération", "cooperative", "coopérative",
+    "institute", "institut", "foundation", "fondation", "centre", "center",
+    "republique", "république", "gouvernement", "government", "ministery",
+    "ministry", "eleves", "élèves", "publique", "public", "lebamzip",
+})
+
+
+def _is_role_or_institution(text: str) -> bool:
+    """Metnin bir rol başlığı veya kurum/mekan adı olduğunu tespit et.
+
+    Kişi ismi olmayan girişleri crew listesinden filtreler.
+    Üç kontrol yapar:
+    1. _ROLE_TO_OUTPUT sözlüğünde tam eşleşme → rol başlığı
+    2. Bilinen kurum/mekan/ülke tokenları içeriyor → isim değil
+    3. Tek kelime + bilinen kısa Fransızca/İngilizce rol terimi → rol başlığı
+
+    Args:
+        text: Kontrol edilecek metin (kişi ismi veya rol başlığı olabilir)
+
+    Returns:
+        True → bu metin bir rol başlığı veya kurum adıdır (isim olarak eklenmemeli)
+        False → kişi ismi olabilir
+    """
+    if not text:
+        return False
+    low = text.strip().lower()
+
+    # 1. _ROLE_TO_OUTPUT'da tam eşleşme → rol başlığı
+    if low in _ROLE_TO_OUTPUT:
+        return True
+
+    # 2. Bilinen kurum/mekan tokenı içeriyor mu?
+    for token in _INSTITUTION_TOKENS:
+        if token in low:
+            return True
+
+    # 3. Tek kelime + bilinen kısa Fransızca/İngilizce rol terimi
+    words = low.split()
+    if len(words) == 1:
+        _SHORT_ROLE_TOKENS = frozenset({
+            "son", "montage", "decors", "décors", "scripte", "regie", "régie",
+            "musique", "bruitage", "mixage", "éclairage", "eclairage",
+            "cadreur", "coiffure", "maquillage", "costumes", "groupiste",
+            "machinerie", "chauffeurs", "stagiaires", "laboratoire",
+            "génériques", "genériques", "coordination", "maintenance",
+        })
+        if low in _SHORT_ROLE_TOKENS:
+            return True
+
+    return False
+
+
+# Geriye dönük uyumluluk için alias
+_is_role_title_not_name = _is_role_or_institution
+
+
 def _map_crew_to_roles(crew_data: list, directors: list) -> dict[str, list[str]]:
     """Crew verilerini 7 çıktı rolüne dönüştür.
 
@@ -678,6 +740,11 @@ def _map_crew_to_roles(crew_data: list, directors: list) -> dict[str, list[str]]
         name = (entry.get("name") or "").strip()
         if not name:
             continue
+
+        # Kişi ismi yerine rol başlığı veya kurum adı gelmiş olabilir → filtrele
+        if _is_role_or_institution(name):
+            continue
+
         role_raw = (
             entry.get("role_tr") or entry.get("role") or entry.get("job") or ""
         ).strip()

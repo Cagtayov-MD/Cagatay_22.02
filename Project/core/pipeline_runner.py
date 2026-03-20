@@ -591,22 +591,117 @@ class PipelineRunner:
                     cdata["name_verify_tmdb_id"] = _nv_tmdb_id
                     cdata["name_verify_tmdb_title"] = _nv_tmdb_title
                 else:
-                    # ── Eşleşme bulunamadı: Gemini 2.5 Flash fallback ──
+                    # ── Eşleşme bulunamadı: Gemini Crew Anchor → yeniden TMDB denemesi ──
                     self._log(
                         "  [NAME_VERIFY] Eşleşme bulunamadı → "
-                        "Gemini 2.5 Flash fallback devreye giriyor"
+                        "Gemini Crew Anchor ile metadata ankrajı deneniyor"
                     )
-                    self._run_gemini_cast_extract(ocr_lines, cdata)
-                    # Gemini film_title'ı ezmiş olabilir — dosya adı anchor'ını geri yükle
-                    if film_title_from_filename and cdata.get("film_title") != film_title_from_filename:
-                        gemini_title = cdata.get("film_title", "")
-                        cdata["film_title"] = film_title_from_filename
-                        cdata["_gemini_suggested_title"] = gemini_title
-                        self._log(
-                            f"  [Anchor] Gemini başlığı '{gemini_title}' → "
-                            f"dosya adı anchor'ı korundu: '{film_title_from_filename}'"
+                    _anchor_result = self._run_gemini_crew_anchor(ocr_lines, cdata,
+                                                                   film_title_from_filename or "")
+                    if _anchor_result:
+                        # Anchor'dan gelen yönetmen/oyuncu bilgisiyle TMDB'yi yeniden dene
+                        _anchor_directors = _anchor_result.get("directors") or []
+                        _anchor_actors = _anchor_result.get("actors") or []
+                        _anchor_title = (
+                            film_title_from_filename  # Dosya adı her zaman öncelikli
+                            or _anchor_result.get("film_title")
+                            or _nv_title
                         )
-                    cdata["name_verify_matched"] = False
+
+                        self._log(
+                            f"  [GeminiAnchor] Yeniden TMDB denemesi: "
+                            f"başlık='{_anchor_title}' "
+                            f"yönetmen={_anchor_directors} "
+                            f"oyuncu={_anchor_actors[:2]}"
+                        )
+
+                        # Anchor bilgisiyle ikinci TMDB denemesi
+                        _anchor_match = None
+                        if _is_series:
+                            _anchor_match = verifier.verify_as_series(
+                                title=_anchor_title,
+                                director_names=_anchor_directors,
+                            )
+                        else:
+                            _anchor_match = verifier.verify_as_film(
+                                title=_anchor_title,
+                                director_names=_anchor_directors,
+                                top_actors=_anchor_actors[:2],
+                            )
+
+                        if _anchor_match:
+                            # Anchor + TMDB eşleşmesi başarılı
+                            _nv_credits = _anchor_match.get("credits", {})
+                            _nv_tmdb_id = _anchor_match.get("tmdb_id")
+                            _nv_tmdb_title = _anchor_match.get("tmdb_title", "")
+                            _nv_media_type = _anchor_match.get("media_type", "")
+                            _nv_matched_via = _anchor_match.get("matched_via", "")
+
+                            self._log(
+                                f"  [GeminiAnchor] ✓ TMDB eşleşmesi: '{_nv_tmdb_title}' "
+                                f"({_nv_media_type}, id:{_nv_tmdb_id}, via:{_nv_matched_via})"
+                            )
+
+                            _tmdb_cast = [
+                                {
+                                    "actor_name": item.get("name", ""),
+                                    "is_verified_name": True,
+                                    "is_tmdb_verified": True,
+                                    "confidence": 0.9,
+                                }
+                                for item in (_nv_credits.get("cast") or [])[:50]
+                                if item.get("name")
+                            ]
+                            _tmdb_crew = [
+                                {
+                                    "name": item.get("name", ""),
+                                    "job": item.get("job", ""),
+                                    "role": item.get("job", ""),
+                                    "is_verified_name": True,
+                                    "is_tmdb_verified": True,
+                                }
+                                for item in (_nv_credits.get("crew") or [])
+                                if item.get("name")
+                            ]
+                            if _tmdb_cast:
+                                cdata["cast"] = _tmdb_cast
+                                cdata["total_actors"] = len(_tmdb_cast)
+                            if _tmdb_crew:
+                                cdata["crew"] = _tmdb_crew
+                                cdata["technical_crew"] = _tmdb_crew
+                                cdata["total_crew"] = len(_tmdb_crew)
+
+                            cdata["name_verify_matched"] = True
+                            cdata["name_verify_method"] = f"anchor_{_nv_matched_via}"
+                            cdata["name_verify_tmdb_id"] = _nv_tmdb_id
+                            cdata["name_verify_tmdb_title"] = _nv_tmdb_title
+                        else:
+                            # Anchor ile de TMDB eşleşmedi — Gemini cast extract'a düş
+                            self._log(
+                                "  [GeminiAnchor] TMDB yeniden denemesi de başarısız → "
+                                "Gemini 2.5 Flash cast extract devreye giriyor"
+                            )
+                            # Anchor'dan gelen veriyi cdata'ya uygula (partial update)
+                            self._apply_anchor_to_cdata(cdata, _anchor_result,
+                                                         film_title_from_filename)
+                            cdata["name_verify_matched"] = False
+                    else:
+                        # Anchor da başarısız → doğrudan Gemini cast extract
+                        self._log(
+                            "  [NAME_VERIFY] Anchor başarısız → "
+                            "Gemini 2.5 Flash cast extract devreye giriyor"
+                        )
+                        self._run_gemini_cast_extract(ocr_lines, cdata)
+                        # Gemini film_title'ı ezmiş olabilir — dosya adı anchor'ını geri yükle
+                        if film_title_from_filename and cdata.get("film_title") != film_title_from_filename:
+                            gemini_title = cdata.get("film_title", "")
+                            cdata["film_title"] = film_title_from_filename
+                            cdata["_gemini_suggested_title"] = gemini_title
+                            self._log(
+                                f"  [Anchor] Gemini başlığı '{gemini_title}' → "
+                                f"dosya adı anchor'ı korundu: '{film_title_from_filename}'"
+                            )
+                        cdata["name_verify_matched"] = False
 
                 # ── Verification log kaydet ──
                 cdata["_verification_log"] = verifier.get_log()
@@ -1415,8 +1510,147 @@ class PipelineRunner:
         return False
 
     # ──────────────────────────────────────────────────────────────
-    # TMDB
+    # GEMINI CREW ANCHOR
     # ──────────────────────────────────────────────────────────────
+    def _run_gemini_crew_anchor(self, ocr_lines: list, cdata: dict,
+                                 film_title_hint: str = "") -> dict:
+        """Gemini ile OCR verisinden film_title/directors/actors ankrajı çıkar.
+
+        NAME_VERIFY aşamasında TMDB eşleşmesi başarısız olduğunda,
+        credits_parser çıktısı + ham OCR satırlarını Gemini'ye gönderir.
+        Dönen yapılandırılmış veriyi ikinci TMDB denemesinde anchor olarak kullanır.
+
+        Returns:
+            dict: {film_title, directors, actors, producer, cinematographer, ...}
+            veya API key yoksa / Gemini hata verirse boş dict.
+        """
+        api_key = get_gemini_api_key()
+        if not api_key:
+            self._log("  [GeminiAnchor] API key bulunamadı — atlanıyor")
+            return {}
+
+        from core.gemini_crew_anchor import GeminiCrewAnchor
+        anchor = GeminiCrewAnchor(api_key=api_key, log_cb=self._log)
+
+        # OCR satırlarını string listesine normalize et
+        ocr_str_lines = []
+        for line in (ocr_lines or []):
+            if isinstance(line, dict):
+                ocr_str_lines.append(line.get("text", ""))
+            elif hasattr(line, "text"):
+                ocr_str_lines.append(line.text)
+            else:
+                ocr_str_lines.append(str(line))
+
+        result = anchor.anchor(
+            ocr_lines=ocr_str_lines,
+            cdata=cdata,
+            film_title_hint=film_title_hint,
+        )
+        if anchor.timed_out:
+            cdata["gemini_anchor_timeout"] = True
+        return result
+
+    def _apply_anchor_to_cdata(self, cdata: dict, anchor_result: dict,
+                                film_title_from_filename: str = "") -> None:
+        """Gemini anchor çıktısını cdata'ya uygula (TMDB bulunamadığında partial update).
+
+        Crew verilerini anchor_result içindeki yapılandırılmış JSON'dan alarak cdata'ya yazar.
+        film_title dosya adından geliyorsa anchor'ın önerdiği başlık korunur ama
+        _gemini_anchor_title alanına yazılır.
+
+        Args:
+            cdata: Güncellenecek credits dict.
+            anchor_result: GeminiCrewAnchor.anchor() çıktısı.
+            film_title_from_filename: Dosya adından gelen film başlığı (anchor koruyucu).
+        """
+        if not anchor_result:
+            return
+
+        # Film başlığı — dosya adı her zaman öncelikli
+        anchor_title = anchor_result.get("film_title", "").strip()
+        if anchor_title:
+            if film_title_from_filename:
+                cdata["_gemini_anchor_title"] = anchor_title
+            else:
+                cdata["film_title"] = anchor_title
+
+        # Yönetmenler
+        anchor_directors = anchor_result.get("directors") or []
+        if anchor_directors:
+            existing_directors = {
+                (d.get("name") or d).strip().lower() if isinstance(d, dict) else d.strip().lower()
+                for d in (cdata.get("directors") or [])
+            }
+            new_directors = []
+            for name in anchor_directors:
+                name = name.strip()
+                if name and name.lower() not in existing_directors:
+                    new_directors.append({"name": name, "raw": "gemini_anchor"})
+                    existing_directors.add(name.lower())
+            if new_directors:
+                cdata["directors"] = list(cdata.get("directors") or []) + new_directors
+                self._log(
+                    f"  [GeminiAnchor] Yönetmen eklendi: "
+                    f"{[d['name'] for d in new_directors]}"
+                )
+
+        # Crew (yapımcı, görüntü yönetmeni, senaryo, kurgu, vb.)
+        _ANCHOR_CREW_ROLES = {
+            "producer": "Producer",
+            "cinematographer": "Director of Photography",
+            "screenplay": "Writer",
+            "editor": "Editor",
+            "assistant_director": "Assistant Director",
+            "camera_operator": "Camera Operator",
+            "sound": "Sound",
+            "music": "Music",
+        }
+        existing_crew = cdata.get("crew") or []
+        existing_crew_names_low = {
+            (e.get("name") or "").strip().lower() for e in existing_crew
+        }
+        new_crew = []
+        for anchor_field, job_title in _ANCHOR_CREW_ROLES.items():
+            for name in (anchor_result.get(anchor_field) or []):
+                name = name.strip()
+                if name and name.lower() not in existing_crew_names_low:
+                    new_crew.append({
+                        "name": name,
+                        "job": job_title,
+                        "role": job_title,
+                        "raw": "gemini_anchor",
+                        "confidence": 0.75,
+                    })
+                    existing_crew_names_low.add(name.lower())
+        if new_crew:
+            cdata["crew"] = existing_crew + new_crew
+            cdata["total_crew"] = len(cdata["crew"])
+            self._log(
+                f"  [GeminiAnchor] Crew güncellendi: {len(new_crew)} yeni kişi eklendi"
+            )
+
+        # Oyuncular — anchor'dan gelen isimler cast'a yalnızca boşsa eklenir
+        anchor_actors = anchor_result.get("actors") or []
+        if anchor_actors and not cdata.get("cast"):
+            new_cast = [
+                {
+                    "actor_name": name.strip(),
+                    "character_name": "",
+                    "confidence": 0.75,
+                    "raw": "gemini_anchor",
+                }
+                for name in anchor_actors
+                if name.strip()
+            ]
+            if new_cast:
+                cdata["cast"] = new_cast
+                cdata["total_actors"] = len(new_cast)
+                self._log(
+                    f"  [GeminiAnchor] Cast güncellendi: {len(new_cast)} oyuncu eklendi"
+                )
+
+        cdata["gemini_anchor_applied"] = True
     def _run_tmdb(self, cdata: dict, work_dir: str, is_series: bool = False):
         from core.tmdb_verify import TMDBVerify, TMDBVerifyResult
 
