@@ -56,7 +56,7 @@ def test_strat_a01_title_actor_director_match_accepted():
          patch.object(verifier, "_load_cache", return_value=None), \
          patch.object(verifier, "_save_cache"):
 
-        entry, kind, via = verifier._find_tmdb_entry(
+        entry, kind, via, _ = verifier._find_tmdb_entry(
             film_title="Test Film",
             cast_names=["Ahmet Yılmaz"],
             director_names=["Yönetmen Ali"],
@@ -90,7 +90,7 @@ def test_strat_a01_title_two_actors_match_accepted():
          patch.object(verifier, "_load_cache", return_value=None), \
          patch.object(verifier, "_save_cache"):
 
-        entry, kind, via = verifier._find_tmdb_entry(
+        entry, kind, via, _ = verifier._find_tmdb_entry(
             film_title="Test Film 2",
             cast_names=["Oyuncu Bir", "Oyuncu İki"],
             director_names=[],
@@ -124,7 +124,7 @@ def test_strat_a02_no_actor_match_falls_to_b():
          patch.object(verifier, "_save_cache"), \
          patch.object(verifier.client, "search_person", return_value=[]):
 
-        entry, kind, via = verifier._find_tmdb_entry(
+        entry, kind, via, _ = verifier._find_tmdb_entry(
             film_title="Test Film",
             cast_names=["Farklı Oyuncu"],
             director_names=[],
@@ -162,7 +162,7 @@ def test_strat_b01_series_director_match_accepted():
          patch.object(verifier, "_save_cache"), \
          patch.object(verifier.client, "search_person", return_value=[]):
 
-        entry, kind, via = verifier._find_tmdb_entry(
+        entry, kind, via, _ = verifier._find_tmdb_entry(
             film_title="Test Dizi",
             cast_names=["OCR Oyuncu Adı"],  # eşleşmiyor
             director_names=["Dizi Yönetmeni"],
@@ -203,7 +203,7 @@ def test_strat_b02_film_director_year_match_accepted():
          patch.object(verifier, "_save_cache"), \
          patch.object(verifier.client, "search_person", return_value=[]):
 
-        entry, kind, via = verifier._find_tmdb_entry(
+        entry, kind, via, _ = verifier._find_tmdb_entry(
             film_title="Yıl Filmi",
             cast_names=["OCR Oyuncu Adı"],  # eşleşmiyor
             director_names=["Film Yönetmeni"],
@@ -240,7 +240,7 @@ def test_strat_b03_film_no_ocr_data_accepted():
          patch.object(verifier, "_load_cache", return_value=None), \
          patch.object(verifier, "_save_cache"):
 
-        entry, kind, via = verifier._find_tmdb_entry(
+        entry, kind, via, _ = verifier._find_tmdb_entry(
             film_title="Boş OCR Filmi",
             cast_names=[],  # cast yok
             director_names=["Yönetmen X"],
@@ -284,7 +284,7 @@ def test_strat_b04_film_crew_mismatch_falls_to_c():
          patch.object(verifier, "_save_cache"), \
          patch.object(verifier.client, "search_person", return_value=[]):
 
-        entry, kind, via = verifier._find_tmdb_entry(
+        entry, kind, via, _ = verifier._find_tmdb_entry(
             film_title="Yanlış Yıl Filmi",
             cast_names=["OCR Oyuncu"],         # eşleşmiyor
             director_names=["Yönetmen Y"],
@@ -339,7 +339,7 @@ def test_strat_c01_person_search_common_film():
          patch.object(verifier, "_load_cache", return_value=None), \
          patch.object(verifier, "_save_cache"):
 
-        entry, kind, via = verifier._find_tmdb_entry(
+        entry, kind, via, _ = verifier._find_tmdb_entry(
             film_title="",  # başlık yok
             cast_names=["Oyuncu Alfa", "Oyuncu Beta"],
             director_names=["Yönetmen Gamma"],
@@ -392,7 +392,7 @@ def test_strat_d01_fuzzy_name_validation_passes():
          patch.object(verifier, "_load_cache", return_value=None), \
          patch.object(verifier, "_save_cache"):
 
-        entry, kind, via = verifier._find_tmdb_entry(
+        entry, kind, via, _ = verifier._find_tmdb_entry(
             film_title="",
             cast_names=["Ahmet Yilmaz", "Mehmet Kaya", "Fatma Demir"],
             director_names=[],
@@ -416,7 +416,7 @@ def test_strat_d02_fake_actors_no_match():
          patch.object(verifier, "_load_cache", return_value=None), \
          patch.object(verifier, "_save_cache"):
 
-        entry, kind, via = verifier._find_tmdb_entry(
+        entry, kind, via, _ = verifier._find_tmdb_entry(
             film_title="",
             cast_names=["XzXzXz Gürültü", "QqQqQq Sahte", "1234 Geçersiz"],
             director_names=[],
@@ -463,7 +463,7 @@ def test_strat_d02_fuzzy_threshold_rejects_low_match():
          patch.object(verifier, "_load_cache", return_value=None), \
          patch.object(verifier, "_save_cache"):
 
-        entry, kind, via = verifier._find_tmdb_entry(
+        entry, kind, via, _ = verifier._find_tmdb_entry(
             film_title="",
             cast_names=["Ahmet Yılmaz"],
             director_names=[],
@@ -495,7 +495,7 @@ def test_is_series_flag_propagated_to_find_entry():
 
     def capturing_find(*args, **kwargs):
         captured["is_series"] = kwargs.get("is_series", None)
-        return None, "", ""
+        return None, "", "", []
 
     cdata = {
         "film_title": "Test",
@@ -523,7 +523,7 @@ def test_is_series_false_default():
 
     def capturing_find(*args, **kwargs):
         captured["is_series"] = kwargs.get("is_series", "NOT_SET")
-        return None, "", ""
+        return None, "", "", []
 
     cdata = {
         "film_title": "Test",

@@ -85,7 +85,7 @@ def test_ocr_title_preserved_on_accept():
     }
 
     with patch.object(verifier, "_find_tmdb_entry",
-                      return_value=(_JANDARMA_ENTRY, "movie", "cast_only")), \
+                      return_value=(_JANDARMA_ENTRY, "movie", "cast_only", [])), \
          patch.object(verifier, "_fetch_credits",
                       return_value=_JANDARMA_CREDITS), \
          patch.object(verifier.client, "get_movie_details",
@@ -128,7 +128,7 @@ def test_ocr_title_not_set_if_same_as_tmdb():
     }
 
     with patch.object(verifier, "_find_tmdb_entry",
-                      return_value=(_JANDARMA_ENTRY, "movie", "cast_only")), \
+                      return_value=(_JANDARMA_ENTRY, "movie", "cast_only", [])), \
          patch.object(verifier, "_fetch_credits",
                       return_value=_JANDARMA_CREDITS), \
          patch.object(verifier.client, "get_movie_details",
@@ -170,7 +170,7 @@ def test_tmdb_verify_result_ocr_title_field():
     }
 
     with patch.object(verifier, "_find_tmdb_entry",
-                      return_value=(_JANDARMA_ENTRY, "movie", "cast_only")), \
+                      return_value=(_JANDARMA_ENTRY, "movie", "cast_only", [])), \
          patch.object(verifier, "_fetch_credits",
                       return_value=_JANDARMA_CREDITS), \
          patch.object(verifier.client, "get_movie_details",
@@ -211,7 +211,7 @@ def test_apply_tmdb_credits_preserves_ocr_title():
     }
 
     with patch.object(verifier, "_find_tmdb_entry",
-                      return_value=(_JANDARMA_ENTRY, "movie", "cast_only")), \
+                      return_value=(_JANDARMA_ENTRY, "movie", "cast_only", [])), \
          patch.object(verifier, "_fetch_credits",
                       return_value=_JANDARMA_CREDITS), \
          patch.object(verifier.client, "get_movie_details",
@@ -253,7 +253,7 @@ def test_ocr_title_not_overwritten_if_already_set():
     }
 
     with patch.object(verifier, "_find_tmdb_entry",
-                      return_value=(_JANDARMA_ENTRY, "movie", "cast_only")), \
+                      return_value=(_JANDARMA_ENTRY, "movie", "cast_only", [])), \
          patch.object(verifier, "_fetch_credits",
                       return_value=_JANDARMA_CREDITS), \
          patch.object(verifier.client, "get_movie_details",
