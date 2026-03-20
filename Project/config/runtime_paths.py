@@ -32,6 +32,15 @@ LOGOLAR_DIR = Path(os.environ.get("LOGOLAR_DIR", str(_home_source / "Logo")))
 
 FFMPEG_BIN_DIR = Path(os.environ.get("FFMPEG_BIN_DIR", str(_home_source / "ffmpeg" / "bin")))
 
+IMDB_DB_PATH = Path(os.environ.get("IMDB_DB_PATH", r"F:\IMDB\db\imdb.duckdb"))
+
+
+def get_imdb_db_path() -> str:
+    env_path = (os.environ.get("IMDB_DB_PATH") or "").strip()
+    if env_path:
+        return env_path
+    return str(IMDB_DB_PATH)
+
 # İsim DB için olası dosyalar (varsa ilk bulunan kullanılır)
 NAME_DB_SQLITE_CANDIDATES = [
     NAME_DB_DIR / "compiled" / "names.db",
