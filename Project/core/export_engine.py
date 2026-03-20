@@ -655,6 +655,52 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "sampadak": "KURGU", "sampadan": "KURGU",
 }
 
+# Bilinen rol başlıkları seti — bu değerler asla kişi ismi olamaz.
+# _ROLE_TO_OUTPUT'un tüm key'lerinden otomatik türetilir.
+_KNOWN_ROLE_TITLES: frozenset[str] = frozenset(_ROLE_TO_OUTPUT.keys())
+
+# Kişi ismi olmayan ek terimler (ülke, kurum, mekan, sunum ifadeleri vb.)
+_NON_PERSON_TERMS: frozenset[str] = frozenset({
+    # Ülke / şehir / coğrafi ifadeler
+    "france", "cameroun", "cameroon", "paris", "london",
+    "allemagne", "belgique", "canada", "senegal", "mali",
+    "burkina", "niger", "maroc", "tunisie", "algerie",
+    "italia", "espana", "portugal", "suisse", "suede",
+    # Kurum tipleri
+    "ministere", "ministre", "ministry",
+    "ecole", "universite", "lycee", "publique",
+    "editions", "edition", "editeur",
+    # Yapım / sunum ifadeleri
+    "fodic", "presentent", "presente", "presenten",
+    "les films", "les eleves",
+    # Teknik/jenerik etiketler
+    "hotel", "makonee", "makomee",
+    "un film de", "a film by", "une coproduction", "coproduction",
+    # Fransızca teknik terimler (rol başlığı ama _ROLE_TO_OUTPUT'ta olmayan)
+    "son", "scripte", "regie", "bruitage", "mixage", "maquillage",
+    "habilleur", "maintenance", "groupiste", "machinerie", "chauffeurs",
+    "stagiaires", "laboratoire", "repiquage", "avec", "avee",
+    "coopérative",
+    # İngilizce teknik etiketler
+    "presents", "presente", "presenting",
+})
+
+
+def _is_non_person(name: str) -> bool:
+    """İsim aslında bir rol başlığı veya kişi olmayan bir terim mi?
+
+    _KNOWN_ROLE_TITLES ve _NON_PERSON_TERMS'e bakarak karar verir.
+    3 karakterden kısa isimler de reddedilir.
+    """
+    if len(name) < 3:
+        return True
+    low = name.strip().lower()
+    if low in _KNOWN_ROLE_TITLES:
+        return True
+    if low in _NON_PERSON_TERMS:
+        return True
+    return False
+
 
 def _map_crew_to_roles(crew_data: list, directors: list) -> dict[str, list[str]]:
     """Crew verilerini 7 çıktı rolüne dönüştür.
@@ -671,13 +717,20 @@ def _map_crew_to_roles(crew_data: list, directors: list) -> dict[str, list[str]]
     # Directors → YÖNETMEN
     for d in (directors or []):
         if d and d not in result["YÖNETMEN"]:
-            result["YÖNETMEN"].append(d)
+            name_d = d.get("name", "") if isinstance(d, dict) else str(d)
+            if name_d and not _is_non_person(name_d):
+                result["YÖNETMEN"].append(name_d)
 
     # Crew entries → matching output role
     for entry in (crew_data or []):
         name = (entry.get("name") or "").strip()
         if not name:
             continue
+
+        # Rol başlığı veya kişi olmayan terim ise atla
+        if _is_non_person(name):
+            continue
+
         role_raw = (
             entry.get("role_tr") or entry.get("role") or entry.get("job") or ""
         ).strip()

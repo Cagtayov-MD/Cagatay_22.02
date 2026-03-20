@@ -147,6 +147,18 @@ _CREW_BLACKLIST_EXACT = frozenset({
     "coopérative",
     "hotel",
     "makonee", "makomee",  # lokasyon/otel adı + OCR
+    # ── Ülke / şehir / coğrafi ifadeler ──
+    "france", "cameroun", "cameroon", "paris", "london",
+    "allemagne", "belgique", "canada", "senegal", "mali",
+    "burkina", "niger", "maroc", "tunisie", "algerie",
+    "italia", "espana", "portugal", "suisse", "suede",
+    # ── Kurum tipleri / resmi terimler ──
+    "ministere", "ministre", "ministry",
+    "ecole", "universite", "lycee", "publique",
+    "editions", "edition", "editeur",
+    # ── Yapım şirketi / sunum ifadeleri ──
+    "fodic", "presentent", "presente", "presenten",
+    "les films", "les eleves",
     "assistant à la production",
     "assistant a la production",
     "assistant à la produetion",  # OCR varyantı
@@ -179,6 +191,11 @@ _CREW_BLACKLIST_CONTAINS = frozenset({
     "filmed at", "filmed in",
     "panavision", "in hollywood",
     "bolum",  # bölüm bilgisi
+    "ministere", "ministre",  # resmi kurum
+    "les eleves",              # öğrenci grubu
+    "ecole publique",          # okul adı
+    "une coproduction",        # yapım ifadesi
+    "les films",               # yapım şirketi öneki
 })
 
 # Regex ile yakalanacak kalıplar
