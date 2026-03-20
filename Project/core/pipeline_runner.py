@@ -27,12 +27,13 @@ from core.text_filter import TextFilter
 from core.ocr_engine import OCREngine
 from core.qwen_ocr_engine import QwenOCREngine
 from core.credits_parser import CreditsParser
-from core.export_engine import ExportEngine
+from core.export_engine import ExportEngine, _map_crew_to_roles
 from core.turkish_name_db import TurkishNameDB
 from core.qwen_verifier import QwenVerifier
 from core.llm_cast_filter import LLMCastFilter
 from core.vlm_reader import VLMReader
 from core.name_verify import NameVerifier
+from core.person_verify import PersonVerifier
 from core.xml_sidecar import resolve_xml_sidecar, XmlSidecarInfo
 from utils.stats_logger import StatsLogger
 
@@ -607,6 +608,63 @@ class PipelineRunner:
                             f"dosya adı anchor'ı korundu: '{film_title_from_filename}'"
                         )
                     cdata["name_verify_matched"] = False
+
+                    # ── PersonVerifier: film TMDB'de bulunamadı → isim bazlı doğrulama ──
+                    # _map_crew_to_roles → NameVerifier.verify_crew → PersonVerifier filtresi
+                    _ocr_crew = cdata.get("technical_crew") or cdata.get("crew") or []
+                    _ocr_directors = cdata.get("directors") or []
+                    if _ocr_crew or _ocr_directors:
+                        self._log(
+                            "  [PERSON] Film TMDB'de bulunamadı — isim bazlı doğrulama başlıyor"
+                        )
+                        person_verifier = PersonVerifier(
+                            tmdb_client=_tmdb_client,
+                            log_cb=self._log,
+                        )
+                        # Katman 1: rol bazlı filtreleme
+                        crew_roles = _map_crew_to_roles(_ocr_crew, _ocr_directors)
+                        # Katman 2: NameVerifier blacklist + yapısal kontrol
+                        crew_roles = verifier.verify_crew(crew_roles)
+                        # Katman 3: PersonVerifier (isim bazlı TMDB doğrulama)
+                        verified_crew_roles: dict[str, list[str]] = {}
+                        for role_key, names in crew_roles.items():
+                            verified_names: list[str] = []
+                            for person_name in names:
+                                pv_result = person_verifier.verify_name(person_name)
+                                if pv_result["found"]:
+                                    verified_names.append(person_name)
+                                    self._log(
+                                        f"    ✅ {person_name} → "
+                                        f"{pv_result.get('known_for_department', '?')}"
+                                    )
+                                elif pv_result.get("source") == "non_person_filter":
+                                    self._log(
+                                        f"    ❌ {person_name} → REJECT (rol başlığı/mekan)"
+                                    )
+                                else:
+                                    # TMDB'de bulunamadı ama yapısal olarak isim gibi
+                                    from core.person_verify import _is_likely_person_name
+                                    if _is_likely_person_name(person_name):
+                                        verified_names.append(person_name)
+                                        self._log(
+                                            f"    ⚠️ {person_name} → "
+                                            "TMDB'de bulunamadı, düşük güvenle korundu"
+                                        )
+                                    else:
+                                        self._log(
+                                            f"    ❌ {person_name} → REJECT "
+                                            "(yapısal filtre)"
+                                        )
+                            verified_crew_roles[role_key] = verified_names
+                        cdata["_verified_crew_roles"] = verified_crew_roles
+                        self._log(
+                            f"  [PERSON] Doğrulama tamamlandı: "
+                            + ", ".join(
+                                f"{r}={len(v)}"
+                                for r, v in verified_crew_roles.items()
+                                if v
+                            )
+                        )
 
                 # ── Verification log kaydet ──
                 cdata["_verification_log"] = verifier.get_log()
