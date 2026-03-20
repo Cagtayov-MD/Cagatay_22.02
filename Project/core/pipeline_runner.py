@@ -923,10 +923,12 @@ class PipelineRunner:
                 ):
                     try:
                         from core.gemini_crew_validator import validate_crew_with_gemini
+                        _gcv_ocr_scores = self._build_ocr_scores(ocr_lines, cdata).get("scores", [])
                         _gcv_result = validate_crew_with_gemini(
                             film_title=cdata.get("film_title", ""),
                             ocr_crew=cdata.get("technical_crew") or cdata.get("crew") or [],
                             ocr_lines=ocr_lines,
+                            ocr_scores=_gcv_ocr_scores,
                         )
                         if _gcv_result and _gcv_result.get("verified_roles"):
                             cdata["_gemini_crew_roles"] = _gcv_result["verified_roles"]
@@ -1494,7 +1496,12 @@ class PipelineRunner:
     # GEMINI CAST EXTRACT
     # ──────────────────────────────────────────────────────────────
     def _run_gemini_cast_extract(self, ocr_lines: list, cdata: dict) -> bool:
-        """Gemini ile OCR satırlarından cast/crew ayıkla ve cdata'yı güncelle.
+        """Gemini ile OCR skor verisinden cast/crew ayıkla ve cdata'yı güncelle.
+
+        Crew ayıklama için ham OCR satırları yerine OCR skor yapısı kullanılır
+        (text, ocr_confidence, seen_count, verdict, name_db_match, llm_verified).
+        Bu sayede REJECTED satırlar varsayılan olarak dışlanır ve Gemini
+        sadece Yönetmen/Yapımcı/Yazar rollerine odaklanır.
 
         Returns:
             True — Gemini sonuç döndürdü ve cdata güncellendi.
@@ -1507,24 +1514,64 @@ class PipelineRunner:
 
         from core.gemini_cast_extractor import GeminiCastExtractor
         extractor = GeminiCastExtractor(api_key=api_key, log_cb=self._log)
-        result = extractor.extract(
+        film_title = cdata.get("film_title", "")
+
+        # ── Cast ayıklama (ham metin — oyuncu tespiti için geniş kapsam gerekir) ──
+        cast_result = extractor.extract(
             ocr_lines=[
                 line.get("text", "") if isinstance(line, dict) else line.text
                 for line in ocr_lines
             ],
-            film_title=cdata.get("film_title", ""),
+            film_title=film_title,
         )
         if extractor.timed_out:
             cdata["gemini_timeout"] = True
-        if result and (result.get("cast") or result.get("crew")):
-            self._log(
-                f"  [Gemini] Cast: {len(result.get('cast', []))} oyuncu, "
-                f"Crew: {len(result.get('crew', []))} kişi"
-            )
-            cdata["cast"] = result.get("cast", [])
-            cdata["crew"] = result.get("crew", [])
-            cdata["total_actors"] = len(cdata["cast"])
-            cdata["total_crew"] = len(cdata["crew"])
+
+        # ── Crew ayıklama (OCR skor verisiyle — sadece Yönetmen/Yapımcı/Yazar) ──
+        ocr_scores = self._build_ocr_scores(ocr_lines, cdata).get("scores", [])
+        crew_score_result = extractor.extract_crew_from_scores(
+            ocr_scores=ocr_scores,
+            film_title=film_title,
+        )
+        if extractor.timed_out:
+            cdata["gemini_timeout"] = True
+
+        has_cast = cast_result and cast_result.get("cast")
+        has_crew = bool(
+            crew_score_result.get("directors")
+            or crew_score_result.get("producers")
+            or crew_score_result.get("writers")
+        )
+
+        if has_cast or has_crew:
+            if has_cast:
+                self._log(
+                    f"  [Gemini] Cast: {len(cast_result.get('cast', []))} oyuncu"
+                )
+                cdata["cast"] = cast_result.get("cast", [])
+                cdata["total_actors"] = len(cdata["cast"])
+
+            if has_crew:
+                # Crew skor sonucunu _verified_crew_roles'a yaz
+                # (_OUTPUT_ROLES key'leriyle eşleşecek şekilde map et)
+                crew_roles = cdata.get("_verified_crew_roles") or {}
+                directors = crew_score_result.get("directors") or []
+                producers = crew_score_result.get("producers") or []
+                writers = crew_score_result.get("writers") or []
+                if directors:
+                    crew_roles["YÖNETMEN"] = directors
+                if producers:
+                    crew_roles["YAPIMCI"] = producers
+                if writers:
+                    crew_roles["SENARYO"] = writers
+                cdata["_verified_crew_roles"] = crew_roles
+                self._log(
+                    f"  [Gemini] Crew (skor): "
+                    f"Yönetmen={len(directors)}, "
+                    f"Yapımcı={len(producers)}, "
+                    f"Yazar={len(writers)}"
+                )
+
             cdata["gemini_extracted"] = True
             return True
         return False
