@@ -318,6 +318,9 @@ class PipelineRunner:
         work_dir = os.path.join(db_root, f"arsiv_{vname}_{ts}")
         os.makedirs(work_dir, exist_ok=True)
         self._live_log_path = os.path.join(work_dir, "_live_debug.log")
+        # BOM ile başlat — Notepad UTF-8 olarak doğru okusun
+        with open(self._live_log_path, "w", encoding="utf-8-sig") as _f:
+            pass
 
         self.stats.start_job(video_path, "WORKSTATION", scope, profile_name)
         self.stage_stats = {}
@@ -1967,7 +1970,7 @@ class PipelineRunner:
             json.dump(transcript, f, ensure_ascii=False, indent=2)
 
         # 5. Debug log yaz
-        with open(_safe_path(db_dir / f"{stem}_{ts}_debug.log"), "w", encoding="utf-8") as f:
+        with open(_safe_path(db_dir / f"{stem}_{ts}_debug.log"), "w", encoding="utf-8-sig") as f:
             f.write("\n".join(self._log_messages))
 
         self._log(f"  [DATABASE] Yazıldı: {db_dir}")
