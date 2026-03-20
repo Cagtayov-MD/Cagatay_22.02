@@ -218,7 +218,7 @@ def _write_transcript_txt_atomic(path: str, result: dict) -> None:
         if err:
             lines.append(f"error={err}")
 
-    _write_text_atomic(path, "\n".join(lines) + "\n")
+    _write_text_atomic(path, "\n".join(lines) + "\n", encoding="utf-8-sig")
 
 
 def _fmt_hms(seconds: float) -> str:
@@ -248,15 +248,15 @@ def _build_error_result(error: str, elapsed: float, error_code: str = "PIPELINE_
 
 def _write_json_atomic(path: str, payload: dict) -> None:
     body = json.dumps(payload, ensure_ascii=False, indent=2)
-    _write_text_atomic(path, body)
+    _write_text_atomic(path, body, encoding="utf-8")
 
 
-def _write_text_atomic(path: str, content: str) -> None:
+def _write_text_atomic(path: str, content: str, encoding: str = "utf-8") -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp_fd, tmp_path = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=str(target.parent))
     try:
-        with os.fdopen(tmp_fd, "w", encoding="utf-8", newline="\n") as f:
+        with os.fdopen(tmp_fd, "w", encoding=encoding, newline="\n") as f:
             f.write(content)
             f.flush()
             try:
