@@ -8,7 +8,10 @@ Katmanlar (ucuzdan pahalıya):
   1. Hard Blacklist + Yapısal Kontrol  (maliyet: 0)
   2. NameDB doğrulaması               (maliyet: 0, lokal)
   3. TMDB Person Search               (maliyet: düşük, HTTP)
-  4. Gemini API                        (maliyet: yüksek, son çare)
+  4. Gemini YES/NO doğrulama          (maliyet: yüksek, son çare)
+     - Geçiş 1: Blacklist → NameDB → TMDB → verified / unverified ayrımı
+     - Geçiş 2: unverified adaylar → full-name fuzzy top-2 → min skor gate
+               → Gemini YES/NO (aday 1) → gerekirse aday 2 → unresolved
   5. Bulunamadı → flag ile rapora yaz  (maliyet: 0)
 
 Her aşama bir verification_log JSON'a yazılır (D:\\DATABASE altına).
@@ -23,6 +26,11 @@ Kullanım:
 
 import re
 import unicodedata
+
+# Minimum fuzzy skor eşiği — Gemini'ye gönderilmeye değer mi?
+# 85: mevcut doğrudan kabul eşiği (find() / NameDB)
+# 72: Gemini'ye gönderme kapısı — çok düşük eşleşmeleri elemen, ama sert değil
+_GEMINI_FUZZY_GATE = 72
 
 # ═══════════════════════════════════════════════════════════════════
 # KATMAN 1 — HARD BLACKLIST
@@ -286,10 +294,11 @@ class NameVerifier:
         log = verifier.get_log()
     """
 
-    def __init__(self, name_db=None, tmdb_client=None, log_cb=None):
+    def __init__(self, name_db=None, tmdb_client=None, log_cb=None, gemini_model: str = "gemini-2.5-flash"):
         self._name_db = name_db
         self._tmdb_client = tmdb_client
         self._log = log_cb or (lambda m: None)
+        self._gemini_model = gemini_model
         self._verification_log = []  # Her adım burada
 
     def _add_log(self, layer: str, role: str, name_in: str,
@@ -346,6 +355,24 @@ class NameVerifier:
                              f"id={entry.get('tmdb_id','')}")
             if entry.get("namedb_score"):
                 lines.append(f"          NameDB: skor={entry['namedb_score']:.2f}")
+
+            # Gemini Geçiş-2 ek bilgileri
+            if entry.get("fuzzy_c1"):
+                lines.append(
+                    f"          Fuzzy-C1: {entry['fuzzy_c1']} "
+                    f"(skor={entry.get('fuzzy_s1', 0):.2f})"
+                )
+            if entry.get("fuzzy_c2"):
+                lines.append(
+                    f"          Fuzzy-C2: {entry['fuzzy_c2']} "
+                    f"(skor={entry.get('fuzzy_s2', 0):.2f})"
+                )
+            if entry.get("gemini_response"):
+                valid = entry.get("gemini_response_valid", "")
+                lines.append(
+                    f"          Gemini: {entry['gemini_response']} "
+                    f"(valid={valid})"
+                )
 
         return "\n".join(lines)
 
@@ -451,23 +478,133 @@ class NameVerifier:
                     unverified_candidates.append((name, corrected_name))
 
             # ── GEÇİŞ 2: unverified adayları değerlendir ──
+            # Yeni akış: full-name fuzzy top-2 → min skor gate → Gemini YES/NO
             for orig_name, cand_name in unverified_candidates:
                 if verified_names:
                     # Aynı rol için verified isim var → unverified'ı düşür
                     self._add_log("FINAL", role, orig_name, "",
                                    "dropped", "unverified_has_alternative")
                     self._log(f"    [DROP] ✗ {orig_name} — doğrulanamadı, alternatif var")
+                    continue
+
+                # Verified alternatif yok → Gemini Geçiş-2 akışını dene
+                resolved = self._gemini_pass2(role, orig_name, cand_name)
+                if resolved is not None:
+                    resolved_name, resolve_reason = resolved
+                    if resolved_name not in verified_names:
+                        verified_names.append(resolved_name)
+                    self._add_log("FINAL", role, orig_name, resolved_name,
+                                   "kept", resolve_reason)
+                    self._log(f"    [GEM] ✓ {orig_name} → {resolved_name} ({resolve_reason})")
                 else:
-                    # Bu rol için hiç verified isim yok → flag ile ekle
+                    # Tüm Gemini adayları reddedildi veya eşik altı → unresolved
                     self._add_log("FINAL", role, orig_name, orig_name,
-                                   "flagged", "unverified_no_alternative")
-                    self._log(f"    [?] {orig_name} — doğrulanamadı (alternatif yok)")
+                                   "flagged", "unresolved",
+                                   {"verified": False, "resolution": "unresolved",
+                                    "ocr_raw": orig_name})
+                    self._log(f"    [?] {orig_name} — unresolved (Gemini reddi / eşik altı)")
                     if orig_name not in verified_names:
                         verified_names.append(orig_name)
 
             result[role] = verified_names
 
         return result
+
+    # ─────────────────────────────────────────────────────
+    # GEMINI GEÇİŞ-2 — Fuzzy top-2 + Gemini YES/NO
+    # ─────────────────────────────────────────────────────
+
+    def _gemini_pass2(
+        self, role: str, ocr_raw: str, namedb_candidate: str
+    ):
+        """Unverified aday için full-name fuzzy top-2 + Gemini YES/NO doğrulama.
+
+        Akış:
+          1. NameDB'den full-name fuzzy top-2 al (minimum gate: _GEMINI_FUZZY_GATE)
+          2. Aday 1 gate'i geçiyorsa → Gemini YES/NO
+          3. Aday 1 red alırsa ve aday 2 de gate'i geçiyorsa → Gemini YES/NO (aday 2)
+          4. İkisi de red alırsa → None (unresolved)
+
+        Sadece top-2 ile sınırlıdır; 3. adaya devam edilmez.
+
+        Args:
+            role: Doğrulanacak rol adı (loglama için)
+            ocr_raw: OCR'dan gelen ham isim metni
+            namedb_candidate: Geçiş-1'de NameDB/TMDB'den gelen düzeltilmiş aday
+                              (fuzzy top-2 bu değerden bağımsız olarak yeniden çekilir)
+
+        Returns:
+            (accepted_name: str, reason: str) — Gemini kabul ettiyse
+            None — tüm adaylar reddedildiyse veya gate altındaysa
+        """
+        if self._name_db is None:
+            return None
+
+        # full-name fuzzy top-2 — threshold=0 yani tüm adayları getir, sonra gate uygula
+        candidates = self._name_db._fuzzy_find_top2(ocr_raw, threshold=0)
+
+        # Gate: skoru int (0-100) olarak karşılaştır; _fuzzy_find_top2 0-1 döndürür
+        gate_frac = _GEMINI_FUZZY_GATE / 100.0
+
+        # Log için aday bilgilerini hazırla
+        c1_name = candidates[0][0] if len(candidates) > 0 else None
+        c1_score = candidates[0][1] if len(candidates) > 0 else 0.0
+        c2_name = candidates[1][0] if len(candidates) > 1 else None
+        c2_score = candidates[1][1] if len(candidates) > 1 else 0.0
+
+        self._log(
+            f"    [FUZZY-TOP2] {ocr_raw!r}: "
+            f"c1={c1_name!r}({c1_score:.2f}) "
+            f"c2={c2_name!r}({c2_score:.2f}) gate={gate_frac:.2f}"
+        )
+
+        if not c1_name or c1_score < gate_frac:
+            # Hiç uygun aday yok
+            self._add_log("GEMINI_PASS2", role, ocr_raw, "",
+                           "dropped", "below_fuzzy_gate",
+                           {"ocr_raw": ocr_raw,
+                            "fuzzy_c1": c1_name, "fuzzy_s1": c1_score,
+                            "fuzzy_c2": c2_name, "fuzzy_s2": c2_score})
+            return None
+
+        # Aday 1: Gemini YES/NO
+        try:
+            from core.gemini_crew_validator import verify_single_name as _vsn
+        except ImportError:
+            self._log("    [GEMINI-PASS2] verify_single_name import edilemedi — unresolved")
+            return None
+
+        accepted1, reason1 = _vsn(ocr_raw, c1_name, gemini_model=self._gemini_model)
+        is_valid1 = reason1 in ("yes", "no")
+        self._add_log("GEMINI_PASS2", role, ocr_raw, c1_name if accepted1 else "",
+                       "kept" if accepted1 else "dropped",
+                       f"gemini_c1:{reason1}",
+                       {"ocr_raw": ocr_raw,
+                        "fuzzy_c1": c1_name, "fuzzy_s1": c1_score,
+                        "fuzzy_c2": c2_name, "fuzzy_s2": c2_score,
+                        "gemini_response": reason1,
+                        "gemini_response_valid": is_valid1})
+
+        if accepted1:
+            return c1_name, "gemini_verified_c1"
+
+        # Aday 1 reddedildi veya hata — aday 2'yi dene (sadece gate'i geçiyorsa)
+        if c2_name and c2_score >= gate_frac:
+            accepted2, reason2 = _vsn(ocr_raw, c2_name, gemini_model=self._gemini_model)
+            is_valid2 = reason2 in ("yes", "no")
+            self._add_log("GEMINI_PASS2", role, ocr_raw, c2_name if accepted2 else "",
+                           "kept" if accepted2 else "dropped",
+                           f"gemini_c2:{reason2}",
+                           {"ocr_raw": ocr_raw,
+                            "fuzzy_c1": c1_name, "fuzzy_s1": c1_score,
+                            "fuzzy_c2": c2_name, "fuzzy_s2": c2_score,
+                            "gemini_response": reason2,
+                            "gemini_response_valid": is_valid2})
+            if accepted2:
+                return c2_name, "gemini_verified_c2"
+
+        # Her iki aday da reddedildi veya gate altında
+        return None
 
     # ─────────────────────────────────────────────────────
     # VERIFY CAST — Oyuncu listesi doğrulama

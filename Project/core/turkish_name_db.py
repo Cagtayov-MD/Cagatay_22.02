@@ -624,6 +624,36 @@ class TurkishNameDB:
             return result[0], round(result[1] / 100.0, 3)
         return None, 0.0
 
+    def _fuzzy_find_top2(
+        self, text: str, threshold: int = 0
+    ) -> list[tuple[str, float]]:
+        """RapidFuzz ile en yakın 2 canonical isim adayını döndür.
+
+        _fuzzy_find() imzası/sözleşmesi korunur; bu metot sadece
+        name_verify.py'deki Gemini doğrulama katmanı tarafından kullanılır.
+
+        Args:
+            text: OCR metni (tam isim, isim+soyisim)
+            threshold: Minimum fuzzy skor eşiği (0-100 arası int).
+                       0 ise eşik uygulanmaz.
+
+        Returns:
+            [(canonical_name, score_0_to_1), ...] — en fazla 2 eleman,
+            yüksek skordan düşüğe sıralı. Eşik altı veya eşleşme yoksa boş liste.
+        """
+        if not HAS_RAPIDFUZZ:
+            return []
+        if not self._all_names:
+            return []
+        cutoff = threshold if threshold > 0 else 0
+        results = rf_process.extract(
+            text, self._all_names,
+            scorer=fuzz.WRatio,
+            limit=2,
+            score_cutoff=cutoff,
+        )
+        return [(r[0], round(r[1] / 100.0, 3)) for r in results]
+
     def correct_line(self, line: str) -> str:
         """
         Tek OCR satırını düzelt.

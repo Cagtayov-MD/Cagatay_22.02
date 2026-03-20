@@ -1,11 +1,15 @@
-"""gemini_crew_validator.py — TMDB bulunamadığında Gemini ile crew doğrulama.
+"""gemini_crew_validator.py — Gemini ile crew ve tekil isim doğrulama.
 
-OCR'dan okunan crew bilgilerini Gemini 2.5 Flash'a gönderir.
-Gemini, kurum adlarını / rol başlıklarını / OCR hatalarını ayıklar
-ve doğru kişi-rol eşleştirmesi döndürür.
+İki bağımsız işlev içerir:
 
-Sadece TMDB miss durumunda çağrılır — 30K film ölçeğinde gereksiz
-API çağrısı yapılmaması için bu guard pipeline_runner'da uygulanır.
+1. validate_crew_with_gemini()
+   TMDB bulunamadığında tüm OCR crew'unu JSON formatında Gemini'ye gönderir.
+   Sadece TMDB miss durumunda pipeline_runner tarafından çağrılır.
+
+2. verify_single_name()
+   name_verify.py'nin Geçiş-2 Gemini katmanı için tekil isim doğrulayıcısı.
+   OCR adayını Gemini'ye sorar; yalnızca YES veya NO kabul eder.
+   Fail-closed: timeout/network/parse hataları False (unresolved) döndürür.
 """
 import json
 import logging
@@ -137,3 +141,88 @@ Filmde bu bilgi yoksa "VERİ YOK" yazma, sadece boş liste [] kullan.
     except Exception as e:
         _log.warning(f"[GeminiCrewValidator] Hata: {e}")
         return None
+
+
+def verify_single_name(
+    ocr_raw: str,
+    candidate: str,
+    gemini_model: str = "gemini-2.5-flash",
+) -> tuple[bool, str]:
+    """Tek bir isim adayını Gemini ile YES/NO doğrula.
+
+    name_verify.py Geçiş-2 Gemini katmanı için tasarlanmıştır.
+    validate_crew_with_gemini() işlevinden bağımsızdır ve onu değiştirmez.
+
+    Davranış kuralları:
+    - Gemini yanıtı response.strip().upper() sonrası tam "YES" veya "NO" olmalıdır.
+    - Başka her yanıt (YES., Yes, NO - uncertain, vb.) reject/False sayılır ve
+      "invalid_response" olarak loglanır.
+    - Timeout / ağ hatası / parse hatası → fail-closed (False döner).
+
+    Args:
+        ocr_raw: OCR'dan gelen ham metin (doğrulama bağlamı için)
+        candidate: Fuzzy matcher'ın önerdiği aday isim
+        gemini_model: Kullanılacak Gemini model adı
+
+    Returns:
+        (accepted: bool, reason: str)
+        reason değerleri: "yes", "no", "invalid_response",
+                          "gemini_timeout", "gemini_network_error",
+                          "gemini_parse_error", "gemini_error",
+                          "llm_unavailable"
+    """
+    try:
+        import core.llm_provider as _llm
+    except ImportError:
+        _log.warning("[GeminiSingleName] llm_provider import edilemedi")
+        return False, "llm_unavailable"
+
+    prompt = (
+        f'OCR metni: "{ocr_raw}"\n'
+        f'Aday isim: "{candidate}"\n\n'
+        "Bu OCR metni bu aday ismin bozulmuş bir yazımı olabilir mi?\n"
+        "Sadece YES veya NO yaz, başka hiçbir şey yazma."
+    )
+
+    try:
+        response = _llm.generate(
+            prompt=prompt,
+            provider="gemini",
+            model=gemini_model,
+        )
+    except TimeoutError as e:
+        _log.warning(f"[GeminiSingleName] Timeout: ocr='{ocr_raw}' candidate='{candidate}' err={e}")
+        return False, "gemini_timeout"
+    except OSError as e:
+        # socket/network hataları OSError alt sınıflarıdır
+        _log.warning(f"[GeminiSingleName] Ağ hatası: ocr='{ocr_raw}' candidate='{candidate}' err={e}")
+        return False, "gemini_network_error"
+    except Exception as e:
+        err_name = type(e).__name__.lower()
+        if "timeout" in err_name:
+            _log.warning(f"[GeminiSingleName] Timeout: ocr='{ocr_raw}' candidate='{candidate}' err={e}")
+            return False, "gemini_timeout"
+        if any(k in err_name for k in ("network", "connect", "socket", "http")):
+            _log.warning(f"[GeminiSingleName] Ağ hatası: ocr='{ocr_raw}' candidate='{candidate}' err={e}")
+            return False, "gemini_network_error"
+        _log.warning(f"[GeminiSingleName] Hata: ocr='{ocr_raw}' candidate='{candidate}' err={e}")
+        return False, "gemini_error"
+
+    if not response:
+        _log.warning(f"[GeminiSingleName] Boş yanıt: ocr='{ocr_raw}' candidate='{candidate}'")
+        return False, "gemini_parse_error"
+
+    verdict = response.strip().upper()
+    if verdict == "YES":
+        _log.info(f"[GeminiSingleName] YES: ocr='{ocr_raw}' → candidate='{candidate}'")
+        return True, "yes"
+    if verdict == "NO":
+        _log.info(f"[GeminiSingleName] NO: ocr='{ocr_raw}' candidate='{candidate}'")
+        return False, "no"
+
+    # Model geçersiz/beklenmedik yanıt verdi — fail-closed
+    _log.warning(
+        f"[GeminiSingleName] Geçersiz yanıt: ocr='{ocr_raw}' candidate='{candidate}' "
+        f"response='{response.strip()[:80]}'"
+    )
+    return False, "invalid_response"
