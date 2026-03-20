@@ -148,6 +148,7 @@ class TMDBVerifyResult:
     reverse_breakdown: Dict[str, Any] = None  # Puan detayları
     rejected: bool = False              # Ters doğrulama tarafından reddedildi mi
     ocr_title: str = ""                 # accept öncesi OCR'dan gelen orijinal başlık
+    person_evidence: List[Dict[str, Any]] = None  # Strateji C/D eşleşen kişi kanıtları
 
     def __post_init__(self):
         if self.cast is None:
@@ -160,6 +161,8 @@ class TMDBVerifyResult:
             self.genres = []
         if self.reverse_breakdown is None:
             self.reverse_breakdown = {}
+        if self.person_evidence is None:
+            self.person_evidence = []
 
 
 class TMDBClient:
@@ -471,7 +474,7 @@ class TMDBVerify:
         ]
 
         # TMDB'de eşleşme bul
-        tmdb_entry, kind, matched_via = self._find_tmdb_entry(
+        tmdb_entry, kind, matched_via, person_evidence = self._find_tmdb_entry(
             film_title, cast_names, director_names,
             original_title=original_title_input,
             crew_names=crew_names,
@@ -481,8 +484,14 @@ class TMDBVerify:
         )
 
         if not tmdb_entry:
-            self._log(f"  [TMDB] Eşleşme bulunamadı")
-            return TMDBVerifyResult(False, "tmdb match not found")
+            if person_evidence:
+                self._log(
+                    f"  [TMDB] Eşleşme bulunamadı ama {len(person_evidence)} kişi kanıtı korunuyor"
+                )
+            else:
+                self._log(f"  [TMDB] Eşleşme bulunamadı")
+            return TMDBVerifyResult(False, "tmdb match not found",
+                                    person_evidence=person_evidence)
 
         tmdb_id    = tmdb_entry.get("id", 0)
         tmdb_title = (tmdb_entry.get("name") or tmdb_entry.get("title") or "").strip()
@@ -552,6 +561,11 @@ class TMDBVerify:
             )
 
             if not _rv_accepted:
+                if person_evidence:
+                    self._log(
+                        f"  [TMDB] Ters doğrulama reddetti ama "
+                        f"{len(person_evidence)} kişi kanıtı korunuyor"
+                    )
                 return TMDBVerifyResult(
                     updated=False,
                     reason="reverse_validation_rejected",
@@ -560,6 +574,7 @@ class TMDBVerify:
                     reverse_score=_rv_score,
                     reverse_breakdown=_rv_breakdown,
                     rejected=True,
+                    person_evidence=person_evidence,
                 )
 
         # Cast kanonikleştir
@@ -635,6 +650,7 @@ class TMDBVerify:
             reverse_score=_rv_score,
             reverse_breakdown=_rv_breakdown,
             ocr_title=film_title,
+            person_evidence=person_evidence,
         )
 
     # ── TMDB'de eşleşme bul ─────────────────────────────────────────
@@ -655,6 +671,10 @@ class TMDBVerify:
              - FİLMSE: yıl/DoP/editor crew kıyaslaması
           C: Oyuncu/yönetmen kişi araması (fuzzy isim doğrulaması yok)
           D: Oyuncu/yönetmen kişi araması (rapidfuzz >= 80 fuzzy isim doğrulaması)
+
+        Return: (entry, kind, matched_via, person_evidence)
+          - person_evidence: Strateji C/D sırasında TMDB'de doğrulanan kişilerin listesi;
+            film eşleşmesi başarısız olsa bile korunur.
         """
         director_names = director_names or []
         crew_names = crew_names or []
@@ -805,13 +825,13 @@ class TMDBVerify:
                             f"  [TMDB] Strateji A başarılı: '{title}' — "
                             f"başlık + {matched} oyuncu eşleşti"
                         )
-                        return r, kind, _via
+                        return r, kind, _via, []
                     if matched >= 1 and director_names and _director_matches_crew(credits):
                         self._log(
                             f"  [TMDB] Strateji A başarılı: '{title}' — "
                             f"başlık + {matched} oyuncu + yönetmen eşleşti"
                         )
-                        return r, kind, _via
+                        return r, kind, _via, []
         self._log(f"  [TMDB] Strateji A başarısız")
 
         # ── Strateji B: Sadece Film adı + Yönetmen (oyuncular devre dışı) ──────
@@ -840,14 +860,14 @@ class TMDBVerify:
                                     f"  [TMDB] Strateji B başarılı: DİZİ — "
                                     f"'{title}' başlık + yönetmen eşleşti (is_series=True)"
                                 )
-                                return r, kind, _via
+                                return r, kind, _via, []
                             else:
                                 if _b_crew_ok(r, credits):
                                     self._log(
                                         f"  [TMDB] Strateji B başarılı: FİLM — "
                                         f"'{title}' crew kıyaslaması geçti"
                                     )
-                                    return r, kind, _via
+                                    return r, kind, _via, []
                                 else:
                                     self._log(
                                         f"  [TMDB] Strateji B: '{title}' — "
@@ -863,8 +883,11 @@ class TMDBVerify:
 
             fuzzy_validate=False — Strateji C: isim doğrulaması yok
             fuzzy_validate=True  — Strateji D: rapidfuzz ratio >= 80 gerekli
+
+            Dördüncü eleman: kişi kanıtı listesi (eşleşen kişilerin yapılandırılmış kaydı)
             """
             work_matches: Dict[int, dict] = {}
+            matched_persons: List[Dict[str, Any]] = []  # kişi kanıtı biriktirici
 
             cast_names_set = set(cast_names)
             actor_candidates = [n for n in cast_names if not _looks_like_company(n)]
@@ -882,6 +905,9 @@ class TMDBVerify:
                 f"yönetmen={filtered_directors}, diğer_crew={filtered_crew[:3]}"
             )
 
+            _cast_set_in_search = set(actor_candidates[:20])
+            _director_set_in_search = set(d for d in director_names if d not in cast_names_set)
+
             persons_to_search = (
                 actor_candidates[:20]
                 + [d for d in director_names if d not in cast_names_set]
@@ -895,6 +921,14 @@ class TMDBVerify:
                         f"{idx}/{len(persons_to_search)} kişi işlendi, bekleniyor..."
                     )
                     self.client._throttle_sleep(0.5)
+
+                # Rol tespiti: kişi arama kanıtında kullanılır
+                if actor in _cast_set_in_search:
+                    _actor_role = "cast"
+                elif actor in _director_set_in_search:
+                    _actor_role = "director"
+                else:
+                    _actor_role = "crew"
 
                 cache_key = f"search_person_{_norm(actor)}"
                 persons = self._load_cache(cache_key)
@@ -925,6 +959,7 @@ class TMDBVerify:
                     person_id = person.get("id")
                     if not person_id:
                         continue
+                    _tmdb_person_name = (person.get("name") or "").strip()
                     cache_key_credits = f"person_combined_{person_id}"
                     person_credits = self._load_cache(cache_key_credits)
                     if person_credits is None:
@@ -933,6 +968,7 @@ class TMDBVerify:
                             self._save_cache(cache_key_credits, person_credits)
                         except Exception:
                             # combined_credits başarısız olursa known_for fallback
+                            _contributed_via_known_for = False
                             for work in (person.get("known_for") or []):
                                 kind = work.get("media_type", "")
                                 if kind not in ("tv", "movie"):
@@ -942,9 +978,21 @@ class TMDBVerify:
                                     if wid not in work_matches:
                                         work_matches[wid] = {"entry": work, "kind": kind, "count": 0}
                                     work_matches[wid]["count"] += 1
+                                    _contributed_via_known_for = True
+                            # Kişi kanıtına ekle (known_for ile katkı yaptıysa)
+                            if _contributed_via_known_for and _tmdb_person_name:
+                                if not any(pe["ocr_name"] == actor for pe in matched_persons):
+                                    matched_persons.append({
+                                        "ocr_name": actor,
+                                        "tmdb_name": _tmdb_person_name,
+                                        "tmdb_id": person_id,
+                                        "role": _actor_role,
+                                        "source_strategy": _lbl,
+                                    })
                             continue
 
                     # combined_credits cast + crew bölümlerini tara
+                    _contributed_via_combined = False
                     seen_work_ids: set = set()
                     for section in ("cast", "crew"):
                         for work in (person_credits.get(section) or []):
@@ -958,6 +1006,18 @@ class TMDBVerify:
                             if wid not in work_matches:
                                 work_matches[wid] = {"entry": work, "kind": kind, "count": 0}
                             work_matches[wid]["count"] += 1
+                            _contributed_via_combined = True
+
+                    # Kişi kanıtına ekle (combined_credits ile katkı yaptıysa)
+                    if _contributed_via_combined and _tmdb_person_name:
+                        if not any(pe["ocr_name"] == actor for pe in matched_persons):
+                            matched_persons.append({
+                                "ocr_name": actor,
+                                "tmdb_name": _tmdb_person_name,
+                                "tmdb_id": person_id,
+                                "role": _actor_role,
+                                "source_strategy": _lbl,
+                            })
 
             if work_matches:
                 best = max(work_matches.values(), key=lambda x: x["count"])
@@ -978,9 +1038,9 @@ class TMDBVerify:
                                 f"  [TMDB] {matched} oyuncu + {director_matched} yönetmen "
                                 f"eşleşti → %100 güven"
                             )
-                            return best["entry"], best["kind"], "cast_only"
+                            return best["entry"], best["kind"], "cast_only", matched_persons
 
-            return None, "", ""
+            return None, "", "", matched_persons
 
         # ── Strateji C: Oyuncu isimleri + Yönetmen (başlık yok, fuzzy doğrulama yok) ──
         self._log(f"  [TMDB] Strateji C test ediliyor...")
@@ -997,8 +1057,16 @@ class TMDBVerify:
             self._log(f"  [TMDB] Strateji D başarılı")
             return result_d
 
+        # Stratejiler başarısız — C ve D'nin kişi kanıtlarını birleştir
+        _evidence_c = result_c[3]
+        _evidence_d = result_d[3]
+        _c_ocr_names = {pe["ocr_name"] for pe in _evidence_c}
+        _combined_evidence = list(_evidence_c) + [
+            pe for pe in _evidence_d if pe["ocr_name"] not in _c_ocr_names
+        ]
+
         self._log(f"  [TMDB] Tüm stratejiler başarısız — ADIM 4'e geçiliyor")
-        return None, "", ""
+        return None, "", "", _combined_evidence
 
     # ── Credits çek ─────────────────────────────────────────────────
     def _fetch_credits(self, kind: str, mid: int) -> Optional[dict]:

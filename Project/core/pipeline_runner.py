@@ -70,6 +70,92 @@ def _safe_path(path: Path) -> Path:
         n += 1
 
 
+def _merge_tmdb_person_evidence(cdata: dict, person_evidence: list, log_cb) -> int:
+    """Strateji C/D kişi kanıtlarını cdata cast/crew'a ekle (kurtarma).
+
+    Yalnızca:
+    - Rolü 'cast' veya 'director' olan kişiler eklenir.
+    - Mevcut isimlerle çakışan kişiler atlanır (duplicate önleme).
+    - Eklenen kayıtlar 'tmdb_person_recovery' provenance etiketiyle işaretlenir.
+
+    Return: eklenen kayıt sayısı.
+    """
+    def _n(s: str) -> str:
+        return "".join(ch for ch in (s or "").lower() if ch.isalnum())
+
+    # Mevcut cast isimlerini normalize et
+    existing_cast = cdata.get("cast") or []
+    existing_cast_norm = {
+        _n(row.get("actor_name") or row.get("actor") or "")
+        for row in existing_cast
+        if isinstance(row, dict)
+    }
+
+    # Mevcut crew/directors isimlerini normalize et
+    existing_crew_norm = {
+        _n(row.get("name") or "")
+        for row in (cdata.get("crew") or []) + (cdata.get("directors") or [])
+        if isinstance(row, dict)
+    }
+
+    added = 0
+
+    for pe in person_evidence:
+        role = pe.get("role", "cast")
+        ocr_name = (pe.get("ocr_name") or "").strip()
+        tmdb_name = (pe.get("tmdb_name") or "").strip()
+        tmdb_id = pe.get("tmdb_id")
+        strategy = pe.get("source_strategy", "?")
+
+        # Kullanılacak isim: TMDB kanonik adı öncelikli
+        name_to_use = tmdb_name or ocr_name
+        if not name_to_use:
+            continue
+
+        name_norm = _n(name_to_use)
+        if not name_norm:
+            continue
+
+        if role == "cast":
+            if name_norm in existing_cast_norm:
+                continue
+            existing_cast.append({
+                "actor_name": name_to_use,
+                "actor": name_to_use,
+                "confidence": 0.7,
+                "raw": "tmdb_person_recovery",
+                "source": "tmdb_person_recovery",
+                "tmdb_id": tmdb_id,
+                "tmdb_strategy": strategy,
+            })
+            existing_cast_norm.add(name_norm)
+            added += 1
+
+        elif role == "director":
+            if name_norm in existing_crew_norm:
+                continue
+            existing_crew = cdata.get("crew") or []
+            existing_crew.append({
+                "name": name_to_use,
+                "job": "Director",
+                "role": "Director",
+                "role_tr": "Yönetmen",
+                "confidence": 0.7,
+                "raw": "tmdb_person_recovery",
+                "source": "tmdb_person_recovery",
+                "tmdb_id": tmdb_id,
+                "tmdb_strategy": strategy,
+            })
+            cdata["crew"] = existing_crew
+            existing_crew_norm.add(name_norm)
+            added += 1
+
+    if added > 0:
+        cdata["cast"] = existing_cast
+
+    return added
+
+
 class PipelineRunner:
     """Film/Dizi analiz pipeline."""
 
@@ -850,6 +936,25 @@ class PipelineRunner:
                         else:
                             if tmdb_result:
                                 self._log(f"  [TMDB Film] {tmdb_result.reason}")
+                                # ── Strateji C/D kişi kanıtı kurtarma ──
+                                # Film reddedildi/bulunamadı ama kişi kanıtı varsa cast'a ekle
+                                _person_evidence = (tmdb_result.person_evidence or [])
+                                if (_person_evidence and tmdb_result.reason in (
+                                    "reverse_validation_rejected", "tmdb match not found"
+                                )):
+                                    self._log(
+                                        f"  [TMDB PersonRecovery] "
+                                        f"{len(_person_evidence)} kişi kanıtı korunuyor "
+                                        f"(film reddedildi/bulunamadı)"
+                                    )
+                                    _merged = _merge_tmdb_person_evidence(
+                                        cdata, _person_evidence, self._log
+                                    )
+                                    if _merged > 0:
+                                        self._log(
+                                            f"  [TMDB PersonRecovery] "
+                                            f"{_merged} kişi cast çıktısına eklendi"
+                                        )
                     except Exception as e:
                         self._log(f"  [TMDB Film] Hata: {e}")
 
