@@ -811,6 +811,42 @@ class PipelineRunner:
                                 cdata["_tmdb_cast_ref"] = tmdb_result.cast or []
                                 cdata["_tmdb_crew_ref"] = tmdb_result.crew or []
                                 self._log(f"  [TMDB] Referans modu — OCR verisi korunuyor")
+                                # TMDB crew verisini raw:"tmdb" etiketiyle cdata["crew"]'a ekle
+                                # export_engine bu etiketi kullanarak TMDB'yi önceliklendirir
+                                _tmdb_backup_crew = []
+                                for item in (tmdb_result.crew or []):
+                                    _name = (item.get("name") or "").strip()
+                                    if not _name:
+                                        continue
+                                    _job = (item.get("job") or "").strip()
+                                    _tmdb_backup_crew.append({
+                                        "name": _name,
+                                        "job": _job,
+                                        "role": _job,
+                                        "role_tr": self._JOB_TR.get(_job, _job),
+                                        "raw": "tmdb",
+                                        "confidence": 0.8,
+                                    })
+                                # TMDB directors'ı da ekle
+                                for d in (tmdb_result.directors or []):
+                                    _dname = (d.get("name") or "").strip() if isinstance(d, dict) else str(d).strip()
+                                    if not _dname:
+                                        continue
+                                    _tmdb_backup_crew.append({
+                                        "name": _dname,
+                                        "job": "Director",
+                                        "role": "Director",
+                                        "role_tr": "Yönetmen",
+                                        "raw": "tmdb",
+                                        "confidence": 0.8,
+                                    })
+                                if _tmdb_backup_crew:
+                                    existing_crew = cdata.get("crew") or []
+                                    cdata["crew"] = existing_crew + _tmdb_backup_crew
+                                    self._log(
+                                        f"  [TMDB Backup] reverse_validation_rejected ama "
+                                        f"{len(_tmdb_backup_crew)} crew kaydı yedeklendi"
+                                    )
                         else:
                             if tmdb_result:
                                 self._log(f"  [TMDB Film] {tmdb_result.reason}")
@@ -879,6 +915,27 @@ class PipelineRunner:
                             self._log(f"  [LLM] Cast filtreleme: {llm_elapsed:.1f}s")
                 else:
                     self._log(f"\n[LLM] IMDb/TMDB eşleşti — LLM filtresi atlanıyor")
+
+                # ══ [GEMINI CREW] TMDB eşleşmedi → Gemini ile crew doğrulama ══
+                # Sadece TMDB miss durumunda ve TMDB backup crew yoksa çalışır
+                if not tmdb_matched and not any(
+                    c.get("raw") == "tmdb" for c in (cdata.get("crew") or [])
+                ):
+                    try:
+                        from core.gemini_crew_validator import validate_crew_with_gemini
+                        _gcv_result = validate_crew_with_gemini(
+                            film_title=cdata.get("film_title", ""),
+                            ocr_crew=cdata.get("technical_crew") or cdata.get("crew") or [],
+                            ocr_lines=ocr_lines,
+                        )
+                        if _gcv_result and _gcv_result.get("verified_roles"):
+                            cdata["_gemini_crew_roles"] = _gcv_result["verified_roles"]
+                            self._log(
+                                f"  [Gemini Crew] Doğrulama başarılı: "
+                                f"{sum(len(v) for v in _gcv_result['verified_roles'].values())} kişi"
+                            )
+                    except Exception as _gcv_err:
+                        self._log(f"  [Gemini Crew] Hata: {_gcv_err}")
 
                 # ══ [GOOGLE_VI] Akıllı tetik ════════════════════════════
                 # TMDB/IMDb miss + düşük çözünürlük veya non-standard font ise Google VI çağır

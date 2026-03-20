@@ -555,8 +555,11 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     # ─── YAPIMCI ───────────────────────────────────────────────────────────
     # Fransızca
     "producteur délégué": "YAPIMCI", "producteur delegue": "YAPIMCI",
+    "producteur exécutif": "YAPIMCI", "producteur executif": "YAPIMCI",
     "production exécutive": "YAPIMCI", "production executive": "YAPIMCI",
     "produetion exécutive": "YAPIMCI",  # OCR varyantı
+    "production déléguée": "YAPIMCI", "production deleguee": "YAPIMCI",
+    "directeur de production": "YAPIMCI",
     "coproduction": "YAPIMCI", "une coproduction": "YAPIMCI",
     # İspanyolca
     "producción": "YAPIMCI", "produccion": "YAPIMCI",
@@ -569,7 +572,8 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "nirmaata": "YAPIMCI", "nirmata": "YAPIMCI",
     # ─── YÖNETMEN ──────────────────────────────────────────────────────────
     # Fransızca
-    "realisation": "YÖNETMEN",
+    "réalisation": "YÖNETMEN", "realisation": "YÖNETMEN",
+    "réalisateur": "YÖNETMEN", "realisateur": "YÖNETMEN",
     "reallsation": "YÖNETMEN",  # OCR varyantı
     "réalisé par": "YÖNETMEN", "realise par": "YÖNETMEN",
     "un film de": "YÖNETMEN",
@@ -602,6 +606,7 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "sahayak nirdeshak": "YÖNETMEN YARDIMCISI",
     # ─── GÖRÜNTÜ YÖNETMENİ ────────────────────────────────────────────────
     # Fransızca
+    "directeur de la photographie": "GÖRÜNTÜ YÖNETMENİ",
     "chef opérateur": "GÖRÜNTÜ YÖNETMENİ",
     "chef operateur": "GÖRÜNTÜ YÖNETMENİ",
     # İspanyolca
@@ -631,8 +636,10 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     # ─── KAMERA ───────────────────────────────────────────────────────────
     # Fransızca
     "cadreur": "KAMERA",
+    "opérateur": "KAMERA", "operateur": "KAMERA",
     "opérateur de prise de vue": "KAMERA",
     "operateur de prise de vue": "KAMERA",
+    "assistant opérateur": "KAMERA", "assistant operateur": "KAMERA",
     # İspanyolca
     "operador de cámara": "KAMERA", "operador de camara": "KAMERA",
     # Almanca
@@ -653,6 +660,18 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "montaaj": "KURGU",
     # Hintçe transkripsiyon
     "sampadak": "KURGU", "sampadan": "KURGU",
+    # ─── EXCLUDED — kategoride yok, çıktıya yazılmaz ─────────────────────
+    # Script supervisor / dekor rolleri (senaryo yazarlığı değil)
+    "scripte": "EXCLUDED", "chef décorateur": "EXCLUDED", "chef decorateur": "EXCLUDED",
+    # Müzik / Besteci
+    "musique": "EXCLUDED", "musique de": "EXCLUDED",
+    "music by": "EXCLUDED", "original music": "EXCLUDED",
+    "composer": "EXCLUDED",
+    # Ses
+    "son": "EXCLUDED", "sound": "EXCLUDED",
+    # Makyaj / Kostüm vb.
+    "maquillage": "EXCLUDED", "makeup": "EXCLUDED",
+    "costumes": "EXCLUDED",
 }
 
 # Bilinen rol başlıkları seti — bu değerler asla kişi ismi olamaz.
@@ -751,7 +770,53 @@ def _map_crew_to_roles(crew_data: list, directors: list) -> dict[str, list[str]]
             if match:
                 output_role = _ROLE_TO_OUTPUT[match[0]]
 
-        if output_role and name not in result[output_role]:
+        if output_role and output_role != "EXCLUDED" and name not in result[output_role]:
+            result[output_role].append(name)
+
+    return result
+
+
+def _map_tmdb_crew_to_roles(tmdb_crew: list, directors: list) -> dict[str, list[str]]:
+    """TMDB'den gelen crew verisini 7 çıktı rolüne dönüştür.
+
+    TMDB verisi zaten doğrulanmış olduğundan ekstra kişi-adı filtresi gerekmez.
+    """
+    result: dict[str, list[str]] = {role: [] for role in _OUTPUT_ROLES}
+
+    # Directors → YÖNETMEN
+    for d in (directors or []):
+        name = d if isinstance(d, str) else (d.get("name") or "")
+        name = name.strip()
+        if name and name not in result["YÖNETMEN"]:
+            result["YÖNETMEN"].append(name)
+
+    for entry in (tmdb_crew or []):
+        name = (entry.get("name") or "").strip()
+        if not name:
+            continue
+
+        # role_tr varsa onu kullan (pipeline_runner'da çevrilmiş), yoksa job/role
+        role_raw = (
+            entry.get("role_tr") or entry.get("job") or entry.get("role") or ""
+        ).strip()
+        role_lower = role_raw.lower()
+        if not role_lower:
+            continue
+
+        output_role = _ROLE_TO_OUTPUT.get(role_lower)
+
+        # TMDB job title'ları standart olduğundan fuzzy match da dene
+        if not output_role and _HAS_RAPIDFUZZ:
+            match = _rf_process.extractOne(
+                role_lower,
+                list(_ROLE_TO_OUTPUT.keys()),
+                scorer=_fuzz.WRatio,
+                score_cutoff=82,
+            )
+            if match:
+                output_role = _ROLE_TO_OUTPUT[match[0]]
+
+        if output_role and output_role != "EXCLUDED" and name not in result[output_role]:
             result[output_role].append(name)
 
     return result
@@ -1553,11 +1618,33 @@ class ExportEngine:
         ]
         director_names = self._director_names(cr)
 
-        # NameVerifier tarafından doğrulanmış crew_roles varsa onu kullan
-        if cr.get("_verified_crew_roles"):
+        # ── Crew rol eşleştirme (4 katmanlı öncelik) ──
+        # 1) TMDB crew varsa (raw:"tmdb" tag'li) → en güvenilir kaynak
+        # 2) Gemini doğrulaması varsa (TMDB miss durumunda) → ikinci öncelik
+        # 3) NameVerifier doğrulamış crew varsa → OCR + doğrulama
+        # 4) Hiçbiri yoksa → ham OCR parse
+        tmdb_crew = [c for c in (cr.get("crew") or []) if c.get("raw") == "tmdb"]
+        gemini_roles = cr.get("_gemini_crew_roles")
+        if tmdb_crew:
+            # TMDB directors'ı da crew'dan çıkar
+            tmdb_directors = [
+                c.get("name", "") for c in tmdb_crew
+                if (c.get("job") or "").strip().lower() in ("director", "yonetmen", "yönetmen")
+            ]
+            crew_roles = _map_tmdb_crew_to_roles(tmdb_crew, tmdb_directors or director_names)
+            # TMDB'de eksik roller için OCR fallback
+            ocr_roles = cr.get("_verified_crew_roles") or _map_crew_to_roles(
+                cr.get("technical_crew") or [], director_names)
+            for role_key, names in ocr_roles.items():
+                if not crew_roles.get(role_key):
+                    crew_roles[role_key] = names
+        elif gemini_roles:
+            crew_roles = gemini_roles
+        elif cr.get("_verified_crew_roles"):
             crew_roles = cr["_verified_crew_roles"]
         else:
-            crew_roles = _map_crew_to_roles(cr.get("technical_crew") or cr.get("crew") or [], director_names)
+            crew_roles = _map_crew_to_roles(
+                cr.get("technical_crew") or cr.get("crew") or [], director_names)
 
         # Özel isimler: Türkçe olmayan adlar ASCII/İngilizce karakterle korunur.
         protected_words = _collect_protected_words(
