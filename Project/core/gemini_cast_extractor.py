@@ -75,6 +75,58 @@ CREW kuralları:
 - Stunt veya dublör rolleri (Stunts, Stunt Double, Stunt Coordinator, Stunt Driver, Stunt Performer, Stunt Actor, Utility Stunts, Dublör, Cascadeur, Stuntkoordinator vb.) varsa bunları tamamen atla — cast'a veya crew'e ekleme.
 """
 
+
+# ---------------------------------------------------------------------------
+# Crew-only score-aware prompt (Director / Producer / Writer only)
+# ---------------------------------------------------------------------------
+_CREW_SCORE_PROMPT = """You are a strict film-credits extraction assistant.
+Your ONLY task: identify real HUMAN persons serving as Director, Producer, or Writer in the provided OCR score data.
+
+INPUT FORMAT
+Each entry has these fields:
+  text            — OCR-read text
+  ocr_confidence  — OCR engine confidence (0.0–1.0); higher = more reliable reading
+  seen_count      — how many frames this text appeared in; higher = more persistent, less noise
+  verdict         — pipeline pre-classification: "KEEP" (likely a real person/role line) or "REJECTED" (likely noise/non-person)
+  name_db_match   — true if matched in a known-names database
+  llm_verified    — true if a previous LLM pass already verified this as a person name
+  pipeline_confidence — overall pipeline confidence score (null if unavailable)
+
+MULTILINGUAL ROLE VOCABULARY — look for these labels/headers (case-insensitive) immediately before or near a person name:
+  Director  : director, directed by, a film by, film by, réalisateur, réalisatrice, réalisation, un film de,
+              regisseur, regie, regia, yönetmen, yöneten, مخرج, निर्देशक, निर्देशन
+  Producer  : producer, produced by, executive producer, produzent, producteur, productrice,
+              produttore, productor, yapımcı, yapım yönetmeni, منتج, निर्माता
+  Writer    : writer, written by, screenplay, screenwriter, story by, drehbuchautor, scénariste,
+              sceneggiatore, guionista, senarist, senaryo, كاتب السيناريو, पटकथा
+
+HARD REJECTION RULES — return an empty list if ALL entries are rejected by any of these:
+1. verdict == "REJECTED" entries are excluded by default unless they contain a strong role label
+   AND have ocr_confidence >= 0.50 AND seen_count >= 2.
+2. NEVER return any of the following as a person:
+   - Country names (France, Germany, Cameroon, Cameroun, Italy, Spain, etc.)
+   - Government ministries / agencies (MINISTERE DE LA COOPERATION, Ministry of Culture, etc.)
+   - TV/Radio channels (CRTV, Cameroun Radio and Television, RAI, ARD, etc.)
+   - Production companies / studios (any text ending in "Films", "Productions", "Studio", "Corp", "Inc", "Ltd", "GmbH", "S.A.", "SARL", etc.)
+   - Schools / universities / funds / foundations (FODIC, CNC, Fonds Sud, etc.)
+   - Generic role headers WITHOUT a person name following (e.g. "Réalisateur" alone)
+   - Acknowledgement / participation blocks ("avec le soutien de", "en coproduction avec", "remerciements", "special thanks", etc.)
+   - Co-production credit lines
+   - Locations / addresses / years / slogans
+3. Be conservative: if you cannot confidently identify a real human first+last name, return empty list for that role.
+4. Prefer entries where name_db_match=true or llm_verified=true or high seen_count + high ocr_confidence.
+5. ONLY return JSON. No explanations.
+
+OUTPUT FORMAT (strict JSON, no markdown):
+{
+  "directors": ["Full Name"],
+  "producers": ["Full Name"],
+  "writers":   ["Full Name"]
+}
+
+If no confident person found for a role, use an empty list [].
+"""
+
 class GeminiCastExtractor:
     """Cast/crew ayıklama için Gemini 2.5 Flash kullanır; OCR metinden kişi isimlerini ayıklar."""
 
@@ -154,6 +206,125 @@ OCR'dan okunan kısa/anlamsız metin parçaları (örn. "XX", "AB", "CD") film b
             return {}
 
         return self._parse_response(response)
+
+    def extract_crew_from_scores(
+        self,
+        ocr_scores: list[dict],
+        film_title: str = "",
+        max_entries: int = 200,
+    ) -> dict:
+        """OCR skor verisinden yalnızca Yönetmen/Yapımcı/Yazar ayıkla.
+
+        Ham OCR metin satırları yerine OCR score JSON yapısını kullanır.
+        Bu sayede verdict/confidence/seen_count filtreleri Gemini'ye
+        sinyal olarak iletilir ve gürültülü satırlar (REJECTED) varsayılan
+        olarak dışlanır.
+
+        Args:
+            ocr_scores: OCR score dict listesi. Her eleman:
+                        {text, ocr_confidence, seen_count, verdict,
+                         name_db_match, llm_verified, pipeline_confidence}
+            film_title: Film başlığı (anchor, isteğe bağlı).
+            max_entries: Gönderilecek maksimum skor kaydı sayısı.
+
+        Returns:
+            {"directors": [...], "producers": [...], "writers": [...]}
+            veya hata durumunda boş dict.
+        """
+        self.timed_out = False
+        if not ocr_scores:
+            return {}
+        if not self._api_key:
+            self._log("  [Gemini] API key yok — crew skor ayıklama atlanıyor")
+            return {}
+
+        # Büyük listeler için sınırla
+        entries = ocr_scores[:max_entries]
+        if len(ocr_scores) > max_entries:
+            self._log(f"  [Gemini] OCR skor sınırlandı: {max_entries}")
+
+        # Compact JSON payload — sadece gerekli alanlar
+        payload = json.dumps(entries, ensure_ascii=False)
+
+        title_section = (
+            f'Film title (trusted anchor): "{film_title}"\n\n'
+            if film_title
+            else ""
+        )
+        prompt = (
+            _CREW_SCORE_PROMPT
+            + title_section
+            + "OCR SCORE DATA (JSON array):\n"
+            + payload
+        )
+
+        if film_title:
+            self._log(f"  [Gemini] Crew skor ayıklama: '{film_title}'")
+        else:
+            self._log("  [Gemini] Crew skor ayıklama başlatılıyor...")
+
+        _timed_out_flag: list[bool] = []
+        try:
+            response = _llm._gemini_generate(
+                prompt,
+                api_key=self._api_key,
+                model=self._model,
+                timeout=_TIMEOUT_SEC,
+                log_cb=self._log_cb,
+                timeout_flag=_timed_out_flag,
+            )
+        except Exception as e:
+            self._log(f"  [Gemini] API hatası (crew skor): {e}")
+            return {}
+        finally:
+            if _timed_out_flag:
+                self.timed_out = True
+
+        if not response:
+            self._log("  [Gemini] Boş yanıt (crew skor)")
+            return {}
+
+        return self._parse_crew_score_response(response)
+
+    def _parse_crew_score_response(self, response: str) -> dict:
+        """Crew skor Gemini yanıtından JSON ayıkla.
+
+        Beklenen format: {"directors": [...], "producers": [...], "writers": [...]}
+        """
+        text = response.strip()
+        if "```" in text:
+            start = text.find("{", text.find("```"))
+            end = text.rfind("}") + 1
+            if start != -1 and end > start:
+                text = text[start:end]
+        else:
+            start = text.find("{")
+            end = text.rfind("}") + 1
+            if start != -1 and end > start:
+                text = text[start:end]
+
+        try:
+            data = json.loads(text)
+        except (json.JSONDecodeError, ValueError) as e:
+            self._log(f"  [Gemini] JSON parse hatası (crew skor): {e}")
+            return {}
+
+        if not isinstance(data, dict):
+            return {}
+
+        result: dict[str, list[str]] = {}
+        for key in ("directors", "producers", "writers"):
+            raw = data.get(key)
+            if isinstance(raw, list):
+                result[key] = [
+                    str(name).strip()
+                    for name in raw
+                    if name and str(name).strip()
+                ]
+            else:
+                result[key] = []
+        return result
+
 
     def _parse_response(self, response: str) -> dict:
         """Gemini yanıtından JSON cast/crew verisi çıkar."""
