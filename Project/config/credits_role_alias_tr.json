@@ -22,7 +22,8 @@
         "regie", "réalisation", "realisation", "regia", "regia di",
         "dirección", "direccion", "dirigido por", "dirigé par",
         "film by", "a film by", "directed by", "ein film von",
-        "regie:", "réalisé par", "realise par"
+        "regie:", "réalisé par", "realise par",
+        "un film de"
       ],
       "patterns": [
         "\\byönetmen\\b", "\\byonetmen\\b", "\\bdirector\\b",
@@ -57,7 +58,9 @@
         "goruntuyonetmeni", "goruntuyon.asistani", "goruntu yon. asistani",
         "kamera operatorleri", "kamera operatörleri",
         "kamera asistanlari", "kamera asistani",
-        "focuspuller", "focus puller", "dit"
+        "focuspuller", "focus puller", "dit",
+        "chef opérateur", "chef operateur", "cadreur",
+        "assistant opérateur", "assistant operateur"
       ],
       "patterns": [
         "\\bgörüntü\\s+yönetmeni\\b", "\\bgoruntu\\s+yonetmeni\\b",
@@ -87,7 +90,8 @@
         "film editing", "schnitt", "montage", "montaggio",
         "edición", "edicion", "edição", "edicao",
         "kurgu asistanlari", "kurgu asistani",
-        "negatif montaj", "senkron"
+        "negatif montaj", "senkron",
+        "assistant monteur"
       ],
       "patterns": [
         "\\bkurgu\\b", "\\bmontaj\\b", "\\beditor\\b",
@@ -102,7 +106,9 @@
         "produttore", "productor", "produtor",
         "executive producer", "yapım yönetmeni",
         "koordinatör", "koordinator",
-        "yürütücü yapımcı", "yurtucu yapimci"
+        "yürütücü yapımcı", "yurtucu yapimci",
+        "assistant à la production", "assistant a la production",
+        "assistant a la produetion"
       ],
       "patterns": [
         "\\byapımcı\\b", "\\byapimci\\b", "\\bproducer\\b",
@@ -118,7 +124,8 @@
         "assistant director", "first assistant director",
         "second assistant director", "1st ad", "2nd ad",
         "regiassistent", "assistenzregisseur",
-        "reji asistani", "reji koordinasyonu"
+        "reji asistani", "reji koordinasyonu",
+        "assistant réalisateur", "assistant realisateur"
       ],
       "patterns": [
         "\\byardımcı\\s+yönetmen\\b", "\\byardimci\\s+yonetmen\\b",
@@ -175,7 +182,8 @@
         "tonmeister", "ingénieur du son",
         "ses kayit", "ses kaylt", "seskayit", "seskaylt",
         "ses edit", "ses ediiefeki", "ses edit efekt",
-        "ses operatoru", "2.ekip ses operatoru", "2.ekipses operatoro"
+        "ses operatoru", "2.ekip ses operatoru", "2.ekipses operatoro",
+        "son"
       ],
       "patterns": [
         "\\bses\\b", "\\bsound\\b", "\\bton\\b"

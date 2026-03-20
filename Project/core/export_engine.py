@@ -558,6 +558,9 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "production exécutive": "YAPIMCI", "production executive": "YAPIMCI",
     "produetion exécutive": "YAPIMCI",  # OCR varyantı
     "coproduction": "YAPIMCI", "une coproduction": "YAPIMCI",
+    "assistant à la production": "YAPIMCI",
+    "assistant a la production": "YAPIMCI",
+    "assistant a la produetion": "YAPIMCI",  # OCR typo varyantı
     # İspanyolca
     "producción": "YAPIMCI", "produccion": "YAPIMCI",
     "productora": "YAPIMCI",
@@ -633,6 +636,8 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "cadreur": "KAMERA",
     "opérateur de prise de vue": "KAMERA",
     "operateur de prise de vue": "KAMERA",
+    "assistant opérateur": "KAMERA",
+    "assistant operateur": "KAMERA",
     # İspanyolca
     "operador de cámara": "KAMERA", "operador de camara": "KAMERA",
     # Almanca
