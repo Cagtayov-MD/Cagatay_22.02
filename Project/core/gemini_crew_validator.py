@@ -13,6 +13,77 @@ import logging
 _log = logging.getLogger(__name__)
 
 
+def verify_single_name(
+    name: str,
+    gemini_model: str = "gemini-2.5-flash",
+) -> str:
+    """Tek bir isim için Gemini YES/NO doğrulayıcı.
+
+    Mevcut crew-level validate_crew_with_gemini()'den BAĞIMSIZ bir
+    fonksiyondur — o fonksiyon ve davranışı değişmeden korunur.
+
+    Gemini'yi yalnızca DOĞRULAYICI olarak kullanır (üretici değil).
+    Cevap ``response.strip().upper()`` ile normalize edilir; yalnızca
+    tam ``YES`` veya ``NO`` kabul edilir.
+
+    Args:
+        name: Doğrulanacak tam isim (isim + soyisim).
+        gemini_model: Kullanılacak Gemini model adı.
+
+    Returns:
+        ``"YES"``  — Gemini ismi gerçek bir kişi adı olarak onayladı.
+        ``"NO"``   — Gemini ismi reddetti.
+        ``"invalid_response"`` — Yanıt YES/NO dışında bir şey döndü
+                                  (loglama yapılır, rejection olarak sayılır).
+        ``"gemini_timeout"``   — Zaman aşımı (fail-closed).
+        ``"gemini_network_error"`` — Ağ/IO hatası (fail-closed).
+        ``"gemini_parse_error"``   — Beklenmedik parse/format hatası (fail-closed).
+    """
+    try:
+        import core.llm_provider as _llm
+    except ImportError:
+        _log.warning("[GeminiSingleName] llm_provider import edilemedi")
+        return "gemini_network_error"
+
+    prompt = (
+        f'Is "{name}" a real human person\'s full name (first name + surname)? '
+        "Answer with exactly YES or NO, nothing else."
+    )
+
+    try:
+        response = _llm.generate(
+            prompt=prompt,
+            provider="gemini",
+            model=gemini_model,
+        )
+    except TimeoutError:
+        _log.warning(f"[GeminiSingleName] Zaman aşımı: {name!r}")
+        return "gemini_timeout"
+    except OSError as e:
+        _log.warning(f"[GeminiSingleName] Ağ hatası: {name!r} — {e}")
+        return "gemini_network_error"
+    except Exception as e:
+        _log.warning(f"[GeminiSingleName] Beklenmedik hata: {name!r} — {e}")
+        return "gemini_parse_error"
+
+    if not response:
+        _log.warning(f"[GeminiSingleName] Boş yanıt: {name!r}")
+        return "gemini_parse_error"
+
+    normalized = response.strip().upper()
+    if normalized == "YES":
+        _log.info(f"[GeminiSingleName] YES: {name!r}")
+        return "YES"
+    if normalized == "NO":
+        _log.info(f"[GeminiSingleName] NO: {name!r}")
+        return "NO"
+
+    _log.warning(
+        f"[GeminiSingleName] Geçersiz yanıt (invalid_response): {name!r} → {response!r}"
+    )
+    return "invalid_response"
+
+
 def validate_crew_with_gemini(
     film_title: str,
     ocr_crew: list[dict],
