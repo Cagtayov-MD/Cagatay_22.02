@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -458,14 +459,10 @@ class TMDBVerify:
             except (ValueError, TypeError):
                 pass
         if not _ocr_year_pre:
-            import re as _re
             _fname_pre = str(cdata.get("filename") or cdata.get("_source_file") or "")
-            _m_pre = _re.search(r'\b(1[9][0-9]{2}|20[0-2][0-9])\b', _fname_pre)
+            _m_pre = re.search(r'\b(1[9][0-9]{2}|20[0-2][0-9])\b', _fname_pre)
             if _m_pre:
-                try:
-                    _ocr_year_pre = int(_m_pre.group(1))
-                except ValueError:
-                    pass
+                _ocr_year_pre = int(_m_pre.group(1))
 
         # ── Crew dict'leri (Strateji B DoP/editor kıyaslaması için) ──
         _ocr_crew_dicts = [
@@ -763,14 +760,16 @@ class TMDBVerify:
         _norm_film = _norm(film_title or "")
         _norm_orig = _norm(original_title or "")
         _orig_usable = bool(original_title and _norm_orig and _norm_orig != _norm_film)
-        _SMALL_CAST_LIMIT = 5
+        _SMALL_CAST_LIMIT = 5    # bu değerin altında küçük cast eşiği (2) kullanılır
+        _ORIG_MIN_CAST_ABS = 3   # orijinal başlık için mutlak minimum cast eşleşmesi
+        _ORIG_CAST_DIVISOR = 3   # orijinal başlık için dinamik eşik: cast / bu sayı
 
         title_sources = []
         if film_title:
             title_sources.append(("primary", film_title, 2))
         if _orig_usable:
             orig_min_cast = (
-                max(3, len(cast_names) // 3)
+                max(_ORIG_MIN_CAST_ABS, len(cast_names) // _ORIG_CAST_DIVISOR)
                 if len(cast_names) >= _SMALL_CAST_LIMIT
                 else 2
             )
