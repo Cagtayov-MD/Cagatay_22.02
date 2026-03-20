@@ -661,7 +661,7 @@ class PipelineRunner:
                         cdata["original_title"] = xml_info.original_title
                         self._log(f"  [XML→TMDB] Orijinal başlık TMDB'ye iletiliyor: '{xml_info.original_title}'")
                     try:
-                        tmdb_result = self._run_tmdb(cdata, work_dir)
+                        tmdb_result = self._run_tmdb(cdata, work_dir, is_series=_is_series)
                         if tmdb_result and (tmdb_result.updated or tmdb_result.matched_id):
                             self._log(f"  [TMDB Film] '{tmdb_result.matched_title}' — "
                                       f"hits:{tmdb_result.hits} misses:{tmdb_result.misses}")
@@ -1260,7 +1260,7 @@ class PipelineRunner:
     # ──────────────────────────────────────────────────────────────
     # TMDB
     # ──────────────────────────────────────────────────────────────
-    def _run_tmdb(self, cdata: dict, work_dir: str):
+    def _run_tmdb(self, cdata: dict, work_dir: str, is_series: bool = False):
         from core.tmdb_verify import TMDBVerify, TMDBVerifyResult
 
         api_key = (
@@ -1288,7 +1288,7 @@ class PipelineRunner:
             language=lang,
             log_cb=self._log,
         )
-        return verifier.verify_credits(cdata)
+        return verifier.verify_credits(cdata, is_series=is_series)
 
     # ──────────────────────────────────────────────────────────────
     # GOOGLE VI

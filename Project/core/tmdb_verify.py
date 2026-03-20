@@ -324,7 +324,8 @@ class TMDBVerify:
 
     # ── Ana doğrulama ────────────────────────────────────────────────
     def verify_credits(self, cdata: Dict[str, Any],
-                       tv_id=None, movie_id=None) -> TMDBVerifyResult:
+                       tv_id=None, movie_id=None,
+                       is_series: bool = False) -> TMDBVerifyResult:
         """
         cdata içinden film adını ve oyuncu listesini al,
         TMDB'de ara, eşleşme bul, cast'ı kanonikleştir.
@@ -448,11 +449,38 @@ class TMDBVerify:
             (cdata.get("_gemini_suggested_title") or "").strip()
         )
 
+        # ── OCR yılı (Strateji B crew kıyaslaması için) ──
+        _ocr_year_pre = 0
+        _raw_year_pre = cdata.get("year") or cdata.get("_ocr_year")
+        if _raw_year_pre:
+            try:
+                _ocr_year_pre = int(str(_raw_year_pre)[:4])
+            except (ValueError, TypeError):
+                pass
+        if not _ocr_year_pre:
+            import re as _re
+            _fname_pre = str(cdata.get("filename") or cdata.get("_source_file") or "")
+            _m_pre = _re.search(r'\b(1[9][0-9]{2}|20[0-2][0-9])\b', _fname_pre)
+            if _m_pre:
+                try:
+                    _ocr_year_pre = int(_m_pre.group(1))
+                except ValueError:
+                    pass
+
+        # ── Crew dict'leri (Strateji B DoP/editor kıyaslaması için) ──
+        _ocr_crew_dicts = [
+            row for row in (cdata.get("crew") or [])
+            if isinstance(row, dict) and (row.get("name") or "").strip()
+        ]
+
         # TMDB'de eşleşme bul
         tmdb_entry, kind, matched_via = self._find_tmdb_entry(
             film_title, cast_names, director_names,
             original_title=original_title_input,
             crew_names=crew_names,
+            is_series=is_series,
+            ocr_year=_ocr_year_pre,
+            ocr_crew_dicts=_ocr_crew_dicts,
         )
 
         if not tmdb_entry:
@@ -617,23 +645,23 @@ class TMDBVerify:
                          cast_names: List[str],
                          director_names: List[str] = None,
                          original_title: str = "",
-                         crew_names: List[str] = None) -> tuple:
+                         crew_names: List[str] = None,
+                         is_series: bool = False,
+                         ocr_year: int = 0,
+                         ocr_crew_dicts: list = None) -> tuple:
         """
-        Strateji:
-          1. Film adıyla search/multi → top 10 sonucu oyuncularla doğrula
-             (birden fazla başlık varyantı denenir; örn. "Madam" → "Madame")
-             - film_adı + 2 oyuncu → %100 güven
-             - film_adı + 1 oyuncu + yönetmen (TMDB crew'unda) → %100 güven
-          1b. Strateji 1 başarısız + original_title mevcut → original title ile tekrar ara
-              (aynı mantık; Türkçe/yerel başlık TMDB'de bulunamayan durumlarda devreye girer)
-          2. Film adı yoksa her oyuncuyla/yönetmenle search/person → combined_credits doğrula
-             (combined_credits başarısız olursa known_for fallback)
-             - combined_credits cast + crew bölümleri taranır; yönetmenler crew'den eşleşir
-             - 3 kişi (oyuncu+yönetmen karışık) eşleşirse → %100 güven
-             - son doğrulama: TMDB cast + crew isimleri karşılaştırılır
+        Strateji A → B → C → D sırasıyla dene.
+
+          A: Film adı + Yönetmen + 1-2 oyuncu ile ara
+          B: Film adı + Yönetmen (oyuncular devre dışı)
+             - DİZİYSE: direkt kabul
+             - FİLMSE: yıl/DoP/editor crew kıyaslaması
+          C: Oyuncu/yönetmen kişi araması (fuzzy isim doğrulaması yok)
+          D: Oyuncu/yönetmen kişi araması (rapidfuzz >= 80 fuzzy isim doğrulaması)
         """
         director_names = director_names or []
         crew_names = crew_names or []
+        ocr_crew_dicts = ocr_crew_dicts or []
 
         def _director_matches_crew(credits: dict) -> bool:
             """TMDB crew'unda yönetmen eşleşmesi var mı?"""
@@ -643,71 +671,124 @@ class TMDBVerify:
                 for d in director_names
             )
 
-        # ── Strateji 1: Film adıyla ara (çoklu başlık denemesi) ──
-        for film_title_attempt in _title_candidates(film_title) if film_title else []:
-            self._log(f"  [TMDB] Aranan başlık: '{film_title_attempt}'")
-            cache_key = f"search_multi_{_norm(film_title_attempt)}"
+        def _search_by_title(title_attempt: str) -> list:
+            """Başlıkla TMDB'de ara, sonuçları cache ile döndür."""
+            self._log(f"  [TMDB] Aranan başlık: '{title_attempt}'")
+            cache_key = f"search_multi_{_norm(title_attempt)}"
             results = self._load_cache(cache_key)
             if results is None:
                 try:
-                    results = self.client.search_multi(film_title_attempt)
+                    results = self.client.search_multi(title_attempt)
                     self._save_cache(cache_key, results)
                 except Exception as e:
                     self._log(f"  [TMDB] Arama hatası: {e}")
                     results = []
-
             self._log(f"  [TMDB] {len(results or [])} sonuç bulundu")
-            for r in (results or [])[:10]:
-                kind = r.get("media_type", "")
-                title = r.get("name") or r.get("title") or "?"
-                if kind not in ("tv", "movie"):
-                    continue
-                self._log(f"  [TMDB] Kontrol: '{title}' ({kind}, id:{r['id']})")
-                credits = self._fetch_credits(kind, r["id"])
-                if not credits:
-                    continue
-                tmdb_names = self._extract_names(credits)
-                matched    = self._count_matches(cast_names, tmdb_names)
-                self._log(f"  [TMDB]   → {matched}/{len(cast_names)} oyuncu eşleşti")
-                if matched >= 2:
-                    self._log(f"  [TMDB] film adı + {matched} oyuncu eşleşti → %100 güven")
-                    return r, kind, "title"
-                # 1 oyuncu + yönetmen eşleşmesi de kabul edilir
-                if matched >= 1 and director_names and _director_matches_crew(credits):
-                    self._log(f"  [TMDB] film adı + {matched} oyuncu + yönetmen eşleşti → %100 güven")
-                    return r, kind, "title"
-                # Oyuncu eşleşmedi ama film adı + yönetmen eşleşmesi yeterli
-                if matched == 0 and director_names and _director_matches_crew(credits):
-                    self._log(f"  [TMDB] film adı + yönetmen eşleşti (oyuncu eşleşmedi) → kabul")
-                    return r, kind, "title"
-            # Bu başlık denemesinde eşleşme yoksa sonraki varyantı dene
+            return results or []
 
-        # ── Strateji 1b: Orijinal başlıkla ara (TR/yerel başlık başarısız olduysa) ──
-        # film_title ve original_title farklıysa ve original_title doluysa dene
-        _norm_film   = _norm(film_title or "")
-        _norm_orig   = _norm(original_title or "")
-        _orig_usable = bool(original_title and _norm_orig and _norm_orig != _norm_film)
-        if _orig_usable:
-            # Orijinal başlık aramasında daha yüksek cast eşleşme eşiği uygula.
-            # Aynı isimde birden fazla film olabilir → cast desteği güçlü olmalı.
-            # 5+ oyuncu varsa: %33 eşleşme gereksin (en az 3); daha azsa eski eşik (2) korunur.
-            _SMALL_CAST_LIMIT  = 5  # bu değerin altında eski davranış (min 2) geçerli
-            _orig_min_cast = max(3, len(cast_names) // 3) if len(cast_names) >= _SMALL_CAST_LIMIT else 2
-            self._log(f"  [TMDB] Orijinal başlıkla arama deneniyor: '{original_title}' (min cast eşleşme: {_orig_min_cast})")
-            for orig_attempt in _title_candidates(original_title):
-                self._log(f"  [TMDB] Aranan orijinal başlık: '{orig_attempt}'")
-                cache_key = f"search_multi_{_norm(orig_attempt)}"
-                results = self._load_cache(cache_key)
-                if results is None:
+        def _b_crew_ok(entry: dict, credits: dict) -> bool:
+            """Strateji B film kıyaslaması: yıl, DoP, editor eşleşmesi (en az 1 kriter)."""
+            _DOP_JOBS = {
+                "director of photography", "dop", "dp",
+                "görüntü yönetmeni", "chef opérateur", "cinematographer",
+            }
+            _EDITOR_JOBS = {"editor", "kurgu", "film editor", "montaj", "monteur"}
+
+            score = 0
+
+            # Yıl karşılaştırması
+            if ocr_year:
+                date_str = (entry.get("first_air_date") or entry.get("release_date") or "")
+                tmdb_year = 0
+                if date_str and len(date_str) >= 4:
                     try:
-                        results = self.client.search_multi(orig_attempt)
-                        self._save_cache(cache_key, results)
-                    except Exception as e:
-                        self._log(f"  [TMDB] Orijinal başlık arama hatası: {e}")
-                        results = []
+                        tmdb_year = int(date_str[:4])
+                    except ValueError:
+                        pass
+                if tmdb_year and abs(tmdb_year - ocr_year) <= 1:
+                    self._log(
+                        f"  [TMDB] Strateji B yıl eşleşti: OCR={ocr_year} TMDB={tmdb_year}"
+                    )
+                    score += 1
 
-                self._log(f"  [TMDB] {len(results or [])} sonuç bulundu")
-                for r in (results or [])[:10]:
+            # DoP ve Editor karşılaştırması
+            for crew_item in (credits.get("crew") or []):
+                job = (crew_item.get("job") or crew_item.get("department") or "").lower()
+                name = (crew_item.get("name") or "").strip()
+                if not name:
+                    continue
+                is_dop = any(j in job for j in _DOP_JOBS)
+                is_editor = any(j in job for j in _EDITOR_JOBS)
+                if not (is_dop or is_editor):
+                    continue
+                for ocr_row in ocr_crew_dicts:
+                    if not isinstance(ocr_row, dict):
+                        continue
+                    ocr_job = (ocr_row.get("job") or ocr_row.get("role") or "").lower()
+                    ocr_name = (ocr_row.get("name") or "").strip()
+                    if not ocr_name:
+                        continue
+                    ocr_is_dop = any(j in ocr_job for j in _DOP_JOBS)
+                    ocr_is_editor = any(j in ocr_job for j in _EDITOR_JOBS)
+                    if (is_dop and not ocr_is_dop) or (is_editor and not ocr_is_editor):
+                        continue
+                    if HAS_RAPIDFUZZ:
+                        ratio = fuzz.ratio(ocr_name.lower(), name.lower())
+                        if ratio >= 80:
+                            self._log(
+                                f"  [TMDB] Strateji B crew eşleşti: "
+                                f"'{ocr_name}' ≈ '{name}' ({ratio:.0f}%)"
+                            )
+                            score += 1
+                            break
+                    else:
+                        if _norm(ocr_name) == _norm(name):
+                            self._log(f"  [TMDB] Strateji B crew eşleşti: '{name}'")
+                            score += 1
+                            break
+                if score >= 1:
+                    break
+
+            # Karşılaştırılacak OCR verisi yoksa reddetme — kanıt eksikliği kabul sayılır
+            if score == 0 and not ocr_year and not ocr_crew_dicts:
+                self._log(
+                    f"  [TMDB] Strateji B: kıyaslanacak OCR verisi yok — "
+                    f"başlık + yönetmen eşleşmesi yeterli kabul ediliyor"
+                )
+                return True
+
+            return score >= 1
+
+        # Başlık kaynakları: önce birincil başlık, sonra orijinal başlık
+        _norm_film = _norm(film_title or "")
+        _norm_orig = _norm(original_title or "")
+        _orig_usable = bool(original_title and _norm_orig and _norm_orig != _norm_film)
+        _SMALL_CAST_LIMIT = 5
+
+        title_sources = []
+        if film_title:
+            title_sources.append(("primary", film_title, 2))
+        if _orig_usable:
+            orig_min_cast = (
+                max(3, len(cast_names) // 3)
+                if len(cast_names) >= _SMALL_CAST_LIMIT
+                else 2
+            )
+            title_sources.append(("original", original_title, orig_min_cast))
+        elif original_title and not _orig_usable:
+            self._log(f"  [TMDB] Orijinal başlık yerel başlıkla aynı, tekrar aranmıyor")
+
+        # ── Strateji A: Film adı + Yönetmen + 1-2 oyuncu ──────────────────────
+        self._log(f"  [TMDB] Strateji A test ediliyor...")
+        for _src_label, _src_title, _min_cast in title_sources:
+            if _src_label == "original":
+                self._log(
+                    f"  [TMDB] Orijinal başlık TMDB'ye iletiliyor: '{_src_title}' "
+                    f"(min cast eşleşme: {_min_cast})"
+                )
+            for attempt in _title_candidates(_src_title):
+                results = _search_by_title(attempt)
+                for r in results[:10]:
                     kind = r.get("media_type", "")
                     title = r.get("name") or r.get("title") or "?"
                     if kind not in ("tv", "movie"):
@@ -717,133 +798,207 @@ class TMDBVerify:
                     if not credits:
                         continue
                     tmdb_names = self._extract_names(credits)
-                    matched    = self._count_matches(cast_names, tmdb_names)
+                    matched = self._count_matches(cast_names, tmdb_names)
                     self._log(f"  [TMDB]   → {matched}/{len(cast_names)} oyuncu eşleşti")
-                    # Yükseltilmiş eşik: orijinal başlık tek başına yetmez, güçlü cast desteği gerekli
-                    if matched >= _orig_min_cast:
-                        self._log(f"  [TMDB] orijinal başlık + {matched} oyuncu eşleşti (>={_orig_min_cast}) → %100 güven")
-                        return r, kind, "original_title"
-                    # 2+ oyuncu + yönetmen eşleşmesi de güvenilir
-                    if matched >= 2 and director_names and _director_matches_crew(credits):
-                        self._log(f"  [TMDB] orijinal başlık + {matched} oyuncu + yönetmen eşleşti → %100 güven")
-                        return r, kind, "original_title"
-                    # Tek oyuncu + yönetmen de kabul — ama sadece cast çok azsa
-                    if matched >= 1 and len(cast_names) < _SMALL_CAST_LIMIT and director_names and _director_matches_crew(credits):
-                        self._log(f"  [TMDB] orijinal başlık + {matched} oyuncu + yönetmen eşleşti (küçük cast) → kabul")
-                        return r, kind, "original_title"
-                    if matched == 0 and director_names and _director_matches_crew(credits):
-                        self._log(f"  [TMDB] orijinal başlık + yönetmen eşleşti (oyuncu eşleşmedi) → kabul")
-                        return r, kind, "original_title"
-                    self._log(f"  [TMDB]   → REJECT: {matched}/{len(cast_names)} < min {_orig_min_cast}")
-                # Bu orijinal başlık denemesinde eşleşme yoksa sonraki varyantı dene
-        elif original_title and not _orig_usable:
-            self._log(f"  [TMDB] Orijinal başlık yerel başlıkla aynı, tekrar aranmıyor")
+                    _via = "title" if _src_label == "primary" else "original_title"
+                    if matched >= _min_cast:
+                        self._log(
+                            f"  [TMDB] Strateji A başarılı: '{title}' — "
+                            f"başlık + {matched} oyuncu eşleşti"
+                        )
+                        return r, kind, _via
+                    if matched >= 1 and director_names and _director_matches_crew(credits):
+                        self._log(
+                            f"  [TMDB] Strateji A başarılı: '{title}' — "
+                            f"başlık + {matched} oyuncu + yönetmen eşleşti"
+                        )
+                        return r, kind, _via
+        self._log(f"  [TMDB] Strateji A başarısız")
 
-        # ── Strateji 2: Oyuncularla ara ──
-        self._log(f"  [TMDB] Film adıyla eşleşme yok veya film adı yanlış, oyuncularla aranıyor...")
-        work_matches: Dict[int, dict] = {}  # tmdb_id → {entry, kind, count}
+        # ── Strateji B: Sadece Film adı + Yönetmen (oyuncular devre dışı) ──────
+        self._log(f"  [TMDB] Strateji B test ediliyor...")
+        if director_names:
+            for _src_label, _src_title, _ in title_sources:
+                if _src_label == "original":
+                    self._log(
+                        f"  [TMDB] Strateji B: orijinal başlık deneniyor: '{_src_title}'"
+                    )
+                for attempt in _title_candidates(_src_title):
+                    results = _search_by_title(attempt)
+                    for r in results[:10]:
+                        kind = r.get("media_type", "")
+                        title = r.get("name") or r.get("title") or "?"
+                        if kind not in ("tv", "movie"):
+                            continue
+                        self._log(f"  [TMDB] Kontrol: '{title}' ({kind}, id:{r['id']})")
+                        credits = self._fetch_credits(kind, r["id"])
+                        if not credits:
+                            continue
+                        if _director_matches_crew(credits):
+                            _via = "title" if _src_label == "primary" else "original_title"
+                            if is_series:
+                                self._log(
+                                    f"  [TMDB] Strateji B başarılı: DİZİ — "
+                                    f"'{title}' başlık + yönetmen eşleşti (is_series=True)"
+                                )
+                                return r, kind, _via
+                            else:
+                                if _b_crew_ok(r, credits):
+                                    self._log(
+                                        f"  [TMDB] Strateji B başarılı: FİLM — "
+                                        f"'{title}' crew kıyaslaması geçti"
+                                    )
+                                    return r, kind, _via
+                                else:
+                                    self._log(
+                                        f"  [TMDB] Strateji B: '{title}' — "
+                                        f"crew kıyaslaması yetersiz, devam ediliyor"
+                                    )
+        else:
+            self._log(f"  [TMDB] Strateji B: yönetmen bilgisi yok — atlandı")
+        self._log(f"  [TMDB] Strateji B başarısız")
 
-        # Oyuncular + yönetmenler birlikte aranır; şirket isimleri önceden elenir
-        cast_names_set = set(cast_names)
-        actor_candidates = [n for n in cast_names if not _looks_like_company(n)]
-        filtered_directors = [d for d in director_names if d not in cast_names_set][:5]
+        # ── Ortak kişi araması mantığı (C ve D için) ──────────────────────────
+        def _run_person_search(fuzzy_validate: bool) -> tuple:
+            """Kişi aramasıyla ortak film/dizi bul.
 
-        # Yönetmen dışı crew — tekil, şirket olmayan, cast/director'da olmayanlar
-        all_known = cast_names_set | set(director_names)
-        filtered_crew = [
-            n for n in crew_names
-            if n not in all_known and not _looks_like_company(n)
-        ][:10]  # En fazla 10 crew ismi — rate limit bütçesini korumak için
+            fuzzy_validate=False — Strateji C: isim doğrulaması yok
+            fuzzy_validate=True  — Strateji D: rapidfuzz ratio >= 80 gerekli
+            """
+            work_matches: Dict[int, dict] = {}
 
-        self._log(
-            f"  [TMDB] Aranan kişiler: oyuncu={actor_candidates[:5]}, "
-            f"yönetmen={filtered_directors}, diğer_crew={filtered_crew[:3]}"
-        )
-        persons_to_search = (
-            actor_candidates[:20]
-            + [d for d in director_names if d not in cast_names_set]
-            + filtered_crew
-        )
+            cast_names_set = set(cast_names)
+            actor_candidates = [n for n in cast_names if not _looks_like_company(n)]
+            filtered_directors = [d for d in director_names if d not in cast_names_set][:5]
 
-        for idx, actor in enumerate(persons_to_search):
-            # Her 5 kişide bir ek bekleme — rate limit güvenliği
-            if idx > 0 and idx % 5 == 0:
-                self._log(f"  [TMDB] Strateji 2 throttle: {idx}/{len(persons_to_search)} kişi işlendi, bekleniyor...")
-                self.client._throttle_sleep(0.5)
-            cache_key = f"search_person_{_norm(actor)}"
-            persons = self._load_cache(cache_key)
-            if persons is None:
-                try:
-                    persons = self.client.search_person(actor)
-                    self._save_cache(cache_key, persons)
-                except Exception:
-                    continue
+            all_known = cast_names_set | set(director_names)
+            filtered_crew = [
+                n for n in crew_names
+                if n not in all_known and not _looks_like_company(n)
+            ][:10]
 
-            for person in (persons or [])[:2]:  # en iyi 2 eşleşme yeterli
-                person_id = person.get("id")
-                if not person_id:
-                    continue
-                cache_key_credits = f"person_combined_{person_id}"
-                person_credits = self._load_cache(cache_key_credits)
-                if person_credits is None:
+            _lbl = "C" if not fuzzy_validate else "D"
+            self._log(
+                f"  [TMDB] Strateji {_lbl} aranan kişiler: oyuncu={actor_candidates[:5]}, "
+                f"yönetmen={filtered_directors}, diğer_crew={filtered_crew[:3]}"
+            )
+
+            persons_to_search = (
+                actor_candidates[:20]
+                + [d for d in director_names if d not in cast_names_set]
+                + filtered_crew
+            )
+
+            for idx, actor in enumerate(persons_to_search):
+                if idx > 0 and idx % 5 == 0:
+                    self._log(
+                        f"  [TMDB] Strateji {_lbl} throttle: "
+                        f"{idx}/{len(persons_to_search)} kişi işlendi, bekleniyor..."
+                    )
+                    self.client._throttle_sleep(0.5)
+
+                cache_key = f"search_person_{_norm(actor)}"
+                persons = self._load_cache(cache_key)
+                if persons is None:
                     try:
-                        person_credits = self.client.get_person_combined_credits(person_id)
-                        self._save_cache(cache_key_credits, person_credits)
+                        persons = self.client.search_person(actor)
+                        self._save_cache(cache_key, persons)
                     except Exception:
-                        # combined_credits başarısız olursa known_for fallback
-                        for work in (person.get("known_for") or []):
+                        continue
+
+                for person in (persons or [])[:2]:
+                    if fuzzy_validate:
+                        person_name = (person.get("name") or "").strip()
+                        if not person_name:
+                            continue
+                        if HAS_RAPIDFUZZ:
+                            ratio = fuzz.ratio(actor.lower(), person_name.lower())
+                            if ratio < 80:
+                                self._log(
+                                    f"  [TMDB] Strateji D: '{person_name}' OCR ismiyle "
+                                    f"('{actor}') eşleşmiyor ({ratio:.0f}%) — atlanıyor"
+                                )
+                                continue
+                        else:
+                            if _norm(actor) != _norm(person_name):
+                                continue
+
+                    person_id = person.get("id")
+                    if not person_id:
+                        continue
+                    cache_key_credits = f"person_combined_{person_id}"
+                    person_credits = self._load_cache(cache_key_credits)
+                    if person_credits is None:
+                        try:
+                            person_credits = self.client.get_person_combined_credits(person_id)
+                            self._save_cache(cache_key_credits, person_credits)
+                        except Exception:
+                            # combined_credits başarısız olursa known_for fallback
+                            for work in (person.get("known_for") or []):
+                                kind = work.get("media_type", "")
+                                if kind not in ("tv", "movie"):
+                                    continue
+                                wid = work.get("id", 0)
+                                if wid:
+                                    if wid not in work_matches:
+                                        work_matches[wid] = {"entry": work, "kind": kind, "count": 0}
+                                    work_matches[wid]["count"] += 1
+                            continue
+
+                    # combined_credits cast + crew bölümlerini tara
+                    seen_work_ids: set = set()
+                    for section in ("cast", "crew"):
+                        for work in (person_credits.get(section) or []):
                             kind = work.get("media_type", "")
                             if kind not in ("tv", "movie"):
                                 continue
                             wid = work.get("id", 0)
-                            if wid:
-                                if wid not in work_matches:
-                                    work_matches[wid] = {"entry": work, "kind": kind, "count": 0}
-                                work_matches[wid]["count"] += 1
-                        continue
+                            if not wid or wid in seen_work_ids:
+                                continue
+                            seen_work_ids.add(wid)
+                            if wid not in work_matches:
+                                work_matches[wid] = {"entry": work, "kind": kind, "count": 0}
+                            work_matches[wid]["count"] += 1
 
-                # combined_credits cast + crew bölümlerini tara.
-                # Oyuncular cast'ta, yönetmenler crew'da görünür — her ikisi de aranmalı.
-                # Aynı kişinin aynı yapıtta hem cast hem crew'da yer aldığı durumu önlemek
-                # için kişi başına iş ID'si tekil tutulur.
-                seen_work_ids: set = set()
-                for section in ("cast", "crew"):
-                    for work in (person_credits.get(section) or []):
-                        kind = work.get("media_type", "")
-                        if kind not in ("tv", "movie"):
-                            continue
-                        wid = work.get("id", 0)
-                        if not wid or wid in seen_work_ids:
-                            continue
-                        seen_work_ids.add(wid)
-                        if wid not in work_matches:
-                            work_matches[wid] = {"entry": work, "kind": kind, "count": 0}
-                        work_matches[wid]["count"] += 1
-
-        # En çok eşleşen yapıtı bul
-        if work_matches:
-            best = max(work_matches.values(), key=lambda x: x["count"])
-            min_match_threshold = 1 if not cast_names else self.MIN_ACTOR_MATCH
-            if best["count"] >= min_match_threshold:
-                # Credits ile kesin doğrula
-                credits = self._fetch_credits(best["kind"], best["entry"]["id"])
-                if credits:
-                    tmdb_cast_names = self._extract_names(credits, section="cast")
-                    tmdb_crew_names = self._extract_names(credits, section="crew")
-                    matched = self._count_matches(cast_names, tmdb_cast_names)
-                    # Yönetmenler TMDB crew'unda eşleşir; toplam sayıya dahil et
-                    director_matched = sum(
-                        1 for d in director_names
-                        if _fuzzy_match(d, tmdb_crew_names, threshold=82)
-                    )
-                    total_matched = matched + director_matched
-                    if total_matched >= min_match_threshold:
-                        self._log(
-                            f"  [TMDB] {matched} oyuncu + {director_matched} yönetmen "
-                            f"eşleşti → %100 güven"
+            if work_matches:
+                best = max(work_matches.values(), key=lambda x: x["count"])
+                min_match_threshold = 1 if not cast_names else self.MIN_ACTOR_MATCH
+                if best["count"] >= min_match_threshold:
+                    credits = self._fetch_credits(best["kind"], best["entry"]["id"])
+                    if credits:
+                        tmdb_cast_names = self._extract_names(credits, section="cast")
+                        tmdb_crew_names = self._extract_names(credits, section="crew")
+                        matched = self._count_matches(cast_names, tmdb_cast_names)
+                        director_matched = sum(
+                            1 for d in director_names
+                            if _fuzzy_match(d, tmdb_crew_names, threshold=82)
                         )
-                        return best["entry"], best["kind"], "cast_only"
+                        total_matched = matched + director_matched
+                        if total_matched >= min_match_threshold:
+                            self._log(
+                                f"  [TMDB] {matched} oyuncu + {director_matched} yönetmen "
+                                f"eşleşti → %100 güven"
+                            )
+                            return best["entry"], best["kind"], "cast_only"
 
+            return None, "", ""
+
+        # ── Strateji C: Oyuncu isimleri + Yönetmen (başlık yok, fuzzy doğrulama yok) ──
+        self._log(f"  [TMDB] Strateji C test ediliyor...")
+        result_c = _run_person_search(fuzzy_validate=False)
+        if result_c[0] is not None:
+            self._log(f"  [TMDB] Strateji C başarılı")
+            return result_c
+        self._log(f"  [TMDB] Strateji C başarısız")
+
+        # ── Strateji D: Oyuncuları tek tek varlık kontrolü (fuzzy >= 80) ──────
+        self._log(f"  [TMDB] Strateji D test ediliyor...")
+        result_d = _run_person_search(fuzzy_validate=True)
+        if result_d[0] is not None:
+            self._log(f"  [TMDB] Strateji D başarılı")
+            return result_d
+
+        self._log(f"  [TMDB] Tüm stratejiler başarısız — ADIM 4'e geçiliyor")
         return None, "", ""
 
     # ── Credits çek ─────────────────────────────────────────────────
