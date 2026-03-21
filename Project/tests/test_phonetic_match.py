@@ -92,6 +92,6 @@ def test_pre_filter_valid_name():
 
 
 def test_pre_filter_valid_single_word():
-    """Geçerli tek kelime isim çöp olarak işaretlenmemeli."""
+    """Tek kelimeli isim (soyadı olmayan) çöp olarak işaretlenmeli."""
     f = LLMCastFilter(enabled=False)
-    assert f._pre_filter_obvious_junk({"actor_name": "Mehmet"}) is False
+    assert f._pre_filter_obvious_junk({"actor_name": "Mehmet"}) is True

@@ -204,8 +204,8 @@ class LLMCastFilter:
         # 3 harften kısa
         if len(name) < _MIN_NAME_LEN:
             return True
-        # Tamamen küçük harf tek kelime
-        if ' ' not in name and name.islower():
+        # Tek kelimeli isim (soyadı yok) → çöp
+        if ' ' not in name:
             return True
         # Bilinen Türkçe rol başlıkları
         if name.lower() in _ROLE_KEYWORDS:
