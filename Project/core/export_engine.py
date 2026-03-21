@@ -1623,7 +1623,7 @@ class ExportEngine:
         # 2) Gemini doğrulaması varsa (TMDB miss durumunda) → ikinci öncelik
         # 3) NameVerifier doğrulamış crew varsa → OCR + doğrulama
         # 4) Hiçbiri yoksa → ham OCR parse
-        tmdb_crew = [c for c in (cr.get("crew") or []) if c.get("raw") == "tmdb"]
+        tmdb_crew = [c for c in (cr.get("crew") or []) if c.get("raw") in ("tmdb", "imdb")]
         gemini_roles = cr.get("_gemini_crew_roles")
         if tmdb_crew:
             # TMDB directors'ı da crew'dan çıkar
