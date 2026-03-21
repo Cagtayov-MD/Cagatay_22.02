@@ -301,6 +301,17 @@ class PipelineRunner:
                 if _pk in content_profile:
                     self.config[_pk] = content_profile[_pk]
 
+        # SporMaci profili → ayrı pipeline'a yönlendir
+        if profile_name == "SporMaci":
+            from core.sport_pipeline import run_sport_pipeline
+            cdata: dict = {}
+            merged_config = {**self.config}
+            if content_profile:
+                merged_config.update(content_profile)
+            merged_config["ffmpeg"] = self._ffmpeg
+            merged_config["ffprobe"] = self._ffprobe
+            return run_sport_pipeline(video_path, merged_config, cdata)
+
         # Scope hâlâ None ise config'den veya varsayılandan al
         if scope is None:
             scope = self.config.get("scope", "video+audio")
@@ -2148,8 +2159,10 @@ class PipelineRunner:
                         # IMDb + TMDB ikisi de aynı alanı onaylıyor
                         person["source_confidence"] = "high"
                     else:
-                        # Sadece IMDb
+                        # Sadece IMDb — ya da IMDb+TMDB çelişiyor
                         person["source_confidence"] = "medium"
+                        if hint_field and hint_field != canonical:
+                            person["flags"].append("source_conflict")
                 elif raw == "tmdb":
                     if imdb_matched:
                         # IMDb lock sonrası TMDB enrich — IMDb zaten otorize etti
