@@ -69,6 +69,27 @@ def _norm(s: str) -> str:
     return (s or "").lower().strip()
 
 
+try:
+    from unidecode import unidecode as _unidecode
+    _HAS_UNIDECODE = True
+except ImportError:
+    _HAS_UNIDECODE = False
+
+def _norm_ascii(s: str) -> str:
+    """Başlığı ASCII'ye normalize et: unidecode + apostrof/tire temizliği.
+
+    IMDb başlıklarda iyelik ekleri apostrofa dönüşür (Hanımın → Hanim'in).
+    unidecode her iki tarafı da aynı forma getirir:
+      "TÜRKAN_HANIMIN_KONAĞI" → "turkan hanimin konagi"
+      "Türkan Hanim'in Konagi" → "turkan hanimin konagi"  ✓
+    """
+    s = (s or "").strip()
+    if _HAS_UNIDECODE:
+        s = _unidecode(s)
+    s = s.lower().replace("'", "").replace("_", " ").replace("-", " ")
+    return s
+
+
 def _fuzzy_match(a: str, b: str, threshold: float = _FUZZY_THRESHOLD) -> bool:
     return _fuzzy_score(_norm(a), _norm(b)) >= threshold
 
@@ -240,7 +261,14 @@ class IMDBLookup:
         primaryTitle / originalTitle / akas.title üzerinden fuzzy başlık araması.
         Sonuç: [{"tconst": ..., "primaryTitle": ..., "titleType": ..., "startYear": ...}]
         """
+        # LIKE için tam başlık kullan (orijinal karakterlerle — ü, ö vb. DB'de aynen saklanır).
+        # Türkçe iyelik/çekim ekleri DB'de apostrofa dönüştüğünden tam eşleşme olmayabilir;
+        # fuzzy score aşamasında _norm_ascii (unidecode) her iki tarafı normalize ederek yakalar.
         like_q = f"%{film_title}%"
+        # İlk kelime LIKE: "türkan hanımın konağı" → "%türkan%" → DB'deki "Türkan Hanim'in Konagi" eşleşir
+        first_word = film_title.split()[0] if film_title else film_title
+        like_q_first = f"%{first_word}%"
+
         try:
             rows = con.execute("""
                 SELECT DISTINCT t.tconst, t.primaryTitle, t.originalTitle,
@@ -248,8 +276,10 @@ class IMDBLookup:
                 FROM titles t
                 WHERE lower(t.primaryTitle) LIKE ?
                    OR lower(t.originalTitle) LIKE ?
+                   OR lower(t.primaryTitle) LIKE ?
+                   OR lower(t.originalTitle) LIKE ?
                 LIMIT 50
-            """, [like_q, like_q]).fetchall()
+            """, [like_q, like_q, like_q_first, like_q_first]).fetchall()
         except Exception:
             rows = []
 
@@ -261,8 +291,9 @@ class IMDBLookup:
                 FROM titles t
                 JOIN akas a ON a.tconst = t.tconst
                 WHERE lower(a.title) LIKE ?
+                   OR lower(a.title) LIKE ?
                 LIMIT 50
-            """, [like_q]).fetchall()
+            """, [like_q, like_q_first]).fetchall()
         except Exception:
             aka_rows = []
 
@@ -277,9 +308,9 @@ class IMDBLookup:
             original = (row[2] or "")
             title_type = (row[3] or "")
             start_year = row[4]
-            # En az bir başlık yeterince benzer olmalı
-            score_p = _fuzzy_score(_norm(film_title), _norm(primary))
-            score_o = _fuzzy_score(_norm(film_title), _norm(original))
+            # unidecode her iki tarafı da aynı ASCII forma getirir → doğru karşılaştırma
+            score_p = _fuzzy_score(_norm_ascii(film_title), _norm_ascii(primary))
+            score_o = _fuzzy_score(_norm_ascii(film_title), _norm_ascii(original))
             if max(score_p, score_o) >= _FUZZY_THRESHOLD:
                 result.append({
                     "tconst": tconst,

@@ -231,6 +231,12 @@ class TMDBClient:
             self._params(),
         )
 
+    def get_tv_aggregate_credits(self, tv_id: int) -> Dict[str, Any]:
+        return self._request(
+            f"{self.BASE}/tv/{tv_id}/aggregate_credits",
+            self._params(),
+        )
+
     def get_movie_credits(self, movie_id: int) -> Dict[str, Any]:
         return self._request(
             f"{self.BASE}/movie/{movie_id}/credits",

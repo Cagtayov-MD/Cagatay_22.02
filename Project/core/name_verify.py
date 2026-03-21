@@ -840,6 +840,46 @@ class NameVerifier:
                 director_match = any(
                     _fuzzy_name_match(d, tmdb_crew_names) for d in director_names if d
                 )
+                # /tv/{id}/credits dizilerde yönetmeni nadiren döndürür (bölüm bazlı atama).
+                # Eşleşme yoksa aggregate_credits ile bir kez daha dene.
+                if not director_match:
+                    try:
+                        agg = self._tmdb_client.get_tv_aggregate_credits(int(tmdb_id))
+                        # aggregate_credits crew yapısı: {name, department, jobs:[{job, episode_count}]}
+                        # Regular credits formatına düzleştir: her jobs girişi ayrı crew kaydı olur.
+                        agg_crew_flat = []
+                        for item in (agg.get("crew") or []):
+                            name = item.get("name", "")
+                            department = item.get("department", "")
+                            if not name:
+                                continue
+                            for job_entry in (item.get("jobs") or [{"job": department}]):
+                                agg_crew_flat.append({
+                                    "name": name,
+                                    "job": job_entry.get("job", department),
+                                    "department": department,
+                                    "episode_count": job_entry.get("episode_count", 0),
+                                })
+                        agg_crew_names = [c["name"] for c in agg_crew_flat]
+                        director_match = any(
+                            _fuzzy_name_match(d, agg_crew_names) for d in director_names if d
+                        )
+                        if director_match:
+                            # Mevcut crew listesine aggregate crew'u birleştir (isim tekrarını önle)
+                            existing_names = {
+                                item.get("name", "") for item in (credits.get("crew") or [])
+                            }
+                            for c in agg_crew_flat:
+                                if c["name"] not in existing_names:
+                                    credits.setdefault("crew", []).append(c)
+                                    existing_names.add(c["name"])
+                            tmdb_crew_names = agg_crew_names
+                            self._log(
+                                f"  [NAME_VERIFY/Dizi] '{tmdb_title}' aggregate_credits ile "
+                                f"yönetmen eşleşti, {len(agg_crew_flat)} crew eklendi ✓"
+                            )
+                    except Exception as e:
+                        self._log(f"  [NAME_VERIFY/Dizi] aggregate_credits hatası (id:{tmdb_id}): {e}")
                 if not director_match:
                     self._log(
                         f"  [NAME_VERIFY/Dizi] '{tmdb_title}' (id:{tmdb_id}) — yönetmen eşleşmedi"
