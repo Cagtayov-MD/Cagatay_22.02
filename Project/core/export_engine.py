@@ -1611,6 +1611,12 @@ class ExportEngine:
             L.append(f"  {'SESLENDİRME DİLİ':<{fw}}:     VERİ YOK")
 
         cast_list = cr.get("cast") or []
+        # IMDb LOCK: IMDb eşleşmesi varsa oyuncular ve yönetmenler yalnızca
+        # IMDb'den gelir. raw="imdb" dışı girişler rapora yansımaz.
+        if cr.get("verification_status") == "imdb_verified":
+            _imdb_cast = [c for c in cast_list if c.get("raw") == "imdb"]
+            if _imdb_cast:
+                cast_list = _imdb_cast
         actor_names = [
             (c.get("actor_name") or "").strip()
             for c in cast_list
@@ -1626,12 +1632,10 @@ class ExportEngine:
         tmdb_crew = [c for c in (cr.get("crew") or []) if c.get("raw") in ("tmdb", "imdb")]
         gemini_roles = cr.get("_gemini_crew_roles")
         if tmdb_crew:
-            # TMDB directors'ı da crew'dan çıkar
-            tmdb_directors = [
-                c.get("name", "") for c in tmdb_crew
-                if (c.get("job") or "").strip().lower() in ("director", "yonetmen", "yönetmen")
-            ]
-            crew_roles = _map_tmdb_crew_to_roles(tmdb_crew, tmdb_directors or director_names)
+            # YÖNETMEN her zaman cdata["directors"]'tan gelir (IMDb kutsal kaynak).
+            # TMDB aggregate_credits bölüm yönetmenleri crew'a eklenebilir ama
+            # director_names'i asla ezmez.
+            crew_roles = _map_tmdb_crew_to_roles(tmdb_crew, director_names)
             # TMDB'de eksik roller için OCR fallback
             ocr_roles = cr.get("_verified_crew_roles") or _map_crew_to_roles(
                 cr.get("technical_crew") or [], director_names)

@@ -1835,13 +1835,6 @@ class PipelineRunner:
         if not film_title:
             return
 
-        # IMDb'den gelen yönetmen isimleri
-        director_names = [
-            (d.get("name") or "").strip() if isinstance(d, dict) else str(d).strip()
-            for d in (cdata.get("directors") or [])
-            if (d.get("name") if isinstance(d, dict) else d)
-        ]
-
         try:
             # Fuzzy karşılaştırma yardımcıları
             try:
@@ -1886,57 +1879,53 @@ class PipelineRunner:
                 self._log(f"  [TMDB Enrich] '{film_title}' için TMDB ID bulunamadı — atlanıyor")
                 return
 
-            # ── Koşul 1: Başlık fuzzy kontrolü (≥80) ───────────────────────
+            # ── Koşul 1: Başlık fuzzy kontrolü (≥90) ───────────────────────
             title_score = _title_score(film_title, tmdb_title)
             self._log(
                 f"  [TMDB Enrich] Başlık: '{film_title}' ↔ '{tmdb_title}' ({title_score:.0f}%)"
             )
-            if title_score < 80:
+            if title_score < 90:
                 self._log(
-                    f"  [TMDB Enrich] Başlık eşleşmedi ({title_score:.0f}% < 80) "
+                    f"  [TMDB Enrich] Başlık eşleşmedi ({title_score:.0f}% < 90) "
                     f"— IMDb verisi korunuyor"
                 )
                 return
 
-            # ── Koşul 2: Yönetmen kontrolü ──────────────────────────────────
-            if director_names:
-                try:
-                    if kind == "tv":
-                        reg_credits = client.get_tv_credits(tmdb_id)
-                    else:
-                        reg_credits = client.get_movie_credits(tmdb_id)
-                    tmdb_directors = [
-                        (c.get("name") or "").strip()
-                        for c in (reg_credits.get("crew") or [] if reg_credits else [])
-                        if (c.get("job") or "").lower() in ("director", "yönetmen", "yonetmen")
-                    ]
-                except Exception:
-                    tmdb_directors = []
+            # ── Koşul 2: IMDb cast'ten en az 2 oyuncu TMDB cast'te bulunmalı ──
+            try:
+                if kind == "tv":
+                    reg_credits = client.get_tv_credits(tmdb_id)
+                else:
+                    reg_credits = client.get_movie_credits(tmdb_id)
+                tmdb_cast_names = [
+                    (c.get("name") or "").strip()
+                    for c in (reg_credits.get("cast") or [] if reg_credits else [])
+                    if (c.get("name") or "").strip()
+                ]
+            except Exception:
+                tmdb_cast_names = []
 
-                director_ok = False
-                for ocr_dir in director_names:
-                    for tmdb_dir in tmdb_directors:
-                        if _name_score(ocr_dir, tmdb_dir) >= 80:
-                            self._log(
-                                f"  [TMDB Enrich] Yönetmen: '{ocr_dir}' ↔ '{tmdb_dir}' ✓"
-                            )
-                            director_ok = True
-                            break
-                    if director_ok:
+            imdb_cast = cdata.get("cast") or []
+            matched_actors = []
+            for entry in imdb_cast:
+                actor = (entry.get("actor_name") or "").strip()
+                if not actor:
+                    continue
+                for tmdb_name in tmdb_cast_names:
+                    if _name_score(actor, tmdb_name) >= 80:
+                        matched_actors.append(f"'{actor}' ↔ '{tmdb_name}'")
                         break
 
-                if not director_ok:
-                    self._log(
-                        f"  [TMDB Enrich] Yönetmen eşleşmedi "
-                        f"(IMDb:{director_names} TMDB:{tmdb_directors}) "
-                        f"— IMDb verisi korunuyor"
-                    )
-                    return
-            else:
+            self._log(
+                f"  [TMDB Enrich] Oyuncu eşleşmesi: {len(matched_actors)}/{len(imdb_cast)} "
+                f"({', '.join(matched_actors[:3])}{'...' if len(matched_actors) > 3 else ''})"
+            )
+            if len(matched_actors) < 2:
                 self._log(
-                    f"  [TMDB Enrich] Yönetmen bilgisi yok — "
-                    f"başlık eşleşmesi yeterli kabul ediliyor"
+                    f"  [TMDB Enrich] Yeterli oyuncu eşleşmedi "
+                    f"({len(matched_actors)} < 2) — IMDb verisi korunuyor"
                 )
+                return
 
             # ── Her iki koşul sağlandı → aggregate_credits ekle ─────────────
             if kind == "tv":
