@@ -824,6 +824,9 @@ class PipelineRunner:
                                     f"  [IMDb] LOCK aktif — "
                                     f"cast:{cdata['total_actors']} crew:{cdata['total_crew']}"
                                 )
+                                # ══ IMDb eşleşti → TMDB aggregate_credits ile zenginleştir ══
+                                if _tmdb_enabled:
+                                    self._enrich_cdata_with_tmdb(cdata, work_dir, _is_series)
                             else:
                                 reason = imdb_result.reason if imdb_result else "lookup failed"
                                 self._log(f"  [IMDb] Eşleşme bulunamadı ({reason}) → TMDB'ye geçiliyor")
@@ -1803,6 +1806,206 @@ class PipelineRunner:
             log_cb=self._log,
         )
         return verifier.verify_credits(cdata, is_series=is_series)
+
+    def _enrich_cdata_with_tmdb(self, cdata: dict, work_dir: str, is_series: bool = False):
+        """IMDb eşleşmesi sonrası TMDB aggregate_credits ile crew'u zenginleştir.
+
+        İki koşul birden sağlanmalı:
+          1) Dizi/film adı TMDB sonucuyla fuzzy eşleşiyor (≥80%)
+          2) IMDb'deki yönetmen TMDB credits'te bulunuyor
+        Her ikisi sağlanırsa → aggregate_credits'ten eksik crew eklenir.
+        Sağlanmazsa → IMDb verisi korunur, hiçbir şey değişmez.
+        """
+        from core.tmdb_verify import TMDBClient
+
+        api_key = (
+            self.config.get("tmdb_api_key") or get_tmdb_api_key()
+        ).strip()
+        token = (
+            self.config.get("tmdb_bearer_token") or
+            os.environ.get("TMDB_BEARER_TOKEN") or ""
+        ).strip()
+
+        if not (api_key or token):
+            return
+
+        film_title = (cdata.get("film_title") or "").strip()
+        if not film_title:
+            return
+
+        # IMDb'den gelen yönetmen isimleri
+        director_names = [
+            (d.get("name") or "").strip() if isinstance(d, dict) else str(d).strip()
+            for d in (cdata.get("directors") or [])
+            if (d.get("name") if isinstance(d, dict) else d)
+        ]
+
+        try:
+            # Fuzzy karşılaştırma yardımcıları
+            try:
+                from rapidfuzz import fuzz as _fuzz
+                def _title_score(a, b):
+                    return _fuzz.token_sort_ratio(a.lower(), b.lower())
+                def _name_score(a, b):
+                    return _fuzz.ratio(a.lower(), b.lower())
+            except ImportError:
+                def _title_score(a, b):
+                    a, b = a.lower().strip(), b.lower().strip()
+                    return 100 if a == b else (80 if (a in b or b in a) else 0)
+                def _name_score(a, b):
+                    return 100 if a.lower().strip() == b.lower().strip() else 0
+
+            client = TMDBClient(
+                api_key=api_key or "",
+                bearer_token=token or "",
+                language="tr-TR",
+                log_cb=self._log,
+            )
+
+            # TMDB'de ara
+            results = client.search_multi(film_title)
+            tmdb_id = None
+            kind = None
+            tmdb_title = ""
+            for r in (results or []):
+                k = r.get("media_type", "")
+                if is_series and k == "tv":
+                    tmdb_id = r["id"]
+                    kind = "tv"
+                    tmdb_title = r.get("name") or r.get("title") or ""
+                    break
+                elif not is_series and k == "movie":
+                    tmdb_id = r["id"]
+                    kind = "movie"
+                    tmdb_title = r.get("name") or r.get("title") or ""
+                    break
+
+            if not tmdb_id:
+                self._log(f"  [TMDB Enrich] '{film_title}' için TMDB ID bulunamadı — atlanıyor")
+                return
+
+            # ── Koşul 1: Başlık fuzzy kontrolü (≥80) ───────────────────────
+            title_score = _title_score(film_title, tmdb_title)
+            self._log(
+                f"  [TMDB Enrich] Başlık: '{film_title}' ↔ '{tmdb_title}' ({title_score:.0f}%)"
+            )
+            if title_score < 80:
+                self._log(
+                    f"  [TMDB Enrich] Başlık eşleşmedi ({title_score:.0f}% < 80) "
+                    f"— IMDb verisi korunuyor"
+                )
+                return
+
+            # ── Koşul 2: Yönetmen kontrolü ──────────────────────────────────
+            if director_names:
+                try:
+                    if kind == "tv":
+                        reg_credits = client.get_tv_credits(tmdb_id)
+                    else:
+                        reg_credits = client.get_movie_credits(tmdb_id)
+                    tmdb_directors = [
+                        (c.get("name") or "").strip()
+                        for c in (reg_credits.get("crew") or [] if reg_credits else [])
+                        if (c.get("job") or "").lower() in ("director", "yönetmen", "yonetmen")
+                    ]
+                except Exception:
+                    tmdb_directors = []
+
+                director_ok = False
+                for ocr_dir in director_names:
+                    for tmdb_dir in tmdb_directors:
+                        if _name_score(ocr_dir, tmdb_dir) >= 80:
+                            self._log(
+                                f"  [TMDB Enrich] Yönetmen: '{ocr_dir}' ↔ '{tmdb_dir}' ✓"
+                            )
+                            director_ok = True
+                            break
+                    if director_ok:
+                        break
+
+                if not director_ok:
+                    self._log(
+                        f"  [TMDB Enrich] Yönetmen eşleşmedi "
+                        f"(IMDb:{director_names} TMDB:{tmdb_directors}) "
+                        f"— IMDb verisi korunuyor"
+                    )
+                    return
+            else:
+                self._log(
+                    f"  [TMDB Enrich] Yönetmen bilgisi yok — "
+                    f"başlık eşleşmesi yeterli kabul ediliyor"
+                )
+
+            # ── Her iki koşul sağlandı → aggregate_credits ekle ─────────────
+            if kind == "tv":
+                raw_credits = client.get_tv_aggregate_credits(tmdb_id)
+            else:
+                raw_credits = client.get_movie_credits(tmdb_id)
+
+            if not raw_credits:
+                return
+
+            self._log(
+                f"  [TMDB Enrich] id:{tmdb_id} — "
+                f"cast:{len(raw_credits.get('cast') or [])} "
+                f"crew:{len(raw_credits.get('crew') or [])}"
+            )
+
+            # Mevcut crew isimlerini normalize et (dedup için)
+            existing_crew_keys = {
+                (c.get("name") or "").lower().strip()
+                for c in (cdata.get("crew") or [])
+            }
+
+            # TMDB crew ekle (IMDb'de olmayanları)
+            added = 0
+            for item in (raw_credits.get("crew") or []):
+                name = (item.get("name") or "").strip()
+                if not name:
+                    continue
+                dept = item.get("department", "")
+                key = name.lower()
+                jobs_list = item.get("jobs")  # aggregate_credits formatı
+                if jobs_list:
+                    for job_entry in jobs_list:
+                        job = job_entry.get("job", dept)
+                        if key not in existing_crew_keys:
+                            cdata["crew"].append({
+                                "name": name,
+                                "job": job,
+                                "role": job,
+                                "department": dept,
+                                "episode_count": job_entry.get("episode_count", 0),
+                                "raw": "tmdb",
+                                "is_tmdb_verified": True,
+                            })
+                            existing_crew_keys.add(key)
+                            added += 1
+                else:
+                    job = item.get("job", dept)
+                    if key not in existing_crew_keys:
+                        cdata["crew"].append({
+                            "name": name,
+                            "job": job,
+                            "role": job,
+                            "department": dept,
+                            "raw": "tmdb",
+                            "is_tmdb_verified": True,
+                        })
+                        existing_crew_keys.add(key)
+                        added += 1
+
+            if added:
+                cdata["total_crew"] = len(cdata.get("crew") or [])
+                cdata["technical_crew"] = list(cdata["crew"])
+            self._log(
+                f"  [TMDB Enrich] {added} yeni crew eklendi "
+                f"(toplam: {cdata.get('total_crew', 0)})"
+            )
+            cdata["_tmdb_enrich_id"] = tmdb_id
+
+        except Exception as e:
+            self._log(f"  [TMDB Enrich] Hata: {e}")
 
     # ──────────────────────────────────────────────────────────────
     # GOOGLE VI

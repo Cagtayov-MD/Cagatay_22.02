@@ -371,6 +371,29 @@ class IMDBLookup:
                 continue
         return names
 
+    def _fetch_writers(self, con, tconst: str) -> list[str]:
+        """crew.writers nconst → names.primaryName listesi."""
+        try:
+            row = con.execute(
+                "SELECT writers FROM crew WHERE tconst = ?", [tconst]
+            ).fetchone()
+        except Exception:
+            return []
+        if not row or not row[0]:
+            return []
+        nconsts = [n.strip() for n in str(row[0]).split(",") if n.strip()]
+        names = []
+        for nc in nconsts:
+            try:
+                nr = con.execute(
+                    "SELECT primaryName FROM names WHERE nconst = ?", [nc]
+                ).fetchone()
+                if nr and nr[0]:
+                    names.append(nr[0])
+            except Exception:
+                continue
+        return names
+
     def _count_cast_matches(self, ocr_names: List[str], imdb_cast: list[dict]) -> int:
         imdb_names = [r["name"] for r in imdb_cast]
         count = 0
@@ -388,6 +411,7 @@ class IMDBLookup:
     def _build_result(self, con, cand: dict, imdb_cast: list[dict], matched_via: str) -> IMDBLookupResult:
         tconst = cand["tconst"]
         imdb_directors = self._fetch_directors(con, tconst)
+        imdb_writers = self._fetch_writers(con, tconst)
 
         cast_out = []
         crew_out = []
@@ -413,6 +437,17 @@ class IMDBLookup:
                     "name": name,
                     "job": job or category,
                     "role": job or category,
+                    "raw": "imdb",
+                    "is_imdb_verified": True,
+                })
+
+        # Yazarları crew'a ekle
+        for wn in imdb_writers:
+            if not any(_norm(c["name"]) == _norm(wn) for c in crew_out):
+                crew_out.append({
+                    "name": wn,
+                    "job": "Writer",
+                    "role": "Writer",
                     "raw": "imdb",
                     "is_imdb_verified": True,
                 })
