@@ -827,6 +827,12 @@ class PipelineRunner:
                                 # ══ IMDb eşleşti → TMDB aggregate_credits ile zenginleştir ══
                                 if _tmdb_enabled:
                                     self._enrich_cdata_with_tmdb(cdata, work_dir, _is_series)
+                                # ══ Kredi alanı yanlış sınıflandırma kontrolü ══
+                                self._check_credit_field_misclassification(cdata)
+                                # ══ Kaynak güven annotasyonu (IMDb path) ══
+                                self._annotate_crew_confidence(
+                                    cdata, imdb_matched=True, tmdb_matched=False
+                                )
                             else:
                                 reason = imdb_result.reason if imdb_result else "lookup failed"
                                 self._log(f"  [IMDb] Eşleşme bulunamadı ({reason}) → TMDB'ye geçiliyor")
@@ -949,6 +955,12 @@ class PipelineRunner:
                                 # TMDB LOCK: OCR verisi silinir, TMDB kanonik veri yazılır
                                 cdata = self._apply_tmdb_credits(cdata, tmdb_result)
                                 self._log(f"  [TMDB] LOCK aktif — cast:{cdata['total_actors']} crew:{cdata['total_crew']}")
+                                # ══ Kredi alanı yanlış sınıflandırma kontrolü ══
+                                self._check_credit_field_misclassification(cdata)
+                                # ══ Kaynak güven annotasyonu (TMDB path) ══
+                                self._annotate_crew_confidence(
+                                    cdata, imdb_matched=False, tmdb_matched=True
+                                )
                                 # QA: OCR'da olup TMDB'de olmayan oyuncular
                                 if ocr_lines:
                                     try:
@@ -1134,6 +1146,11 @@ class PipelineRunner:
                             )
                     except Exception as _gcv_err:
                         self._log(f"  [Gemini Crew] Hata: {_gcv_err}")
+
+                # ══ Kaynak güven annotasyonu (neither-match path) ══
+                self._annotate_crew_confidence(
+                    cdata, imdb_matched=False, tmdb_matched=False
+                )
 
                 # ══ [GOOGLE_VI] Akıllı tetik ════════════════════════════
                 # TMDB/IMDb miss + düşük çözünürlük veya non-standard font ise Google VI çağır
@@ -1471,6 +1488,7 @@ class PipelineRunner:
                 "job": job,
                 "role": job or "Crew",
                 "role_tr": self._JOB_TR.get(job, job),
+                "department": (item.get("department") or "").strip(),
                 "role_category": "crew",
                 "raw": "tmdb",
                 "confidence": 1.0,
@@ -1972,6 +1990,11 @@ class PipelineRunner:
                             })
                             existing_crew_keys.add(key)
                             added += 1
+                        elif dept:
+                            # Zaten crew'da var — dept hint'i sakla (yanlış sınıflandırma tespiti için)
+                            _hints = cdata.setdefault("_tmdb_dept_hints", {})
+                            if key not in _hints:
+                                _hints[key] = {"department": dept.lower(), "job": job}
                 else:
                     job = item.get("job", dept)
                     if key not in existing_crew_keys:
@@ -1985,6 +2008,11 @@ class PipelineRunner:
                         })
                         existing_crew_keys.add(key)
                         added += 1
+                    elif dept:
+                        # Zaten crew'da var — dept hint'i sakla (yanlış sınıflandırma tespiti için)
+                        _hints = cdata.setdefault("_tmdb_dept_hints", {})
+                        if key not in _hints:
+                            _hints[key] = {"department": dept.lower(), "job": job}
 
             if added:
                 cdata["total_crew"] = len(cdata.get("crew") or [])
@@ -1997,6 +2025,320 @@ class PipelineRunner:
 
         except Exception as e:
             self._log(f"  [TMDB Enrich] Hata: {e}")
+
+    # ──────────────────────────────────────────────────────────────
+    # KAYNAK GÜVEN ANNOTASYONU
+    # ──────────────────────────────────────────────────────────────
+
+    def _annotate_crew_confidence(
+        self,
+        cdata: dict,
+        imdb_matched: bool,
+        tmdb_matched: bool,
+    ) -> None:
+        """Cast ve crew kişilerine kaynak güven metadata'sı ekle.
+
+        Her kişiye eklenen alanlar:
+            ocr_field          : OCR'ın bu kişi için atadığı alan
+            matched_source     : imdb / tmdb / gemini / ocr_only
+            matched_department : TMDB department (varsa)
+            matched_job        : TMDB job (varsa)
+            final_field        : final canonical alan adı
+            source_confidence  : "high" / "medium" / "low"
+            flags              : list[str]
+
+        Hiçbir veri silinmez. Tüm değişiklikler in-place ekleme olarak yapılır.
+        """
+        try:
+            from core.gemini_crew_validator import (
+                field_from_tmdb, verify_crew_role,
+                _ANA_FIELDS, _DIGER_FIELDS, _crew_norm,
+            )
+        except ImportError:
+            self._log("  [ConfAnnotation] gemini_crew_validator import edilemedi — atlanıyor")
+            return
+
+        film_title = cdata.get("film_title", "")
+
+        # _tmdb_dept_hints: IMDb crew için TMDB cross-check sinyali
+        # (_enrich_cdata_with_tmdb tarafından doldurulur; _check_credit_field_misclassification
+        # da kullanır ama artık pop etmiyor — biz burada temizleyeceğiz)
+        dept_hints: dict[str, dict] = dict(cdata.get("_tmdb_dept_hints") or {})
+        cdata.pop("_tmdb_dept_hints", None)
+
+        # _gemini_crew_roles → {field: [name, ...]} — neither-match path için
+        gemini_by_name: dict[str, str] = {}
+        for field, names in (cdata.get("_gemini_crew_roles") or {}).items():
+            for n in (names or []):
+                if isinstance(n, str) and n.strip():
+                    gemini_by_name[_crew_norm(n.strip())] = field
+
+        # ── CAST ──────────────────────────────────────────────────────────
+        for person in (cdata.get("cast") or []):
+            raw = person.get("raw", "")
+            person.setdefault("flags", [])
+            person["final_field"] = "OYUNCU"
+            if raw == "imdb":
+                # IMDb LOCK — TMDB film-level batch match ile dolaylı doğrulama
+                person["matched_source"] = "imdb"
+                person["source_confidence"] = "medium"
+            elif raw == "tmdb":
+                # TMDB LOCK — batch cast match ile doğrulandı
+                person["matched_source"] = "tmdb"
+                person["source_confidence"] = "medium"
+            else:
+                person["matched_source"] = "ocr_only"
+                person["source_confidence"] = "low"
+                if "no_external_match" not in person["flags"]:
+                    person["flags"].append("no_external_match")
+
+        # ── CREW ──────────────────────────────────────────────────────────
+        for person in (cdata.get("crew") or []):
+            name = (person.get("name") or "").strip()
+            raw  = person.get("raw", "")
+            job  = (person.get("job") or "").strip()
+            dept = (person.get("department") or "").strip()
+            person.setdefault("flags", [])
+
+            name_norm = _crew_norm(name)
+
+            # TMDB department+job → canonical field (crew dict'ten)
+            mapped_field = field_from_tmdb(dept, job) if dept else ""
+
+            # _tmdb_dept_hints: IMDb kişi için TMDB cross-check bilgisi
+            hint      = dept_hints.get(name_norm) or {}
+            hint_dept = (hint.get("department") or "").strip()   # lowercase
+            hint_job  = (hint.get("job") or "").strip()
+            hint_field = field_from_tmdb(hint_dept, hint_job) if hint_dept else ""
+
+            # ocr_field: _check_credit_field_misclassification tarafından _ocr_job
+            # olarak saklanmış olabilir; yoksa job'ı dene
+            ocr_field = (person.get("_ocr_job") or "").strip().upper()
+            if not ocr_field:
+                job_u = job.upper()
+                if job_u in (_ANA_FIELDS | _DIGER_FIELDS):
+                    ocr_field = job_u
+
+            person["ocr_field"] = ocr_field
+
+            # Canonical field: FIELD_MAP > hint_field > ocr_field > job.upper()
+            canonical = mapped_field or hint_field or ocr_field or job.upper()
+            person["final_field"] = canonical
+
+            # matched_source + TMDB dept/job
+            if raw == "imdb":
+                person["matched_source"] = "imdb"
+                person["matched_department"] = hint_dept.title() if hint_dept else ""
+                person["matched_job"] = hint_job
+            elif raw == "tmdb":
+                person["matched_source"] = "tmdb"
+                person["matched_department"] = dept
+                person["matched_job"] = job
+            else:
+                person["matched_source"] = (
+                    "gemini" if name_norm in gemini_by_name else "ocr_only"
+                )
+                person["matched_department"] = ""
+                person["matched_job"] = ""
+
+            # ── Ana Alanlar (YÖNETMEN, YAPIMCI) ──────────────────────────
+            if canonical in _ANA_FIELDS:
+                if raw == "imdb":
+                    if hint_field == canonical:
+                        # IMDb + TMDB ikisi de aynı alanı onaylıyor
+                        person["source_confidence"] = "high"
+                    else:
+                        # Sadece IMDb
+                        person["source_confidence"] = "medium"
+                elif raw == "tmdb":
+                    if imdb_matched:
+                        # IMDb lock sonrası TMDB enrich — IMDb zaten otorize etti
+                        person["source_confidence"] = "medium"
+                    else:
+                        # Sadece TMDB → Gemini doğrulasın (Ana Alan için makul sayı)
+                        gans = verify_crew_role(film_title, name, canonical)
+                        if gans == "YES":
+                            person["source_confidence"] = "medium"
+                            person["flags"].append("tmdb_gemini_confirmed")
+                        else:
+                            # Veri silinmez — işaretlenir
+                            person["source_confidence"] = "low"
+                            person["flags"].append("tmdb_only_unconfirmed")
+                elif person["matched_source"] == "gemini":
+                    person["source_confidence"] = "medium"
+                    if "gemini_verified" not in person["flags"]:
+                        person["flags"].append("gemini_verified")
+                else:
+                    person["source_confidence"] = "low"
+                    if "no_external_match" not in person["flags"]:
+                        person["flags"].append("no_external_match")
+
+            # ── Diğer Ekip ────────────────────────────────────────────────
+            elif canonical in _DIGER_FIELDS:
+                if raw in ("imdb", "tmdb"):
+                    if mapped_field and ocr_field and mapped_field == ocr_field:
+                        # TMDB dept+job ile OCR alanı uyumlu
+                        person["source_confidence"] = "medium"
+                        if "tmdb_dept_match" not in person["flags"]:
+                            person["flags"].append("tmdb_dept_match")
+                    elif raw == "tmdb" and not imdb_matched:
+                        # TMDB var ama OCR uyumsuz/yok → Gemini hakem
+                        check_field = ocr_field or canonical
+                        gans = verify_crew_role(film_title, name, check_field)
+                        if gans == "YES":
+                            person["source_confidence"] = "medium"
+                            person["flags"].append("gemini_override")
+                        else:
+                            # Veri silinmez — işaretlenir
+                            person["source_confidence"] = "low"
+                            person["flags"].append("unverified_mismatch")
+                            if mapped_field and mapped_field != ocr_field:
+                                person["tmdb_suggests"] = mapped_field
+                    else:
+                        # IMDb + Diğer Ekip → IMDb'ye güven
+                        person["source_confidence"] = "medium"
+                elif person["matched_source"] == "gemini":
+                    person["source_confidence"] = "medium"
+                    if "gemini_verified" not in person["flags"]:
+                        person["flags"].append("gemini_verified")
+                else:
+                    person["source_confidence"] = "low"
+                    if "no_external_match" not in person["flags"]:
+                        person["flags"].append("no_external_match")
+
+            # ── Diğer (bilinmeyen alan) ───────────────────────────────────
+            else:
+                if raw in ("imdb", "tmdb") or person["matched_source"] == "gemini":
+                    person["source_confidence"] = "medium"
+                else:
+                    person["source_confidence"] = "low"
+                    if "no_external_match" not in person["flags"]:
+                        person["flags"].append("no_external_match")
+
+        ann_crew  = sum(1 for p in (cdata.get("crew")  or []) if "source_confidence" in p)
+        ann_cast  = sum(1 for p in (cdata.get("cast")  or []) if "source_confidence" in p)
+        self._log(f"  [ConfAnnotation] {ann_crew} crew + {ann_cast} cast annotate edildi")
+
+    # ──────────────────────────────────────────────────────────────
+    # KREDİ ALANI YANLIŞ SINIFLANDIRMA KONTROLÜ
+    # ──────────────────────────────────────────────────────────────
+
+    def _check_credit_field_misclassification(self, cdata: dict) -> None:
+        """OCR-atanan alan ile TMDB departman bilgisini karşılaştır.
+
+        OCR bir kişiyi YÖNETMEN olarak işaretleyebilir; TMDB ise aynı kişiyi
+        'writing' (SENARYO) departmanında listeler. Bu yöntem bu çakışmaları
+        tespit eder, TMDB'yi otoriter kaynak olarak kabul edip job'ı düzeltir
+        ve her uyuşmazlığı _field_mismatch=True ile işaretler.
+
+        Hiçbir veri silinmez. Düzeltmeler in-place yapılır.
+
+        Kategori 1 (YÖNETMEN/YAPIMCI/OYUNCU): IMDb + TMDB çift kaynak.
+          IMDb zaten crew'a raw='imdb' olarak yazıldığından, yalnızca
+          IMDb'de bulunmayan ama OCR'ın yanlış atadığı kişiler kontrol edilir.
+        Kategori 2 (SENARYO/GÖRÜNTÜ YÖNETMENİ/KAMERA/KURGU/YÖNETMEN YARDIMCISI):
+          TMDB otoriter kaynak; uyuşmazlıkta TMDB kazanır.
+        """
+        import re as _re
+        import unicodedata as _unicodedata
+
+        def _norm(s: str) -> str:
+            nfkd = _unicodedata.normalize("NFKD", s)
+            ascii_ = nfkd.encode("ascii", "ignore").decode("ascii")
+            return _re.sub(r"[^a-z0-9]", "", ascii_.lower())
+
+        # OCR field → beklenen TMDB department
+        _OCR_TO_DEPT = {
+            "YONETMEN": "directing",      "YÖNETMEN": "directing",
+            "YAPIMCI": "production",
+            "OYUNCU": "acting",
+            "SENARYO": "writing",
+            "GÖRÜNTÜ YÖNETMENİ": "camera", "GORUNTU YONETMENI": "camera",
+            "KAMERA": "camera",
+            "KURGU": "editing",
+            "YONETMEN YARDIMCISI": "directing", "YÖNETMEN YARDIMCISI": "directing",
+        }
+
+        # Kategori 1: hem IMDb hem TMDB kaynaklı alanlar
+        _CAT1 = {"YONETMEN", "YÖNETMEN", "YAPIMCI", "OYUNCU"}
+
+        crew = cdata.get("crew") or []
+
+        # TMDB dept lookup: normalized_name → {department, job}
+        # Kaynak 1: raw="tmdb" crew girişleri (department alanı dolu olanlar)
+        dept_lookup: dict = {}
+        for entry in crew:
+            if entry.get("raw") == "tmdb" and entry.get("name") and entry.get("department"):
+                key = _norm(entry["name"])
+                if key not in dept_lookup:
+                    dept_lookup[key] = {
+                        "department": (entry.get("department") or "").lower(),
+                        "job": entry.get("job") or "",
+                    }
+
+        # Kaynak 2: _tmdb_dept_hints (_enrich_cdata_with_tmdb tarafından doldurulur)
+        for name_key, hint in (cdata.get("_tmdb_dept_hints") or {}).items():
+            key = _norm(name_key)
+            if key not in dept_lookup:
+                dept_lookup[key] = hint
+
+        if not dept_lookup:
+            return  # TMDB verisi yoksa kontrol yapılamaz
+
+        mismatches = []
+        for entry in crew:
+            if entry.get("raw") != "ocr_verified":
+                continue
+            ocr_job = entry.get("job") or ""
+            expected_dept = _OCR_TO_DEPT.get(ocr_job)
+            if not expected_dept:
+                continue
+
+            person_key = _norm(entry.get("name") or "")
+            if not person_key:
+                continue
+
+            hint = dept_lookup.get(person_key)
+            if not hint:
+                continue  # TMDB'de yok → karşılaştırılamaz
+
+            tmdb_dept = (hint.get("department") or "").lower()
+            tmdb_job = hint.get("job") or ""
+
+            if tmdb_dept == expected_dept:
+                continue  # Eşleşiyor → sorun yok
+
+            # ── Uyuşmazlık tespit edildi ──────────────────────────────────
+            cat = "1" if ocr_job in _CAT1 else "2"
+            entry["_field_mismatch"] = True
+            entry["_ocr_job"] = ocr_job
+            entry["_tmdb_department"] = tmdb_dept
+            entry["_tmdb_job"] = tmdb_job
+
+            # TMDB kazanır: job'ı düzelt (veri silinmez, sadece güncellenir)
+            if tmdb_job:
+                entry["job"] = tmdb_job
+                entry["role"] = tmdb_job
+                entry["role_tr"] = self._JOB_TR.get(tmdb_job, tmdb_job)
+
+            mismatches.append({
+                "name": entry.get("name"),
+                "ocr_job": ocr_job,
+                "tmdb_dept": tmdb_dept,
+                "tmdb_job": tmdb_job,
+                "category": cat,
+            })
+            self._log(
+                f"  [KrediAlan] Uyuşmazlık (Cat-{cat}): "
+                f"'{entry.get('name')}' OCR={ocr_job} TMDB={tmdb_dept}/{tmdb_job}"
+                + (f" → job={tmdb_job} olarak düzeltildi" if tmdb_job else " → job korundu")
+            )
+
+        if mismatches:
+            cdata["_credit_field_mismatches"] = mismatches
+            self._log(
+                f"  [KrediAlan] {len(mismatches)} yanlış sınıflandırma düzeltildi"
+            )
 
     # ──────────────────────────────────────────────────────────────
     # GOOGLE VI
