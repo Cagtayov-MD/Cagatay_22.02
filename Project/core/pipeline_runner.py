@@ -1483,7 +1483,8 @@ class PipelineRunner:
         cdata["cast"] = cast
         cdata["crew"] = crew
         cdata["technical_crew"] = crew
-        cdata["directors"] = directors
+        if directors:
+            cdata["directors"] = directors
         cdata["total_actors"] = len(cast)
         cdata["total_crew"] = len(crew)
         cdata["verification_status"] = "tmdb_verified"
@@ -1613,7 +1614,8 @@ class PipelineRunner:
         cdata["cast"] = cast
         cdata["crew"] = crew
         cdata["technical_crew"] = crew
-        cdata["directors"] = directors
+        if directors:
+            cdata["directors"] = directors
         cdata["total_actors"] = len(cast)
         cdata["total_crew"] = len(crew)
         cdata["verification_status"] = "imdb_verified"
