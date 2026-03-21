@@ -1113,8 +1113,8 @@ class PipelineRunner:
                     self._log(f"\n[LLM] IMDb/TMDB eşleşti — LLM filtresi atlanıyor")
 
                 # ══ [GEMINI CREW] TMDB eşleşmedi → Gemini ile crew doğrulama ══
-                # Sadece TMDB miss durumunda ve TMDB backup crew yoksa çalışır
-                if not tmdb_matched and not any(
+                # Sadece TMDB/IMDb miss durumunda ve TMDB backup crew yoksa çalışır
+                if not imdb_matched and not tmdb_matched and not any(
                     c.get("raw") == "tmdb" for c in (cdata.get("crew") or [])
                 ):
                     try:
