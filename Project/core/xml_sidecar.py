@@ -156,7 +156,7 @@ def resolve_xml_sidecar(video_path: str, log_cb=None) -> XmlSidecarInfo | None:
 
     if not xml_path:
         expected = Path(video_path).with_suffix(".xml").name
-        _log(f"  [XML] ⚠️ XML dosyası silinmiş: {expected}")
+        _log(f"  [XML] XML dosyasi silinmis: {expected}")
         return None
 
     info = parse_xml_sidecar(xml_path)
