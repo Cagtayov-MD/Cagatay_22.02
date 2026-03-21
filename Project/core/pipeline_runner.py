@@ -2254,7 +2254,97 @@ class PipelineRunner:
         with open(_safe_path(db_dir / f"{stem}_{ts}_debug.log"), "w", encoding="utf-8-sig") as f:
             f.write("\n".join(self._log_messages))
 
+        # 6. ADA1 — OCR Ham Çıktı Listesi
+        vname = Path(video_info.get("filename", "out")).stem
+        ada1_path = _safe_path(db_dir / f"{vname}_ada1.json")
+        self._write_ada1(ocr_lines, vname, credits_data, ada1_path)
+
         self._log(f"  [DATABASE] Yazıldı: {db_dir}")
+
+    def _write_ada1(self, ocr_lines: list, vname: str,
+                    cdata: dict, out_path) -> None:
+        """ADA1 — OCR Ham Çıktı Listesi.
+
+        Her OCR satırı için:
+          ocr   = motorden gelen ham metin (_repair_turkish öncesi)
+          norm1 = _repair_turkish sonrası (NameDB + Türkçe karakter)
+          norm2 = pipeline sonundaki nihai isim (Gemini/IMDb/TMDB düzeltmesi)
+          confidence = OCR güven skoru
+          kategori   = oyuncu / ekip / sirket / bilinmiyor
+
+        Bağımsız dosyadır — pipeline kararlarına hiç dokunmaz.
+        """
+        import re as _re
+        from datetime import datetime as _dt
+        from pathlib import Path as _Path
+
+        # ── bolum_no: dosya adından çıkar ────────────────────────────
+        _bm = _re.search(r'\d{4}-\d{2,4}-\d+-(\d{4})-', vname)
+        bolum_no = _bm.group(1) if _bm else ""
+
+        # ── cdata'dan isim → {kategori, norm2} haritası ──────────────
+        _lookup: dict[str, dict] = {}
+        for entry in (cdata.get("cast") or []):
+            name = (entry.get("actor_name") or "").strip()
+            if name:
+                _lookup[name.lower()] = {"kategori": "oyuncu", "norm2": name}
+        for entry in (cdata.get("crew") or []):
+            name = (entry.get("name") or "").strip()
+            if name:
+                _lookup[name.lower()] = {"kategori": "ekip", "norm2": name}
+        for entry in (cdata.get("companies") or []):
+            name = (entry.get("name") or "").strip()
+            if name:
+                _lookup[name.lower()] = {"kategori": "sirket", "norm2": name}
+
+        # ── OCR satırlarını dönüştür ──────────────────────────────────
+        satirlar = []
+        for line in (ocr_lines or []):
+            if isinstance(line, dict):
+                norm1      = (line.get("text") or "").strip()
+                ocr_raw    = (line.get("text_original") or norm1).strip()
+                confidence = float(line.get("avg_confidence") or 0.0)
+            else:
+                norm1      = (getattr(line, "text", "") or "").strip()
+                ocr_raw    = (getattr(line, "text_original", "") or norm1).strip()
+                confidence = float(getattr(line, "avg_confidence", 0.0) or 0.0)
+
+            if not norm1:
+                continue
+
+            # norm2 + kategori: tam eşleşme, yoksa substring deneme
+            hit = _lookup.get(norm1.lower())
+            if not hit:
+                for key, val in _lookup.items():
+                    if norm1.lower() in key or key in norm1.lower():
+                        hit = val
+                        break
+
+            norm2    = hit["norm2"]    if hit else norm1
+            kategori = hit["kategori"] if hit else "bilinmiyor"
+
+            satirlar.append({
+                "ocr"       : ocr_raw,
+                "norm1"     : norm1,
+                "norm2"     : norm2,
+                "confidence": round(confidence, 4),
+                "kategori"  : kategori,
+            })
+
+        ada1 = {
+            "video_id"    : vname,
+            "video_title" : (cdata.get("film_title") or "").strip(),
+            "bolum_no"    : bolum_no,
+            "olusturulma" : _dt.now().isoformat(timespec="seconds"),
+            "satirlar"    : satirlar,
+        }
+
+        try:
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(ada1, f, ensure_ascii=False, indent=2)
+            self._log(f"  [ADA1] {len(satirlar)} satır → {_Path(out_path).name}")
+        except Exception as e:
+            self._log(f"  [ADA1] Yazma hatası: {e}")
 
     @staticmethod
     def _build_ocr_scores(ocr_lines: list, credits_data: dict) -> dict:
