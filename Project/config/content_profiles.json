@@ -38,6 +38,31 @@
     "match_parse_enabled": true,
     "parse_segments": ["first_10", "last_10"]
   },
+  "SporMaci": {
+    "_description": "Futbol, basketbol, voleybol maç yayınları. İlk+son 15dk ASR + son 15dk OCR (10sn frame aralığı). Gemini ile çapraz doğrulama.",
+    "dag": "SPOR_MACI_DAG",
+    "scope": "video+audio",
+    "segment_minutes": 15,
+    "frame_interval_sec": 10,
+    "asr_enabled": true,
+    "asr_engine": "whisper",
+    "asr_model": "large-v3",
+    "asr_language": "tr",
+    "ocr_engine": "paddleocr",
+    "gemini_enabled": true,
+    "gemini_model": "gemini-2.0-flash",
+    "tmdb_enabled": false,
+    "llm_cast_filter": false,
+    "blok2_enabled": false,
+    "credits_parse_enabled": false,
+    "name_verify_enabled": false,
+    "sport_analyze_enabled": true,
+    "sport_auto_detect": true,
+    "output_format": "txt",
+    "database_enabled": true,
+    "database_root": "D:\\DATABASE",
+    "output_root": "F:\\Sonuclar"
+  },
   "StudyoProgram": {
     "_placeholder": true
   },

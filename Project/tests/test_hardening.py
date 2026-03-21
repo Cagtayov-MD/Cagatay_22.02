@@ -203,7 +203,7 @@ def test_post_process_invalid_url_returns_skipped():
     from core.post_process import PostProcessStage
     stage = PostProcessStage()
     segments = [{"start": 0.0, "end": 1.0, "text": "test", "confidence": 0.9, "speaker": ""}]
-    result = stage.run(segments, ollama_url="not_a_url")
+    result = stage.run(segments, ollama_url="not_a_url", llm_provider="ollama")
     assert result["status"] == "skipped"
     assert result["error"] == "invalid_ollama_url"
     assert "stage_time_sec" in result
@@ -214,7 +214,7 @@ def test_post_process_invalid_url_empty_string():
     from core.post_process import PostProcessStage
     stage = PostProcessStage()
     segments = [{"start": 0.0, "end": 1.0, "text": "test", "confidence": 0.9, "speaker": ""}]
-    result = stage.run(segments, ollama_url="")
+    result = stage.run(segments, ollama_url="", llm_provider="ollama")
     assert result["status"] == "skipped"
     assert result["error"] == "invalid_ollama_url"
 
@@ -298,7 +298,7 @@ def test_chat_logs_http_error(monkeypatch):
         )
 
     monkeypatch.setattr("urllib.request.urlopen", raise_http)
-    result = stage._chat("prompt", "system", "http://localhost:11434", "llama3.1:8b")
+    result = stage._chat("prompt", "system", "ollama", "http://localhost:11434", "llama3.1:8b")
     assert result == ""
     assert any("500" in m for m in logs)
 
@@ -315,7 +315,7 @@ def test_chat_logs_url_error(monkeypatch):
         raise urllib.error.URLError("Connection refused")
 
     monkeypatch.setattr("urllib.request.urlopen", raise_url)
-    result = stage._chat("prompt", "system", "http://localhost:11434", "llama3.1:8b")
+    result = stage._chat("prompt", "system", "ollama", "http://localhost:11434", "llama3.1:8b")
     assert result == ""
     assert any("bağlantı" in m.lower() or "Connection refused" in m for m in logs)
 
@@ -331,7 +331,7 @@ def test_chat_logs_timeout_error(monkeypatch):
         raise TimeoutError("timed out")
 
     monkeypatch.setattr("urllib.request.urlopen", raise_timeout)
-    result = stage._chat("prompt", "system", "http://localhost:11434", "llama3.1:8b")
+    result = stage._chat("prompt", "system", "ollama", "http://localhost:11434", "llama3.1:8b")
     assert result == ""
     assert any("zaman aşımı" in m.lower() or "timeout" in m.lower() for m in logs)
 

@@ -244,3 +244,112 @@ Leave empty [] for any role you are not confident about.
     except Exception as e:
         _log.warning(f"[GeminiCrewValidator] Hata: {e}")
         return None
+
+
+# ── TMDB department+job → canonical OCR field ─────────────────────────────
+FIELD_MAP: dict[tuple[str, str], str] = {
+    # Directing
+    ("Directing", "Director"):                  "YÖNETMEN",
+    ("Directing", "Assistant Director"):        "YÖNETMEN YARDIMCISI",
+    ("Directing", "Second Assistant Director"): "YÖNETMEN YARDIMCISI",
+    # Production
+    ("Production", "Producer"):                 "YAPIMCI",
+    ("Production", "Executive Producer"):       "YAPIMCI",
+    ("Production", "Co-Producer"):              "YAPIMCI",
+    # Writing
+    ("Writing", "Screenplay"):                  "SENARYO",
+    ("Writing", "Writer"):                      "SENARYO",
+    ("Writing", "Screenwriter"):                "SENARYO",
+    # Camera
+    ("Camera", "Director of Photography"):      "GÖRÜNTÜ YÖNETMENİ",
+    ("Camera", "Camera Operator"):              "KAMERA",
+    # Editing
+    ("Editing", "Editor"):                      "KURGU",
+}
+
+# Lowercase sürüm — case-insensitive lookup için
+_FIELD_MAP_LOWER: dict[tuple[str, str], str] = {
+    (d.lower(), j.lower()): v for (d, j), v in FIELD_MAP.items()
+}
+
+_ANA_FIELDS: frozenset[str] = frozenset({"YÖNETMEN", "YAPIMCI"})
+_DIGER_FIELDS: frozenset[str] = frozenset({
+    "SENARYO", "GÖRÜNTÜ YÖNETMENİ", "KAMERA", "KURGU", "YÖNETMEN YARDIMCISI",
+})
+
+
+def _crew_norm(s: str) -> str:
+    """İsim karşılaştırması için normalize: küçük harf, alfanumerik."""
+    return "".join(ch for ch in s.lower() if ch.isalnum())
+
+
+def field_from_tmdb(dept: str, job: str) -> str:
+    """TMDB department + job → canonical Turkish field adı.
+
+    Args:
+        dept: TMDB department string (büyük/küçük harf fark etmez).
+        job:  TMDB job string (büyük/küçük harf fark etmez).
+
+    Returns:
+        "YÖNETMEN", "GÖRÜNTÜ YÖNETMENİ" vb. — bulunamazsa "".
+    """
+    return _FIELD_MAP_LOWER.get((dept.lower().strip(), job.lower().strip()), "")
+
+
+def verify_crew_role(
+    film_title: str,
+    name: str,
+    ocr_field: str,
+    gemini_model: str = "gemini-2.5-flash",
+) -> str:
+    """Gemini YES/NO: film_title'da name, ocr_field rolünü üstleniyor mu?
+
+    Args:
+        film_title: Film adı.
+        name:       Kişi tam adı.
+        ocr_field:  Canonical alan adı (ör. "YÖNETMEN", "GÖRÜNTÜ YÖNETMENİ").
+        gemini_model: Gemini model adı.
+
+    Returns:
+        "YES"                 — Gemini onayladı.
+        "NO"                  — Gemini reddetti.
+        "gemini_timeout"      — Zaman aşımı (fail-closed).
+        "gemini_network_error"— Ağ/IO hatası (fail-closed).
+        "gemini_parse_error"  — Beklenmedik yanıt (fail-closed).
+    """
+    try:
+        import core.llm_provider as _llm
+    except ImportError:
+        _log.warning("[VerifyCrewRole] llm_provider import edilemedi")
+        return "gemini_network_error"
+
+    prompt = (
+        f'In the film "{film_title}", is "{name}" credited as {ocr_field}? '
+        "Answer with exactly YES or NO, nothing else."
+    )
+
+    try:
+        response = _llm.generate(prompt=prompt, provider="gemini", model=gemini_model)
+    except TimeoutError:
+        _log.warning(f"[VerifyCrewRole] Zaman aşımı: {name!r} / {ocr_field!r}")
+        return "gemini_timeout"
+    except OSError as e:
+        _log.warning(f"[VerifyCrewRole] Ağ hatası: {name!r} — {e}")
+        return "gemini_network_error"
+    except Exception as e:
+        _log.warning(f"[VerifyCrewRole] Hata: {name!r} — {e}")
+        return "gemini_parse_error"
+
+    if not response:
+        return "gemini_parse_error"
+
+    normalized = response.strip().upper()
+    if normalized == "YES":
+        _log.info(f"[VerifyCrewRole] YES: {name!r} → {ocr_field!r}")
+        return "YES"
+    if normalized == "NO":
+        _log.info(f"[VerifyCrewRole] NO: {name!r} → {ocr_field!r}")
+        return "NO"
+
+    _log.warning(f"[VerifyCrewRole] Geçersiz yanıt: {name!r} → {response!r}")
+    return "gemini_parse_error"
