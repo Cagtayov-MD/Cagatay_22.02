@@ -1829,7 +1829,9 @@ class PipelineRunner:
         if not (api_key or token):
             return
 
-        film_title = (cdata.get("film_title") or "").strip()
+        # TMDB araması için Türkçe başlığı tercih et (ocr_title = dosya adından gelen başlık,
+        # film_title bu noktada IMDb primaryTitle ile ezilmiş olabilir)
+        film_title = (cdata.get("ocr_title") or cdata.get("film_title") or "").strip()
         if not film_title:
             return
 
