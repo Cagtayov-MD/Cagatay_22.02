@@ -522,6 +522,45 @@ class CreditsParser:
                     "frame": "ocr_sequential",
                 })
 
+        # ── Post-process: bölünmüş 3-parçalı isimleri birleştir ─────────────────
+        # OCR bazen "YUNUS EMRE YILDIRIMER" gibi isimleri iki satıra böler:
+        # "YUNUS" (tek kelime, bilinen ad) + "EMRE YILDIRIMER" (ad + soyad).
+        # Koşul: ardışık iki ocr_sequential giriş; birincisi tek kelimelik bilinen
+        # bir ad, ikincinin ilk kelimesi de bilinen bir ad → birleştir.
+        if self._name_db and len(cast) >= 2:
+            merged: list[dict] = []
+            i = 0
+            while i < len(cast):
+                entry = cast[i]
+                name = (entry.get("actor_name") or "").strip()
+                words = name.split()
+                if (
+                    len(words) == 1
+                    and entry.get("frame") == "ocr_sequential"
+                    and self._name_db.is_first_name(name)
+                    and i + 1 < len(cast)
+                ):
+                    nxt = cast[i + 1]
+                    nxt_name = (nxt.get("actor_name") or "").strip()
+                    nxt_words = nxt_name.split()
+                    if (
+                        nxt.get("frame") == "ocr_sequential"
+                        and len(nxt_words) >= 2
+                        and self._name_db.is_first_name(nxt_words[0])
+                    ):
+                        combined = dict(nxt)
+                        combined["actor_name"] = name + " " + nxt_name
+                        combined["confidence"] = round(
+                            max(float(entry.get("confidence", 0)),
+                                float(nxt.get("confidence", 0))), 3
+                        )
+                        merged.append(combined)
+                        i += 2
+                        continue
+                merged.append(entry)
+                i += 1
+            cast = merged
+
         return {
             "cast": cast,
             "crew": crew,
