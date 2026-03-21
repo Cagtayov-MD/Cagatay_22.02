@@ -1,0 +1,15 @@
+{
+    "film_title": "Teşkilat",
+    "year": 2021,
+    "cast": [
+        {"actor_name": "Deniz Baysal", "confidence": 0.90},
+        {"actor_name": "Melisa Akman", "confidence": 0.90}
+    ],
+    "crew": [],
+    "technical_crew": [],
+    "directors": [{"name": "Burak Arliel"}],
+    "production_companies": [],
+    "production_info": [],
+    "verification_status": "ocr_parsed",
+    "_is_series": true
+}

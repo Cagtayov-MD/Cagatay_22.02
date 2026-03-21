@@ -310,7 +310,7 @@ def test_verify_credits_kulube_rejected():
     }
 
     with patch.object(verifier, "_find_tmdb_entry",
-                      return_value=(fight_club_entry, "movie", "title")), \
+                      return_value=(fight_club_entry, "movie", "title", [])), \
          patch.object(verifier, "_fetch_credits",
                       return_value=fight_club_credits), \
          patch.object(verifier, "_save_cache"), \
@@ -391,7 +391,7 @@ def test_verify_credits_correct_film_accepted():
     }
 
     with patch.object(verifier, "_find_tmdb_entry",
-                      return_value=(fight_club_entry, "movie", "title")), \
+                      return_value=(fight_club_entry, "movie", "title", [])), \
          patch.object(verifier, "_fetch_credits",
                       return_value=fight_club_credits), \
          patch.object(verifier.client, "get_movie_details",
@@ -449,7 +449,7 @@ def test_ocr_year_parsed_from_filename():
     }
 
     with patch.object(verifier, "_find_tmdb_entry",
-                      return_value=(entry, "movie", "title")), \
+                      return_value=(entry, "movie", "title", [])), \
          patch.object(verifier, "_fetch_credits", return_value=credits), \
          patch.object(verifier, "_save_cache"), \
          patch.object(verifier, "_load_cache", return_value=None):
@@ -807,7 +807,7 @@ def test_high_confidence_bypass():
     }
 
     with patch.object(verifier, "_find_tmdb_entry",
-                      return_value=(tmdb_entry, "movie", "cast_only")), \
+                      return_value=(tmdb_entry, "movie", "cast_only", [])), \
          patch.object(verifier, "_fetch_credits",
                       return_value=tmdb_credits), \
          patch.object(verifier.client, "get_movie_details",

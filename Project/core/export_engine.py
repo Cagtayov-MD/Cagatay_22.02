@@ -552,26 +552,114 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "monteur": "KURGU", "monteuse": "KURGU",
     "cutter": "KURGU", "schnitt": "KURGU",
     "montaggio": "KURGU", "montage": "KURGU",
-    # ─── YAPIMCI (Fransızca ek) ──────────────────────────────────────────
+    # ─── YAPIMCI ───────────────────────────────────────────────────────────
+    # Fransızca
     "producteur délégué": "YAPIMCI", "producteur delegue": "YAPIMCI",
     "producteur exécutif": "YAPIMCI", "producteur executif": "YAPIMCI",
+    "production exécutive": "YAPIMCI", "production executive": "YAPIMCI",
+    "produetion exécutive": "YAPIMCI",  # OCR varyantı
     "production déléguée": "YAPIMCI", "production deleguee": "YAPIMCI",
     "directeur de production": "YAPIMCI",
-    # ─── YÖNETMEN (Fransızca ek) ─────────────────────────────────────────
+    "coproduction": "YAPIMCI", "une coproduction": "YAPIMCI",
+    # İspanyolca
+    "producción": "YAPIMCI", "produccion": "YAPIMCI",
+    "productora": "YAPIMCI",
+    # Almanca
+    "hergestellt von": "YAPIMCI", "hersteller": "YAPIMCI",
+    # Arapça (Latin transkripsiyon)
+    "muntij": "YAPIMCI", "muntig": "YAPIMCI",
+    # Hintçe (transkripsiyon)
+    "nirmaata": "YAPIMCI", "nirmata": "YAPIMCI",
+    # ─── YÖNETMEN ──────────────────────────────────────────────────────────
+    # Fransızca
     "réalisation": "YÖNETMEN", "realisation": "YÖNETMEN",
     "réalisateur": "YÖNETMEN", "realisateur": "YÖNETMEN",
+    "reallsation": "YÖNETMEN",  # OCR varyantı
+    "réalisé par": "YÖNETMEN", "realise par": "YÖNETMEN",
     "un film de": "YÖNETMEN",
-    # ─── GÖRÜNTÜ YÖNETMENİ (Fransızca ek) ───────────────────────────────
-    "directeur de la photographie": "GÖRÜNTÜ YÖNETMENİ",
-    # ─── KAMERA (Fransızca ek) ───────────────────────────────────────────
-    "cadreur": "KAMERA", "opérateur": "KAMERA", "operateur": "KAMERA",
-    "assistant opérateur": "KAMERA", "assistant operateur": "KAMERA",
-    # ─── YÖNETMEN YARDIMCISI (Fransızca ek) ─────────────────────────────
+    # İspanyolca
+    "dirección": "YÖNETMEN", "direccion": "YÖNETMEN",
+    "director de": "YÖNETMEN",
+    # Almanca
+    "regie führte": "YÖNETMEN",
+    # Arapça transkripsiyon
+    "ikhraa": "YÖNETMEN", "iqraj": "YÖNETMEN",
+    # Hintçe transkripsiyon
+    "nirdeshak": "YÖNETMEN", "nirdeshika": "YÖNETMEN",
+    # ─── YÖNETMEN YARDIMCISI ──────────────────────────────────────────────
+    # Fransızca
     "assistant réalisateur": "YÖNETMEN YARDIMCISI",
     "assistant realisateur": "YÖNETMEN YARDIMCISI",
-    # ─── KURGU (Fransızca ek) ────────────────────────────────────────────
+    "assistante réalisatrice": "YÖNETMEN YARDIMCISI",
+    "2eme assistant réalisateur": "YÖNETMEN YARDIMCISI",
+    "2eme assistant realisateur": "YÖNETMEN YARDIMCISI",
+    "22me assistant realisateur": "YÖNETMEN YARDIMCISI",  # OCR varyantı
+    "2ème assistant réalisateur": "YÖNETMEN YARDIMCISI",
+    # İspanyolca
+    "ayudante de dirección": "YÖNETMEN YARDIMCISI",
+    "asistente de dirección": "YÖNETMEN YARDIMCISI",
+    # Almanca
+    "regieassistenz": "YÖNETMEN YARDIMCISI",
+    # Arapça transkripsiyon
+    "musaid al mukhraj": "YÖNETMEN YARDIMCISI",
+    # Hintçe transkripsiyon
+    "sahayak nirdeshak": "YÖNETMEN YARDIMCISI",
+    # ─── GÖRÜNTÜ YÖNETMENİ ────────────────────────────────────────────────
+    # Fransızca
+    "directeur de la photographie": "GÖRÜNTÜ YÖNETMENİ",
+    "chef opérateur": "GÖRÜNTÜ YÖNETMENİ",
+    "chef operateur": "GÖRÜNTÜ YÖNETMENİ",
+    # İspanyolca
+    "director de fotografía": "GÖRÜNTÜ YÖNETMENİ",
+    "director de fotografia": "GÖRÜNTÜ YÖNETMENİ",
+    # Almanca
+    "kameraführung": "GÖRÜNTÜ YÖNETMENİ",
+    "bildgestaltung": "GÖRÜNTÜ YÖNETMENİ",
+    # Arapça transkripsiyon
+    "mudeer taswiir": "GÖRÜNTÜ YÖNETMENİ",
+    # Hintçe transkripsiyon
+    "chitragrahi": "GÖRÜNTÜ YÖNETMENİ",
+    # ─── SENARYO ──────────────────────────────────────────────────────────
+    # Fransızca
+    "scénario": "SENARYO", "scenario": "SENARYO",
+    "adaptation et dialogues de": "SENARYO",
+    "adaptation": "SENARYO",
+    "d'après son roman": "SENARYO",
+    # İspanyolca
+    "guión": "SENARYO", "guion": "SENARYO",
+    # Almanca
+    "drehbuch von": "SENARYO",
+    # Arapça transkripsiyon
+    "sinaryu": "SENARYO", "nass": "SENARYO",
+    # Hintçe transkripsiyon
+    "patakatha": "SENARYO", "patkatha": "SENARYO",
+    # ─── KAMERA ───────────────────────────────────────────────────────────
+    # Fransızca
+    "cadreur": "KAMERA",
+    "opérateur": "KAMERA", "operateur": "KAMERA",
+    "opérateur de prise de vue": "KAMERA",
+    "operateur de prise de vue": "KAMERA",
+    "assistant opérateur": "KAMERA", "assistant operateur": "KAMERA",
+    # İspanyolca
+    "operador de cámara": "KAMERA", "operador de camara": "KAMERA",
+    # Almanca
+    "kameraoperateur": "KAMERA", "kamerabedienung": "KAMERA",
+    # Arapça transkripsiyon
+    "musawwir": "KAMERA",
+    # Hintçe transkripsiyon
+    "kaimraaman": "KAMERA", "kamraman": "KAMERA",
+    # ─── KURGU ────────────────────────────────────────────────────────────
+    # Fransızca
     "assistant monteur": "KURGU",
-    # ─── SENARYO (Fransızca ek) ──────────────────────────────────────────
+    # İspanyolca
+    "montaje": "KURGU", "edición": "KURGU",
+    "editor de montaje": "KURGU",
+    # Almanca
+    "schnittführung": "KURGU",
+    # Arapça transkripsiyon
+    "montaaj": "KURGU",
+    # Hintçe transkripsiyon
+    "sampadak": "KURGU", "sampadan": "KURGU",
     # ─── EXCLUDED — kategoride yok, çıktıya yazılmaz ─────────────────────
     # Script supervisor / dekor rolleri (senaryo yazarlığı değil)
     "scripte": "EXCLUDED", "chef décorateur": "EXCLUDED", "chef decorateur": "EXCLUDED",
@@ -585,6 +673,52 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "maquillage": "EXCLUDED", "makeup": "EXCLUDED",
     "costumes": "EXCLUDED",
 }
+
+# Bilinen rol başlıkları seti — bu değerler asla kişi ismi olamaz.
+# _ROLE_TO_OUTPUT'un tüm key'lerinden otomatik türetilir.
+_KNOWN_ROLE_TITLES: frozenset[str] = frozenset(_ROLE_TO_OUTPUT.keys())
+
+# Kişi ismi olmayan ek terimler (ülke, kurum, mekan, sunum ifadeleri vb.)
+_NON_PERSON_TERMS: frozenset[str] = frozenset({
+    # Ülke / şehir / coğrafi ifadeler
+    "france", "cameroun", "cameroon", "paris", "london",
+    "allemagne", "belgique", "canada", "senegal", "mali",
+    "burkina", "niger", "maroc", "tunisie", "algerie",
+    "italia", "espana", "portugal", "suisse", "suede",
+    # Kurum tipleri
+    "ministere", "ministre", "ministry",
+    "ecole", "universite", "lycee", "publique",
+    "editions", "edition", "editeur",
+    # Yapım / sunum ifadeleri
+    "fodic", "presentent", "presente", "presenten",
+    "les films", "les eleves",
+    # Teknik/jenerik etiketler
+    "hotel", "makonee", "makomee",
+    "un film de", "a film by", "une coproduction", "coproduction",
+    # Fransızca teknik terimler (rol başlığı ama _ROLE_TO_OUTPUT'ta olmayan)
+    "son", "scripte", "regie", "bruitage", "mixage", "maquillage",
+    "habilleur", "maintenance", "groupiste", "machinerie", "chauffeurs",
+    "stagiaires", "laboratoire", "repiquage", "avec", "avee",
+    "coopérative",
+    # İngilizce teknik etiketler
+    "presents", "presente", "presenting",
+})
+
+
+def _is_non_person(name: str) -> bool:
+    """İsim aslında bir rol başlığı veya kişi olmayan bir terim mi?
+
+    _KNOWN_ROLE_TITLES ve _NON_PERSON_TERMS'e bakarak karar verir.
+    3 karakterden kısa isimler de reddedilir.
+    """
+    if len(name) < 3:
+        return True
+    low = name.strip().lower()
+    if low in _KNOWN_ROLE_TITLES:
+        return True
+    if low in _NON_PERSON_TERMS:
+        return True
+    return False
 
 
 def _map_crew_to_roles(crew_data: list, directors: list) -> dict[str, list[str]]:
@@ -602,13 +736,20 @@ def _map_crew_to_roles(crew_data: list, directors: list) -> dict[str, list[str]]
     # Directors → YÖNETMEN
     for d in (directors or []):
         if d and d not in result["YÖNETMEN"]:
-            result["YÖNETMEN"].append(d)
+            name_d = d.get("name", "") if isinstance(d, dict) else str(d)
+            if name_d and not _is_non_person(name_d):
+                result["YÖNETMEN"].append(name_d)
 
     # Crew entries → matching output role
     for entry in (crew_data or []):
         name = (entry.get("name") or "").strip()
         if not name:
             continue
+
+        # Rol başlığı veya kişi olmayan terim ise atla
+        if _is_non_person(name):
+            continue
+
         role_raw = (
             entry.get("role_tr") or entry.get("role") or entry.get("job") or ""
         ).strip()
@@ -1470,6 +1611,12 @@ class ExportEngine:
             L.append(f"  {'SESLENDİRME DİLİ':<{fw}}:     VERİ YOK")
 
         cast_list = cr.get("cast") or []
+        # IMDb LOCK: IMDb eşleşmesi varsa oyuncular ve yönetmenler yalnızca
+        # IMDb'den gelir. raw="imdb" dışı girişler rapora yansımaz.
+        if cr.get("verification_status") == "imdb_verified":
+            _imdb_cast = [c for c in cast_list if c.get("raw") == "imdb"]
+            if _imdb_cast:
+                cast_list = _imdb_cast
         actor_names = [
             (c.get("actor_name") or "").strip()
             for c in cast_list
@@ -1482,15 +1629,13 @@ class ExportEngine:
         # 2) Gemini doğrulaması varsa (TMDB miss durumunda) → ikinci öncelik
         # 3) NameVerifier doğrulamış crew varsa → OCR + doğrulama
         # 4) Hiçbiri yoksa → ham OCR parse
-        tmdb_crew = [c for c in (cr.get("crew") or []) if c.get("raw") == "tmdb"]
+        tmdb_crew = [c for c in (cr.get("crew") or []) if c.get("raw") in ("tmdb", "imdb")]
         gemini_roles = cr.get("_gemini_crew_roles")
         if tmdb_crew:
-            # TMDB directors'ı da crew'dan çıkar
-            tmdb_directors = [
-                c.get("name", "") for c in tmdb_crew
-                if (c.get("job") or "").strip().lower() in ("director", "yonetmen", "yönetmen")
-            ]
-            crew_roles = _map_tmdb_crew_to_roles(tmdb_crew, tmdb_directors or director_names)
+            # YÖNETMEN her zaman cdata["directors"]'tan gelir (IMDb kutsal kaynak).
+            # TMDB aggregate_credits bölüm yönetmenleri crew'a eklenebilir ama
+            # director_names'i asla ezmez.
+            crew_roles = _map_tmdb_crew_to_roles(tmdb_crew, director_names)
             # TMDB'de eksik roller için OCR fallback
             ocr_roles = cr.get("_verified_crew_roles") or _map_crew_to_roles(
                 cr.get("technical_crew") or [], director_names)

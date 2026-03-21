@@ -8,8 +8,12 @@ Katmanlar (ucuzdan pahalıya):
   1. Hard Blacklist + Yapısal Kontrol  (maliyet: 0)
   2. NameDB doğrulaması               (maliyet: 0, lokal)
   3. TMDB Person Search               (maliyet: düşük, HTTP)
-  4. Gemini API                        (maliyet: yüksek, son çare)
-  5. Bulunamadı → flag ile rapora yaz  (maliyet: 0)
+  4. Gemini YES/NO doğrulama          (maliyet: yüksek, son çare)
+     Pass 2 akışı: doğrulanamamış adaylar için tam-isim fuzzy top-2 →
+     minimum fuzzy gate (≥72) → Gemini YES/NO validator (aday 1) →
+     reddedilirse ve aday 2 de gate'i geçiyorsa Gemini YES/NO (aday 2) →
+     aksi hâlde unresolved (raw OCR korunur, verified=False).
+  5. Bulunamadı → unresolved olarak flag ile rapora yaz (maliyet: 0)
 
 Her aşama bir verification_log JSON'a yazılır (D:\\DATABASE altına).
 Log formatı: her katmanda her isim için ne oldu (kept/dropped/corrected/flagged).
@@ -23,6 +27,38 @@ Kullanım:
 
 import re
 import unicodedata
+
+try:
+    from rapidfuzz import fuzz as _rf_fuzz, process as _rf_process
+    _HAS_RAPIDFUZZ = True
+except Exception:
+    _HAS_RAPIDFUZZ = False
+
+# Minimum fuzzy skor eşiği — bu puanın altındaki adaylar Gemini'ye gönderilmez.
+# Agresif filtreleme önlemek için 60–65 gibi çok düşük bir değerden kaçınılır;
+# mevcut doğrudan-kabul eşiğinden (85) belirgin şekilde düşük tutulur.
+_GEMINI_FUZZY_GATE = 72
+
+
+def _norm_name(s: str) -> str:
+    """Karşılaştırma için normalize: küçük harf, sadece alfanumerik."""
+    return "".join(ch for ch in (s or "").lower() if ch.isalnum())
+
+
+def _fuzzy_name_match(query: str, choices: list, threshold: int = 82) -> bool:
+    """İsim fuzzy eşleşmesi — query, choices içinde eşleşiyor mu?"""
+    if not query or not choices:
+        return False
+    qn = _norm_name(query)
+    for c in choices:
+        if _norm_name(c) == qn:
+            return True
+    if _HAS_RAPIDFUZZ:
+        res = _rf_process.extractOne(
+            query, choices, scorer=_rf_fuzz.WRatio, score_cutoff=threshold
+        )
+        return res is not None
+    return False
 
 # ═══════════════════════════════════════════════════════════════════
 # KATMAN 1 — HARD BLACKLIST
@@ -89,6 +125,69 @@ _CREW_BLACKLIST_EXACT = frozenset({
     "tapsyrysy boiynsha",
     # ── Sıfatlar / kısa bağlaçlar ──
     "re", "cr", "ir", "pa", "or", "and",
+    # ── Fransızca jenerik etiketleri ──
+    "cadreur",
+    "son",
+    "musique de",
+    "musiques additionnelles",
+    "musiques additionelles",  # OCR varyantı
+    "scripte",
+    "seripte",  # OCR varyantı
+    "régie", "regie",
+    "bruitage", "brultage",  # OCR varyantı
+    "mixage", "minage", "mirage",  # OCR varyantları
+    "maquillage",
+    "habilleur", "habllleur",  # OCR varyantı
+    "maintenance",
+    "groupiste",
+    "machinerie",
+    "chauffeurs",
+    "stagiaires", "staniaires",  # OCR varyantı
+    "laboratoire",
+    "repiquage",
+    "génériques", "genériques",  # OCR varyantı
+    "coordination",
+    "avec le concours de",
+    "avec la participation de",
+    "avec", "avee",  # OCR varyantı
+    "nous remercions",
+    "une coproduction",
+    "coproduction",
+    "coopérative",
+    "hotel",
+    "makonee", "makomee",  # lokasyon/otel adı + OCR
+    # ── Ülke / şehir / coğrafi ifadeler ──
+    "france", "cameroun", "cameroon", "paris", "london",
+    "allemagne", "belgique", "canada", "senegal", "mali",
+    "burkina", "niger", "maroc", "tunisie", "algerie",
+    "italia", "espana", "portugal", "suisse", "suede",
+    # ── Kurum tipleri / resmi terimler ──
+    "ministere", "ministre", "ministry",
+    "ecole", "universite", "lycee", "publique",
+    "editions", "edition", "editeur",
+    # ── Yapım şirketi / sunum ifadeleri ──
+    "fodic", "presentent", "presente", "presenten",
+    "les films", "les eleves",
+    "assistant à la production",
+    "assistant a la production",
+    "assistant à la produetion",  # OCR varyantı
+    "assistant monteur",
+    "assistant opérateur",
+    "assistant operateur",
+    "assistants au son",
+    "secrétaires de production",
+    "secretaires de production",
+    "directeur de production",
+    "directeur de produetion",  # OCR varyantı
+    "supervision technique",
+    "supervision technlque",  # OCR varyantı
+    "chef électricien", "chef electricien",
+    "chef dlectricien", "chef eleetricien",  # OCR varyantları
+    "régisseur général", "regisseur général",
+    "régísseur général",  # OCR varyantı
+    "production exécutive", "production executive",
+    "produetion exécutive",
+    "assistant réalisateur", "assistant realisateur",
 })
 
 # Blacklist'te kelime içeren ifadeler (contains match)
@@ -101,6 +200,11 @@ _CREW_BLACKLIST_CONTAINS = frozenset({
     "filmed at", "filmed in",
     "panavision", "in hollywood",
     "bolum",  # bölüm bilgisi
+    "ministere", "ministre",  # resmi kurum
+    "les eleves",              # öğrenci grubu
+    "ecole publique",          # okul adı
+    "une coproduction",        # yapım ifadesi
+    "les films",               # yapım şirketi öneki
 })
 
 # Regex ile yakalanacak kalıplar
@@ -458,16 +562,126 @@ class NameVerifier:
                                    "dropped", "unverified_has_alternative")
                     self._log(f"    [DROP] ✗ {orig_name} — doğrulanamadı, alternatif var")
                 else:
-                    # Bu rol için hiç verified isim yok → flag ile ekle
-                    self._add_log("FINAL", role, orig_name, orig_name,
-                                   "flagged", "unverified_no_alternative")
-                    self._log(f"    [?] {orig_name} — doğrulanamadı (alternatif yok)")
-                    if orig_name not in verified_names:
-                        verified_names.append(orig_name)
+                    # Bu rol için hiç verified isim yok → Gemini pass2 dene
+                    resolved = self._gemini_pass2(role, orig_name)
+                    if resolved is not None:
+                        if resolved not in verified_names:
+                            verified_names.append(resolved)
+                    else:
+                        # Gemini de başarısız → unresolved olarak flag ile ekle
+                        self._add_log("FINAL", role, orig_name, orig_name,
+                                       "flagged", "unresolved",
+                                       {"verified": False, "resolution": "unresolved"})
+                        self._log(f"    [?] {orig_name} — çözümsüz (unresolved)")
+                        if orig_name not in verified_names:
+                            verified_names.append(orig_name)
 
             result[role] = verified_names
 
         return result
+
+    # ─────────────────────────────────────────────────────
+    # KATMAN 4 — Gemini Pass 2 (tam isim fuzzy top-2 + YES/NO)
+    # ─────────────────────────────────────────────────────
+
+    def _gemini_pass2(self, role: str, ocr_name: str) -> str | None:
+        """Katman 4: doğrulanamamış aday için fuzzy top-2 + Gemini YES/NO.
+
+        Akış:
+          1. _fuzzy_find_top2() ile en fazla 2 aday al.
+          2. Aday 1 _GEMINI_FUZZY_GATE (≥72) eşiğini geçmiyorsa unresolved.
+          3. Aday 1 eşiği geçiyorsa Gemini YES/NO sor.
+             - YES → aday 1'i döndür.
+             - NO / hata → Aday 2 de eşiği geçiyorsa Gemini YES/NO sor.
+               * YES → aday 2'yi döndür.
+               * NO / hata → unresolved (None döndür).
+          4. Kesinlikle 3. veya daha fazla adaya geçilmez.
+
+        Gemini hataları fail-closed: timeout/network/parse/geçersiz yanıt
+        her zaman reddetme sayılır, hiçbir zaman isim üretmez.
+
+        Args:
+            role: Doğrulama rolü (log için).
+            ocr_name: Ham OCR ismi (raw değer korunur, log için).
+
+        Returns:
+            Onaylanan canonical isim (str), bulunamazsa None.
+        """
+        if self._name_db is None:
+            self._log(f"    [GEMINI_P2] NameDB yok — {ocr_name!r} atlanıyor")
+            return None
+
+        try:
+            from core.gemini_crew_validator import verify_single_name as _vsn
+        except ImportError:
+            self._log("[GEMINI_P2] gemini_crew_validator import edilemedi")
+            return None
+
+        # Skor eşiği: _GEMINI_FUZZY_GATE (0–100 arası) → _fuzzy_find_top2 0–100 bekleniyor
+        gate_100 = _GEMINI_FUZZY_GATE  # _fuzzy_find_top2 threshold 0–100
+        candidates = self._name_db._fuzzy_find_top2(ocr_name, threshold=gate_100)
+
+        self._log(
+            f"    [GEMINI_P2] {ocr_name!r} → top2 adaylar: {candidates}"
+        )
+
+        if not candidates:
+            self._add_log("GEMINI_PASS2", role, ocr_name, ocr_name,
+                           "flagged", "no_fuzzy_candidate_above_gate",
+                           {"verified": False, "resolution": "unresolved"})
+            return None
+
+        def _try_gemini(candidate_name: str, cand_score: float, idx: int) -> bool:
+            """Gemini'ye sor; True = YES, False = diğer her şey."""
+            self._log(
+                f"    [GEMINI_P2] Aday {idx}: {candidate_name!r} "
+                f"(skor:{cand_score:.3f}) — Gemini'ye soruluyor"
+            )
+            verdict = _vsn(candidate_name)
+            self._add_log(
+                "GEMINI_PASS2", role, ocr_name, candidate_name,
+                "kept" if verdict == "YES" else "dropped",
+                f"gemini_{verdict.lower()}",
+                {
+                    "ocr_raw": ocr_name,
+                    f"fuzzy_cand{idx}": candidate_name,
+                    f"fuzzy_score{idx}": cand_score,
+                    "gemini_verdict": verdict,
+                    "verified": verdict == "YES",
+                    "resolution": "gemini_verified" if verdict == "YES" else "unresolved",
+                },
+            )
+            return verdict == "YES"
+
+        # Aday 1
+        cand1_name, cand1_score = candidates[0]
+        if _try_gemini(cand1_name, cand1_score, 1):
+            self._log(f"    [GEMINI_P2] ✓ {cand1_name!r} Gemini tarafından onaylandı")
+            return cand1_name
+
+        # Aday 2 (sadece gate'i geçiyorsa dene)
+        # Not: _fuzzy_find_top2 zaten threshold=gate_100 (0–100 skala) ile
+        # filtrelediğinden cand2_score (0–1 skala) her zaman >= gate/100 olur.
+        # Bu kontrol, üstten gelen skalayla tutarlılığı açıkça belgeler.
+        if len(candidates) >= 2:
+            cand2_name, cand2_score = candidates[1]
+            if cand2_score >= _GEMINI_FUZZY_GATE / 100.0:
+                if _try_gemini(cand2_name, cand2_score, 2):
+                    self._log(
+                        f"    [GEMINI_P2] ✓ {cand2_name!r} Gemini tarafından onaylandı (aday 2)"
+                    )
+                    return cand2_name
+            else:
+                self._log(
+                    f"    [GEMINI_P2] Aday 2 {cand2_name!r} gate'i geçemedi "
+                    f"(skor:{cand2_score:.3f} < {_GEMINI_FUZZY_GATE / 100.0:.2f})"
+                )
+
+        # Her iki aday da başarısız
+        self._add_log("GEMINI_PASS2", role, ocr_name, ocr_name,
+                       "flagged", "unresolved",
+                       {"verified": False, "resolution": "unresolved", "ocr_raw": ocr_name})
+        return None
 
     # ─────────────────────────────────────────────────────
     # VERIFY CAST — Oyuncu listesi doğrulama
@@ -566,3 +780,235 @@ class NameVerifier:
                   f"çıkarılan: {dropped})")
 
         return verified_cast
+
+    # ─────────────────────────────────────────────────────
+    # VERIFY AS SERIES — Dizi bazlı TMDB doğrulama
+    # ─────────────────────────────────────────────────────
+
+    def verify_as_series(self, title: str, director_names: list) -> dict | None:
+        """Dizi adı + yönetmen kombinasyonu ile TMDB'de doğrulama yapar.
+
+        Tek tek isim aramak yerine dizi adıyla arama yapar ve yönetmen
+        eşleşmesini kontrol eder. Eşleşme bulunursa dizi cast/crew bilgisini döner.
+
+        Args:
+            title: Dizi adı (dosya adından çıkarılmış).
+            director_names: Yönetmen adları listesi (OCR/credits_parse çıktısından).
+
+        Returns:
+            dict with {tmdb_entry, credits, matched_via, tmdb_id, tmdb_title, media_type}
+            veya eşleşme bulunamazsa None.
+        """
+        if not self._tmdb_client or not title:
+            self._log("  [NAME_VERIFY/Dizi] TMDB client yok veya başlık boş — atlanıyor")
+            return None
+
+        self._log(f"\n  ── NAME VERIFY: DİZİ MODU ──")
+        self._log(f"  [NAME_VERIFY/Dizi] Aranan: '{title}' | Yönetmenler: {director_names}")
+
+        try:
+            results = self._tmdb_client.search_multi(title)
+        except Exception as e:
+            self._log(f"  [NAME_VERIFY/Dizi] TMDB arama hatası: {e}")
+            return None
+
+        self._log(f"  [NAME_VERIFY/Dizi] {len(results or [])} TMDB sonucu")
+
+        for r in (results or [])[:10]:
+            if r.get("media_type") != "tv":
+                continue
+
+            tmdb_title = r.get("name") or r.get("title") or "?"
+            tmdb_id = r.get("id")
+
+            try:
+                credits = self._tmdb_client.get_tv_credits(int(tmdb_id))
+            except Exception as e:
+                self._log(f"  [NAME_VERIFY/Dizi] Credits çekme hatası (id:{tmdb_id}): {e}")
+                continue
+
+            if not credits:
+                continue
+
+            tmdb_crew_names = [
+                item.get("name", "") for item in (credits.get("crew") or [])
+                if item.get("name")
+            ]
+
+            # Yönetmen eşleşmesi — hiç yönetmen bilgisi yoksa başlık eşleşmesi yeterli
+            if director_names:
+                director_match = any(
+                    _fuzzy_name_match(d, tmdb_crew_names) for d in director_names if d
+                )
+                # /tv/{id}/credits dizilerde yönetmeni nadiren döndürür (bölüm bazlı atama).
+                # Eşleşme yoksa aggregate_credits ile bir kez daha dene.
+                if not director_match:
+                    try:
+                        agg = self._tmdb_client.get_tv_aggregate_credits(int(tmdb_id))
+                        # aggregate_credits crew yapısı: {name, department, jobs:[{job, episode_count}]}
+                        # Regular credits formatına düzleştir: her jobs girişi ayrı crew kaydı olur.
+                        agg_crew_flat = []
+                        for item in (agg.get("crew") or []):
+                            name = item.get("name", "")
+                            department = item.get("department", "")
+                            if not name:
+                                continue
+                            for job_entry in (item.get("jobs") or [{"job": department}]):
+                                agg_crew_flat.append({
+                                    "name": name,
+                                    "job": job_entry.get("job", department),
+                                    "department": department,
+                                    "episode_count": job_entry.get("episode_count", 0),
+                                })
+                        agg_crew_names = [c["name"] for c in agg_crew_flat]
+                        director_match = any(
+                            _fuzzy_name_match(d, agg_crew_names) for d in director_names if d
+                        )
+                        if director_match:
+                            # Mevcut crew listesine aggregate crew'u birleştir (isim tekrarını önle)
+                            existing_names = {
+                                item.get("name", "") for item in (credits.get("crew") or [])
+                            }
+                            for c in agg_crew_flat:
+                                if c["name"] not in existing_names:
+                                    credits.setdefault("crew", []).append(c)
+                                    existing_names.add(c["name"])
+                            tmdb_crew_names = agg_crew_names
+                            self._log(
+                                f"  [NAME_VERIFY/Dizi] '{tmdb_title}' aggregate_credits ile "
+                                f"yönetmen eşleşti, {len(agg_crew_flat)} crew eklendi ✓"
+                            )
+                    except Exception as e:
+                        self._log(f"  [NAME_VERIFY/Dizi] aggregate_credits hatası (id:{tmdb_id}): {e}")
+                if not director_match:
+                    self._log(
+                        f"  [NAME_VERIFY/Dizi] '{tmdb_title}' (id:{tmdb_id}) — yönetmen eşleşmedi"
+                    )
+                    continue
+                self._log(
+                    f"  [NAME_VERIFY/Dizi] '{tmdb_title}' (id:{tmdb_id}) — yönetmen eşleşti ✓"
+                )
+            else:
+                self._log(
+                    f"  [NAME_VERIFY/Dizi] '{tmdb_title}' (id:{tmdb_id}) — yönetmen bilgisi yok, başlık eşleşmesi kabul edildi"
+                )
+
+            self._add_log(
+                "TMDB_SERIES", "DİZİ", title, tmdb_title, "kept", "series_title_director",
+                {"tmdb_id": tmdb_id, "media_type": "tv"},
+            )
+            return {
+                "tmdb_entry": r,
+                "credits": credits,
+                "matched_via": "series_title_director",
+                "tmdb_id": tmdb_id,
+                "tmdb_title": tmdb_title,
+                "media_type": "tv",
+            }
+
+        self._log(f"  [NAME_VERIFY/Dizi] Eşleşme bulunamadı")
+        return None
+
+    # ─────────────────────────────────────────────────────
+    # VERIFY AS FILM — Film bazlı TMDB doğrulama
+    # ─────────────────────────────────────────────────────
+
+    def verify_as_film(self, title: str, director_names: list,
+                       top_actors: list) -> dict | None:
+        """Film adı + yönetmen + 1-2 oyuncu kombinasyonu ile TMDB'de doğrulama yapar.
+
+        Tek tek isim aramak yerine film adıyla arama yapar, ardından yönetmen
+        ve en az 1 oyuncu eşleşmesini kontrol eder.
+
+        Args:
+            title: Film adı (dosya adından çıkarılmış).
+            director_names: Yönetmen adları listesi (OCR/credits_parse çıktısından).
+            top_actors: En yüksek confidence'lı 1-2 oyuncu adı (OCR'dan).
+
+        Returns:
+            dict with {tmdb_entry, credits, matched_via, tmdb_id, tmdb_title, media_type}
+            veya eşleşme bulunamazsa None.
+        """
+        if not self._tmdb_client or not title:
+            self._log("  [NAME_VERIFY/Film] TMDB client yok veya başlık boş — atlanıyor")
+            return None
+
+        self._log(f"\n  ── NAME VERIFY: FİLM MODU ──")
+        self._log(
+            f"  [NAME_VERIFY/Film] Aranan: '{title}' | "
+            f"Yönetmenler: {director_names} | Oyuncular: {top_actors}"
+        )
+
+        try:
+            results = self._tmdb_client.search_multi(title)
+        except Exception as e:
+            self._log(f"  [NAME_VERIFY/Film] TMDB arama hatası: {e}")
+            return None
+
+        self._log(f"  [NAME_VERIFY/Film] {len(results or [])} TMDB sonucu")
+
+        for r in (results or [])[:10]:
+            if r.get("media_type") != "movie":
+                continue
+
+            tmdb_title = r.get("title") or r.get("name") or "?"
+            tmdb_id = r.get("id")
+
+            try:
+                credits = self._tmdb_client.get_movie_credits(int(tmdb_id))
+            except Exception as e:
+                self._log(f"  [NAME_VERIFY/Film] Credits çekme hatası (id:{tmdb_id}): {e}")
+                continue
+
+            if not credits:
+                continue
+
+            tmdb_cast_names = [
+                item.get("name", "") for item in (credits.get("cast") or [])
+                if item.get("name")
+            ]
+            tmdb_crew_names = [
+                item.get("name", "") for item in (credits.get("crew") or [])
+                if item.get("name")
+            ]
+
+            # Yönetmen eşleşmesi
+            director_match = True
+            if director_names:
+                director_match = any(
+                    _fuzzy_name_match(d, tmdb_crew_names) for d in director_names if d
+                )
+
+            # Oyuncu eşleşmesi — top_actors'dan en az 1 eşleşmeli
+            actor_matches = sum(
+                1 for a in top_actors if a and _fuzzy_name_match(a, tmdb_cast_names)
+            )
+
+            if director_match and actor_matches >= 1:
+                self._log(
+                    f"  [NAME_VERIFY/Film] '{tmdb_title}' (id:{tmdb_id}) — "
+                    f"yönetmen ✓ | {actor_matches}/{len(top_actors)} oyuncu eşleşti ✓"
+                )
+                self._add_log(
+                    "TMDB_FILM", "FİLM", title, tmdb_title, "kept",
+                    "film_title_director_cast",
+                    {"tmdb_id": tmdb_id, "media_type": "movie",
+                     "actor_matches": actor_matches},
+                )
+                return {
+                    "tmdb_entry": r,
+                    "credits": credits,
+                    "matched_via": "film_title_director_cast",
+                    "tmdb_id": tmdb_id,
+                    "tmdb_title": tmdb_title,
+                    "media_type": "movie",
+                }
+
+            self._log(
+                f"  [NAME_VERIFY/Film] '{tmdb_title}' (id:{tmdb_id}) — "
+                f"yönetmen={'✓' if director_match else '✗'} | "
+                f"{actor_matches}/{len(top_actors)} oyuncu eşleşti"
+            )
+
+        self._log(f"  [NAME_VERIFY/Film] Eşleşme bulunamadı")
+        return None

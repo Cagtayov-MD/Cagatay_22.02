@@ -404,10 +404,10 @@ class CreditsParser:
                         production_companies.append(text.strip())
                 continue
 
-            # ── Sponsor/marka bloğu tespiti (director kategorisinde) ──────────
-            # "director" kategorisindeyken gelen ve tanınmayan satırlar sayılır.
-            # 3+ ardışık tanınmayan satır → bu blok reklam/sponsor, "noise" yap.
-            if current_category == "director" or current_category == "noise":
+            # ── Sponsor/marka bloğu tespiti (director ve crew kategorisinde) ──
+            # "director" veya "crew" kategorisindeyken gelen ve tanınmayan satırlar
+            # sayılır. 3+ ardışık tanınmayan satır → bu blok reklam/sponsor, "noise" yap.
+            if current_category in ("director", "crew", "noise"):
                 in_name_db = self._name_db and self._name_db.is_name(text)
                 if not in_name_db:
                     # Tek-kelimelik tamamen büyük harf veya kısa bağlantılı kelime → direkt noise

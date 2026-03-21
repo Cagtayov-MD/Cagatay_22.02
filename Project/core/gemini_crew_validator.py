@@ -13,22 +13,104 @@ import logging
 _log = logging.getLogger(__name__)
 
 
+def verify_single_name(
+    name: str,
+    gemini_model: str = "gemini-2.5-flash",
+) -> str:
+    """Tek bir isim için Gemini YES/NO doğrulayıcı.
+
+    Mevcut crew-level validate_crew_with_gemini()'den BAĞIMSIZ bir
+    fonksiyondur — o fonksiyon ve davranışı değişmeden korunur.
+
+    Gemini'yi yalnızca DOĞRULAYICI olarak kullanır (üretici değil).
+    Cevap ``response.strip().upper()`` ile normalize edilir; yalnızca
+    tam ``YES`` veya ``NO`` kabul edilir.
+
+    Args:
+        name: Doğrulanacak tam isim (isim + soyisim).
+        gemini_model: Kullanılacak Gemini model adı.
+
+    Returns:
+        ``"YES"``  — Gemini ismi gerçek bir kişi adı olarak onayladı.
+        ``"NO"``   — Gemini ismi reddetti.
+        ``"invalid_response"`` — Yanıt YES/NO dışında bir şey döndü
+                                  (loglama yapılır, rejection olarak sayılır).
+        ``"gemini_timeout"``   — Zaman aşımı (fail-closed).
+        ``"gemini_network_error"`` — Ağ/IO hatası (fail-closed).
+        ``"gemini_parse_error"``   — Beklenmedik parse/format hatası (fail-closed).
+    """
+    try:
+        import core.llm_provider as _llm
+    except ImportError:
+        _log.warning("[GeminiSingleName] llm_provider import edilemedi")
+        return "gemini_network_error"
+
+    prompt = (
+        f'Is "{name}" a real human person\'s full name (first name + surname)? '
+        "Answer with exactly YES or NO, nothing else."
+    )
+
+    try:
+        response = _llm.generate(
+            prompt=prompt,
+            provider="gemini",
+            model=gemini_model,
+        )
+    except TimeoutError:
+        _log.warning(f"[GeminiSingleName] Zaman aşımı: {name!r}")
+        return "gemini_timeout"
+    except OSError as e:
+        _log.warning(f"[GeminiSingleName] Ağ hatası: {name!r} — {e}")
+        return "gemini_network_error"
+    except Exception as e:
+        _log.warning(f"[GeminiSingleName] Beklenmedik hata: {name!r} — {e}")
+        return "gemini_parse_error"
+
+    if not response:
+        _log.warning(f"[GeminiSingleName] Boş yanıt: {name!r}")
+        return "gemini_parse_error"
+
+    normalized = response.strip().upper()
+    if normalized == "YES":
+        _log.info(f"[GeminiSingleName] YES: {name!r}")
+        return "YES"
+    if normalized == "NO":
+        _log.info(f"[GeminiSingleName] NO: {name!r}")
+        return "NO"
+
+    _log.warning(
+        f"[GeminiSingleName] Geçersiz yanıt (invalid_response): {name!r} → {response!r}"
+    )
+    return "invalid_response"
+
+
 def validate_crew_with_gemini(
     film_title: str,
     ocr_crew: list[dict],
     ocr_lines: list | None = None,
+    ocr_scores: list[dict] | None = None,
     gemini_model: str = "gemini-2.5-flash",
 ) -> dict | None:
     """OCR crew verisini Gemini ile doğrula.
 
+    Yalnızca Yönetmen (YÖNETMEN), Yapımcı (YAPIMCI) ve Yazar (SENARYO)
+    rollerine odaklanır. OCR skor verisi varsa (ocr_scores) bunu tercih et;
+    skor verisi yoksa ocr_lines ile fallback yap.
+
+    Kişi olmayan öğeleri (ülke, bakanlık, kanal, şirket, fon, teşekkür,
+    ortak yapım satırı vb.) agresif şekilde reddeder.
+
     Args:
         film_title: Film adı (OCR veya filename'den)
         ocr_crew: OCR'dan parse edilmiş crew listesi [{name, role, job, ...}]
-        ocr_lines: Ham OCR satırları (opsiyonel, ek context için)
+        ocr_lines: Ham OCR satırları (opsiyonel, skor yoksa fallback context)
+        ocr_scores: OCR skor dict listesi (opsiyonel; tercih edilen kaynak).
+                    Her eleman: {text, ocr_confidence, seen_count, verdict,
+                                 name_db_match, llm_verified, pipeline_confidence}
         gemini_model: Kullanılacak Gemini model adı
 
     Returns:
-        dict: {verified_roles: {YAPIMCI: [...], YÖNETMEN: [...], ...}, source: "gemini"}
+        dict: {verified_roles: {YAPIMCI: [...], YÖNETMEN: [...], SENARYO: [...]}, source: "gemini"}
         None: Gemini erişilemezse veya hata olursa
     """
     try:
@@ -48,9 +130,26 @@ def validate_crew_with_gemini(
     if not crew_text:
         return None
 
-    # Opsiyonel: Ham OCR satırlarından credits kısmını ekle (son 100 satır)
-    ocr_context = ""
-    if ocr_lines:
+    # OCR skor verisi varsa — Gemini'ye yapılandırılmış sinyal gönder
+    score_context = ""
+    if ocr_scores:
+        import json as _json
+        # Sadece KEEP + high-confidence REJECTED satırları gönder (kalabalık önle)
+        relevant = [
+            s for s in ocr_scores
+            if s.get("verdict") == "KEEP"
+            or (
+                s.get("ocr_confidence", 0) >= 0.5
+                and s.get("seen_count", 1) >= 2
+            )
+        ]
+        if relevant:
+            score_context = (
+                "\n\nOCR Score Data (text + confidence + verdict — REJECTED entries excluded by default):\n"
+                + _json.dumps(relevant[:100], ensure_ascii=False)
+            )
+    elif ocr_lines:
+        # Fallback: ham OCR satırlarından credits kısmını ekle (son 100 satır)
         credit_lines = []
         for line in ocr_lines[-100:]:
             text = line.text if hasattr(line, "text") else (line.get("text") or "")
@@ -58,36 +157,44 @@ def validate_crew_with_gemini(
             if text and conf > 0.5:
                 credit_lines.append(text)
         if credit_lines:
-            ocr_context = "\n\nHam OCR credits satırları:\n" + "\n".join(credit_lines[:50])
+            score_context = "\n\nHam OCR credits satırları:\n" + "\n".join(credit_lines[:50])
 
     prompt = f"""Film: "{film_title}"
 
-Aşağıda bu filmin jenerik yazılarından OCR ile okunan yapım ekibi bilgileri var.
-Bu bilgilerde OCR hataları, kurum adlarının kişi adı olarak okunması, rol başlıklarının isim olarak yazılması gibi sorunlar olabilir.
+You are a strict crew validator. From the OCR crew data below, extract ONLY real HUMAN persons
+for these three roles: Director (YÖNETMEN), Producer (YAPIMCI), Writer (SENARYO).
 
-OCR Crew Verisi:
+MULTILINGUAL ROLE VOCABULARY (case-insensitive):
+  Director  : director, directed by, a film by, réalisateur, réalisatrice, réalisation, un film de,
+              regisseur, regie, regia, yönetmen, yöneten, مخرج, निर्देशक
+  Producer  : producer, produced by, executive producer, produzent, producteur, productrice,
+              produttore, productor, yapımcı, yapım yönetmeni, منتج, निर्माता
+  Writer    : writer, written by, screenplay, screenwriter, drehbuchautor, scénariste,
+              sceneggiatore, guionista, senarist, senaryo, كاتب السيناريو, पटकथा
+
+HARD REJECTION RULES — NEVER return these as persons:
+- Country names (France, Germany, Cameroon, Cameroun, Italy, etc.)
+- Government ministries / agencies (MINISTERE DE LA COOPERATION, Ministry of Culture, etc.)
+- TV/Radio channels (CRTV, Cameroun Radio and Television, RAI, ARD, etc.)
+- Production companies / studios (names ending in Films, Productions, Studio, Corp, Inc, Ltd, GmbH, S.A., SARL, etc.)
+- Schools / universities / funds / foundations (FODIC, CNC, Fonds Sud, etc.)
+- Generic role headers without a person name (e.g. "Réalisateur" alone)
+- Acknowledgement / participation blocks (avec le soutien de, en coproduction avec, remerciements, special thanks, etc.)
+- Co-production credit lines, locations, addresses, years, slogans
+- Any OCR errors that are clearly not human names
+
+OCR Crew Data:
 {chr(10).join(crew_text)}
-{ocr_context}
+{score_context}
 
-GÖREV:
-1. Kurum adlarını (ör: "Cameroun Radio and Television", "MINISTERE DE LA COOPERATION") kişi olarak YAZMA
-2. Rol başlıklarını (ör: "Assistant réalisateur", "Cadreur", "Son") kişi adı olarak YAZMA
-3. OCR hatalarını düzelt (ör: "Camamnun Radin and Tolouielnn" → bu bir OCR hatası, gerçek metin "Cameroun Radio and Television")
-4. Her kişiyi doğru role ata
-
-Yanıtı SADECE şu JSON formatında ver, başka hiçbir şey yazma:
+Return ONLY this JSON, nothing else:
 {{
-  "YAPIMCI": ["isim1", "isim2"],
-  "YÖNETMEN": ["isim1"],
-  "YÖNETMEN YARDIMCISI": ["isim1"],
-  "GÖRÜNTÜ YÖNETMENİ": ["isim1"],
-  "SENARYO": ["isim1"],
-  "KAMERA": ["isim1"],
-  "KURGU": ["isim1"]
+  "YAPIMCI": ["full name"],
+  "YÖNETMEN": ["full name"],
+  "SENARYO": ["full name"]
 }}
 
-Emin olmadığın rolleri boş bırak: []
-Filmde bu bilgi yoksa "VERİ YOK" yazma, sadece boş liste [] kullan.
+Leave empty [] for any role you are not confident about.
 """
 
     try:
@@ -116,16 +223,16 @@ Filmde bu bilgi yoksa "VERİ YOK" yazma, sadece boş liste [] kullan.
             _log.warning("[GeminiCrewValidator] Geçersiz JSON formatı")
             return None
 
-        # Eksik rolleri boş liste ile doldur
-        expected_roles = {
-            "YAPIMCI", "YÖNETMEN", "YÖNETMEN YARDIMCISI",
-            "GÖRÜNTÜ YÖNETMENİ", "SENARYO", "KAMERA", "KURGU",
-        }
+        # Sadece 3 temel rol — eksikleri boş liste ile doldur
+        expected_roles = {"YAPIMCI", "YÖNETMEN", "SENARYO"}
         for role in expected_roles:
             if role not in result:
                 result[role] = []
             elif not isinstance(result[role], list):
                 result[role] = []
+
+        # Bilinmeyen rolleri temizle
+        result = {k: v for k, v in result.items() if k in expected_roles}
 
         total = sum(len(v) for v in result.values())
         _log.info(f"[GeminiCrewValidator] Başarılı: {total} kişi doğrulandı")
