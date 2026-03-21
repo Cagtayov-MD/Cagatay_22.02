@@ -2282,20 +2282,32 @@ class PipelineRunner:
         _bm = _re.search(r'\d{4}-\d{2,4}-\d+-(\d{4})-', vname)
         bolum_no = _bm.group(1) if _bm else ""
 
+        # ── ASCII normalize yardımcısı (Türkçe karakter farkını dengeler) ──
+        _TR_MAP = str.maketrans("ğışöüçĞİŞÖÜÇı", "gisoucGISOUCi")
+        def _ascii_key(s: str) -> str:
+            return s.lower().translate(_TR_MAP)
+
         # ── cdata'dan isim → {kategori, norm2} haritası ──────────────
+        # İki anahtar: orijinal lower + ASCII normalize (Türkçe fark toleransı)
         _lookup: dict[str, dict] = {}
         for entry in (cdata.get("cast") or []):
             name = (entry.get("actor_name") or "").strip()
             if name:
-                _lookup[name.lower()] = {"kategori": "oyuncu", "norm2": name}
+                val = {"kategori": "oyuncu", "norm2": name}
+                _lookup[name.lower()] = val
+                _lookup[_ascii_key(name)] = val
         for entry in (cdata.get("crew") or []):
             name = (entry.get("name") or "").strip()
             if name:
-                _lookup[name.lower()] = {"kategori": "ekip", "norm2": name}
+                val = {"kategori": "ekip", "norm2": name}
+                _lookup[name.lower()] = val
+                _lookup[_ascii_key(name)] = val
         for entry in (cdata.get("companies") or []):
             name = (entry.get("name") or "").strip()
             if name:
-                _lookup[name.lower()] = {"kategori": "sirket", "norm2": name}
+                val = {"kategori": "sirket", "norm2": name}
+                _lookup[name.lower()] = val
+                _lookup[_ascii_key(name)] = val
 
         # ── OCR satırlarını dönüştür ──────────────────────────────────
         satirlar = []
@@ -2312,13 +2324,16 @@ class PipelineRunner:
             if not norm1:
                 continue
 
-            # norm2 + kategori: tam eşleşme, yoksa substring deneme
-            hit = _lookup.get(norm1.lower())
-            if not hit:
-                for key, val in _lookup.items():
-                    if norm1.lower() in key or key in norm1.lower():
-                        hit = val
-                        break
+            # norm2 + kategori: tam → ASCII normalize → substring sıralamasıyla ara
+            hit = (
+                _lookup.get(norm1.lower()) or
+                _lookup.get(_ascii_key(norm1)) or
+                next(
+                    (val for key, val in _lookup.items()
+                     if _ascii_key(norm1) in key or key in _ascii_key(norm1)),
+                    None,
+                )
+            )
 
             norm2    = hit["norm2"]    if hit else norm1
             kategori = hit["kategori"] if hit else "bilinmiyor"
