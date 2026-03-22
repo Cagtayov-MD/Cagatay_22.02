@@ -44,6 +44,8 @@ def run_sport_pipeline(video_path: str, config: Dict[str, Any], cdata: Dict[str,
     ocr_engine = config.get("ocr_engine", "paddleocr")
     output_root = config.get("output_root", r"F:\Sonuclar")
     database_root = config.get("database_root", r"D:\DATABASE")
+    ffmpeg = config.get("ffmpeg", "ffmpeg")
+    ffprobe = config.get("ffprobe", "ffprobe")
 
     # Çalışma dizini oluştur
     base_name = os.path.splitext(os.path.basename(video_path))[0]
@@ -58,6 +60,8 @@ def run_sport_pipeline(video_path: str, config: Dict[str, Any], cdata: Dict[str,
         "gemini_model": gemini_model,
         "asr_engine": asr_engine,
         "ocr_engine": ocr_engine,
+        "ffmpeg": ffmpeg,
+        "ffprobe": ffprobe,
     })
 
     # ─────────────────────────────────────────────

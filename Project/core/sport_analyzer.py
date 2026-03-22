@@ -140,6 +140,8 @@ class SportAnalyzer:
         self.gemini_model = config.get("gemini_model", "gemini-2.0-flash")
         self.asr_engine = config.get("asr_engine", "whisper")
         self.ocr_engine = config.get("ocr_engine", "paddleocr")
+        self.ffmpeg = config.get("ffmpeg", "ffmpeg")
+        self.ffprobe = config.get("ffprobe", "ffprobe")
 
         # Analiz sonuçları
         self.match_info = {}          # Maç bilgileri (takımlar, şehir, lig...)
@@ -170,7 +172,7 @@ class SportAnalyzer:
         import subprocess
 
         duration_cmd = [
-            "ffprobe", "-v", "error",
+            self.ffprobe, "-v", "error",
             "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1",
             video_path
@@ -191,7 +193,7 @@ class SportAnalyzer:
 
         # İlk segment
         subprocess.run([
-            "ffmpeg", "-y", "-i", video_path,
+            self.ffmpeg, "-y", "-i", video_path,
             "-ss", "0", "-t", str(seg_seconds),
             "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
             first_path
@@ -199,7 +201,7 @@ class SportAnalyzer:
 
         # Son segment
         subprocess.run([
-            "ffmpeg", "-y", "-i", video_path,
+            self.ffmpeg, "-y", "-i", video_path,
             "-ss", str(last_start), "-t", str(seg_seconds),
             "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
             last_path
@@ -225,7 +227,7 @@ class SportAnalyzer:
         import subprocess
 
         duration_cmd = [
-            "ffprobe", "-v", "error",
+            self.ffprobe, "-v", "error",
             "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1",
             video_path
@@ -243,7 +245,7 @@ class SportAnalyzer:
         fps_value = 1.0 / self.frame_interval_sec
 
         subprocess.run([
-            "ffmpeg", "-y", "-i", video_path,
+            self.ffmpeg, "-y", "-i", video_path,
             "-ss", str(start_time),
             "-vf", f"fps={fps_value}",
             os.path.join(frames_dir, "frame_%04d.png")
