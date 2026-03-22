@@ -814,7 +814,7 @@ Transcript:
 
         lines.append("=" * 60)
         lines.append("SPOR MAÇI RAPORU")
-        lines.append(f"Profil: SporMaci | Oluşturulma: {now}")
+        lines.append(f"Profil: Spor | Oluşturulma: {now}")
         lines.append("=" * 60)
         lines.append("")
 

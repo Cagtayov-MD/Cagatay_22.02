@@ -4,7 +4,7 @@ PIPELINE RUNNER — Spor Maçı Akışı
 Bu kodu mevcut pipeline_runner.py'ye ekle.
 
 Mevcut run_pipeline() fonksiyonunda profil kontrolü yap:
-  if profile == "SporMaci":
+  if profile == "Spor":
       return run_sport_pipeline(video_path, config, cdata)
   else:
       # mevcut FilmDizi akışı devam eder
@@ -27,7 +27,7 @@ def run_sport_pipeline(video_path: str, config: Dict[str, Any], cdata: Dict[str,
 
     Args:
         video_path: Video dosyasının tam yolu
-        config: SporMaci profil konfigürasyonu
+        config: Spor profil konfigürasyonu
         cdata: Pipeline boyunca taşınan ortak veri dict'i
 
     Returns:
@@ -47,7 +47,7 @@ def run_sport_pipeline(video_path: str, config: Dict[str, Any], cdata: Dict[str,
 
     # Çalışma dizini oluştur
     base_name = os.path.splitext(os.path.basename(video_path))[0]
-    work_dir = os.path.join(database_root, "SporMaci", f"spor_{base_name}_{datetime.now().strftime('%Y%m%d_%H%M')}")
+    work_dir = os.path.join(database_root, "Spor", f"spor_{base_name}_{datetime.now().strftime('%Y%m%d_%H%M')}")
     os.makedirs(work_dir, exist_ok=True)
 
     # SportAnalyzer oluştur

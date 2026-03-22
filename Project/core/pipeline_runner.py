@@ -301,8 +301,8 @@ class PipelineRunner:
                 if _pk in content_profile:
                     self.config[_pk] = content_profile[_pk]
 
-        # SporMaci profili → ayrı pipeline'a yönlendir
-        if profile_name == "SporMaci":
+        # Spor profili → ayrı pipeline'a yönlendir
+        if profile_name == "Spor":
             from core.sport_pipeline import run_sport_pipeline
             cdata: dict = {}
             merged_config = {**self.config}

@@ -31,25 +31,6 @@ FILM_DIZI_DAG = {
 SPOR_DAG = {
     "VIDEO_INPUT": {
         "label": "VIDEO_INPUT",
-        "children": ["ASR_BRANCH", "OCR_BRANCH"],
-    },
-    "ASR_BRANCH": {
-        "label": "ASR",
-        "steps": ["Extract", "Transcribe"],
-    },
-    "OCR_BRANCH": {
-        "label": "OCR (Son 10dk)",
-        "steps": ["Frame Extract", "Text Filter", "OCR"],
-    },
-    "MATCH_PARSE": {
-        "label": "Maç Analizi",
-        "steps": ["Ollama Parse"],
-    },
-}
-
-SPOR_MACI_DAG = {
-    "VIDEO_INPUT": {
-        "label": "VIDEO_INPUT",
         "children": ["ASR_BRANCH", "FRAME_BRANCH"],
     },
     "ASR_BRANCH": {
@@ -78,7 +59,6 @@ SPOR_MACI_DAG = {
 PROFILE_DAGS = {
     "FilmDizi-Hybrid": FILM_DIZI_DAG,
     "Spor": SPOR_DAG,
-    "SporMaci": SPOR_MACI_DAG,
 }
 
 
@@ -88,5 +68,5 @@ def get_dag(profile_name: str) -> dict:
 
 
 def is_sport_match_profile(profile_name: str) -> bool:
-    """Profilin SporMaci pipeline'ı kullanıp kullanmadığını döndür."""
-    return profile_name == "SporMaci"
+    """Profilin Spor pipeline'ı kullanıp kullanmadığını döndür."""
+    return profile_name == "Spor"

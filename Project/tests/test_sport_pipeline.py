@@ -1,4 +1,4 @@
-"""test_sport_pipeline.py — SporMaci profil ve SportAnalyzer testleri
+"""test_sport_pipeline.py — Spor profil ve SportAnalyzer testleri
 
 Testler:
   SM-01: Futbol transcript → spor dalı "futbol" tespiti
@@ -9,17 +9,17 @@ Testler:
   SM-06: SKOR_PATTERNS regex — "87-74" sade sayı skoru
   SM-07: GOL_PATTERNS regex — "34. dakikada Metin Oktay gol attı"
   SM-08: KART_PATTERNS regex — "sarı kart 23. dakika Alpaslan"
-  SM-09: dag_definitions — SPOR_MACI_DAG PROFILE_DAGS içinde kayıtlı
-  SM-10: dag_definitions — get_dag("SporMaci") SPOR_MACI_DAG döndürür
-  SM-11: dag_definitions — is_sport_match_profile("SporMaci") True
+  SM-09: dag_definitions — SPOR_DAG PROFILE_DAGS içinde kayıtlı
+  SM-10: dag_definitions — get_dag("Spor") SPOR_DAG döndürür
+  SM-11: dag_definitions — is_sport_match_profile("Spor") True
   SM-12: dag_definitions — is_sport_match_profile("FilmDizi-Hybrid") False
-  SM-13: content_profiles.json — SporMaci profili tüm zorunlu alanları içeriyor
+  SM-13: content_profiles.json — Spor profili tüm zorunlu alanları içeriyor
   SM-14: SportAnalyzer.analyze() Gemini kapalı — futbol → goals/cards çalıştırılıyor
   SM-15: SportAnalyzer.analyze() Gemini kapalı — basketbol → goals/cards boş
   SM-16: SportAnalyzer._cross_validate() ASR==OCR skor → DOĞRULANDI log
   SM-17: SportAnalyzer._cross_validate() ASR≠OCR skor → OCR tercih edildi log
   SM-18: SportAnalyzer.build_report_text() — "SPOR MAÇI RAPORU" başlığı içeriyor
-  SM-19: Pipeline runner — SporMaci profili run_sport_pipeline'a yönlendiriyor
+  SM-19: Pipeline runner — Spor profili run_sport_pipeline'a yönlendiriyor
   SM-20: SportAnalyzer.set_transcripts() + set_ocr_results() sonrası log düzgün
 """
 
@@ -160,51 +160,51 @@ class TestKartPatterns(unittest.TestCase):
 class TestDagDefinitions(unittest.TestCase):
 
     def setUp(self):
-        from core.dag_definitions import PROFILE_DAGS, SPOR_MACI_DAG, get_dag, is_sport_match_profile
+        from core.dag_definitions import PROFILE_DAGS, SPOR_DAG, get_dag, is_sport_match_profile
         self.PROFILE_DAGS = PROFILE_DAGS
-        self.SPOR_MACI_DAG = SPOR_MACI_DAG
+        self.SPOR_DAG = SPOR_DAG
         self.get_dag = get_dag
         self.is_sport_match_profile = is_sport_match_profile
 
-    def test_sm09_spor_maci_dag_kayitli(self):
-        """SPOR_MACI_DAG PROFILE_DAGS içinde 'SporMaci' adıyla kayıtlı olmalı."""
-        self.assertIn("SporMaci", self.PROFILE_DAGS)
+    def test_sm09_spor_dag_kayitli(self):
+        """SPOR_DAG PROFILE_DAGS içinde 'Spor' adıyla kayıtlı olmalı."""
+        self.assertIn("Spor", self.PROFILE_DAGS)
 
-    def test_sm10_get_dag_spor_maci(self):
-        """get_dag('SporMaci') SPOR_MACI_DAG döndürmeli."""
-        dag = self.get_dag("SporMaci")
-        self.assertIs(dag, self.SPOR_MACI_DAG)
+    def test_sm10_get_dag_spor(self):
+        """get_dag('Spor') SPOR_DAG döndürmeli."""
+        dag = self.get_dag("Spor")
+        self.assertIs(dag, self.SPOR_DAG)
 
     def test_sm11_is_sport_match_true(self):
-        """is_sport_match_profile('SporMaci') → True."""
-        self.assertTrue(self.is_sport_match_profile("SporMaci"))
+        """is_sport_match_profile('Spor') → True."""
+        self.assertTrue(self.is_sport_match_profile("Spor"))
 
     def test_sm12_is_sport_match_false(self):
         """is_sport_match_profile('FilmDizi-Hybrid') → False."""
         self.assertFalse(self.is_sport_match_profile("FilmDizi-Hybrid"))
 
-    def test_sm12b_spor_maci_dag_adimlar_var(self):
-        """SPOR_MACI_DAG içinde VIDEO_INPUT, ASR_BRANCH, FRAME_BRANCH, SPORT_ANALYZE bulunmalı."""
-        dag = self.SPOR_MACI_DAG
+    def test_sm12b_spor_dag_adimlar_var(self):
+        """SPOR_DAG içinde VIDEO_INPUT, ASR_BRANCH, FRAME_BRANCH, SPORT_ANALYZE bulunmalı."""
+        dag = self.SPOR_DAG
         self.assertIn("VIDEO_INPUT", dag)
         self.assertIn("ASR_BRANCH", dag)
         self.assertIn("FRAME_BRANCH", dag)
         self.assertIn("SPORT_ANALYZE", dag)
 
 
-# ── SM-13 — content_profiles.json SporMaci Profili ───────────────────────────
+# ── SM-13 — content_profiles.json Spor Profili ───────────────────────────────
 
-class TestContentProfilesSporMaci(unittest.TestCase):
+class TestContentProfilesSpor(unittest.TestCase):
 
     def setUp(self):
         profiles_path = os.path.join(_project_dir, "config", "content_profiles.json")
         with open(profiles_path, encoding="utf-8") as f:
             self.profiles = json.load(f)
-        self.profile = self.profiles.get("SporMaci", {})
+        self.profile = self.profiles.get("Spor", {})
 
     def test_sm13_profil_var(self):
-        """content_profiles.json'da 'SporMaci' profili mevcut olmalı."""
-        self.assertIn("SporMaci", self.profiles)
+        """content_profiles.json'da 'Spor' profili mevcut olmalı."""
+        self.assertIn("Spor", self.profiles)
 
     def test_sm13b_segment_minutes_15(self):
         """segment_minutes değeri 15 olmalı."""
@@ -215,7 +215,7 @@ class TestContentProfilesSporMaci(unittest.TestCase):
         self.assertEqual(self.profile.get("frame_interval_sec"), 10)
 
     def test_sm13d_tmdb_disabled(self):
-        """TMDB SporMaci profilinde devre dışı olmalı."""
+        """TMDB Spor profilinde devre dışı olmalı."""
         self.assertFalse(self.profile.get("tmdb_enabled", True))
 
     def test_sm13e_sport_analyze_enabled(self):
@@ -343,14 +343,14 @@ class TestBuildReportText(unittest.TestCase):
         self.assertIn("Metin Oktay", text)
 
 
-# ── SM-19 — Pipeline Runner SporMaci Yönlendirme ─────────────────────────────
+# ── SM-19 — Pipeline Runner Spor Yönlendirme ─────────────────────────────────
 
-class TestPipelineRunnerSporMaciRouting(unittest.TestCase):
+class TestPipelineRunnerSporRouting(unittest.TestCase):
 
     @unittest.skip("pipeline_runner import sırasında pypdfium2 crash — sistem sorunu, logic test değil")
-    def test_sm19_spor_maci_profili_sport_pipeline_cagirir(self):
+    def test_sm19_spor_profili_sport_pipeline_cagirir(self):
         """
-        PipelineRunner.run() SporMaci profiliyle çağrılınca
+        PipelineRunner.run() Spor profiliyle çağrılınca
         run_sport_pipeline() çağrılmalı (mevcut FilmDizi akışı çalışmamalı).
         """
         pass  # skip
