@@ -64,7 +64,15 @@ _SYSTEM_PROMPT_TR = (
     "FOREIGN NAMES: Write all foreign proper names (character names, place names, "
     "person names) using their original Latin spelling. NEVER use Turkish-specific "
     "characters (ç, ğ, ı, ö, ş, ü, İ) in foreign names. "
-    "Example: Write 'Vichita' not 'Viçita', 'Tom' not 'Töm'."
+    "Example: Write 'Vichita' not 'Viçita', 'Tom' not 'Töm'.\n\n"
+    "FOREIGN NAME TAGGING: Wrap EVERY foreign proper name with double square brackets. "
+    "Turkish words and common Turkish names (Mehmet, Ayşe, Fatma, Ali, Hasan, etc.) "
+    "must NOT be wrapped.\n"
+    "  Multi-word names: wrap the full name together: [[Jack Sparrow]], [[New York]].\n"
+    "  Single-word names: [[Amy]], [[Charles]], [[Oliver]].\n"
+    "  CORRECT: [[Amy]] şehre geldi. Kadın [[Charles]]'a aşık olur.\n"
+    "  WRONG: Amy şehre geldi.  (brackets missing)\n"
+    "  WRONG: [[Mehmet]] eve döndü.  (Turkish name, no brackets)\n"
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -101,7 +109,10 @@ _SYSTEM_PROMPT_TRANSLATE = (
     "   Example: 'Jack Sparrow' stays 'Jack Sparrow', NOT 'Cek Sparov'.\n"
     "3. TURKISH NAME RULES: In Turkish text, 'i' uppercases to 'İ' and 'I' lowercases "
     "   to 'ı'. But this rule applies ONLY to Turkish words, NOT to foreign names.\n"
-    "4. Output ONLY the Turkish translation. No explanations, no notes.\n"
+    "4. FOREIGN NAME TAGGING: Wrap EVERY foreign proper name with double square brackets. "
+    "   Turkish words and Turkish names must NOT be wrapped.\n"
+    "   Example: [[Jack Sparrow]] gemiden kaçtı. [[Elizabeth]] onu takip etti.\n"
+    "5. Output ONLY the Turkish translation. No explanations, no notes.\n"
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -110,13 +121,13 @@ _SYSTEM_PROMPT_TRANSLATE = (
 _FEW_SHOT = (
     "Aşağıdaki örnek DOĞRU formattır — tam olarak böyle yaz:\n\n"
     "ÖRNEK:\n"
-    "Başarılı bir reklamcı olan David, önemli bir müşteriyle duygusal bir ilişki "
+    "Başarılı bir reklamcı olan [[David]], önemli bir müşteriyle duygusal bir ilişki "
     "içindeyken, babasının şeker hastalığı yüzünden bacağının kesilmesi gerektiğini "
     "öğrenir. Kariyeri için hayati önem taşıyan bir sunum ile babasının ameliyatı "
-    "aynı güne denk gelir. İşi ve sevgilisi yerine babasını tercih eden David, "
+    "aynı güne denk gelir. İşi ve sevgilisi yerine babasını tercih eden [[David]], "
     "her şeyi elinin tersiyle iterek hastanede onun yanında kalır. Annesi de "
     "hastabakıcılık yapmayı reddedince, ameliyattan sakat çıkan babasının tüm "
-    "sorumluluğu David'e kalır. Film, yıllarca birbirinden uzak kalan baba-oğulun "
+    "sorumluluğu [[David]]'e kalır. Film, yıllarca birbirinden uzak kalan baba-oğulun "
     "geçmişi geride bırakıp birlikte yeni bir hayata başlamasıyla biter.\n\n"
     "Şimdi aşağıdaki transcript için aynı formatta özet yaz:\n"
 )

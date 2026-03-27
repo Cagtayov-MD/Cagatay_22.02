@@ -244,6 +244,24 @@ def _collect_protected_words(*name_groups: list[str]) -> set[str]:
     return protected
 
 
+def _extract_foreign_tags(text: str) -> tuple[str, set[str]]:
+    """[[İsim]] etiketlerini ayıkla.
+
+    Returns:
+        (temizlenmiş_metin, yabancı_isim_ascii_seti)
+        Yabancı isim seti _to_upper_tr_ozet için foreign_nouns'a eklenir.
+    """
+    foreign: set[str] = set()
+    for match in re.finditer(r'\[\[([^\]]+)\]\]', text):
+        name = match.group(1).strip()
+        for token in name.split():
+            base = re.sub(r"[^a-zA-ZÀ-ÖØ-öø-ÿçğıöşüÇĞİÖŞÜ]", "", token)
+            if base:
+                foreign.add(_to_ascii_upper(base))
+    cleaned = re.sub(r'\[\[([^\]]+)\]\]', r'\1', text)
+    return cleaned, foreign
+
+
 def _collect_summary_name_candidates(summary: str) -> set[str]:
     """Özetten olası yabancı özel isim token'larını çıkar."""
     if not summary:
@@ -2040,6 +2058,9 @@ class ExportEngine:
 
         ozet_content_start = len(L)
         if summary:
+            # [[İsim]] etiketlerini ayıkla → foreign_nouns'a ekle → metinden sil
+            summary, _tagged_foreign = _extract_foreign_tags(summary)
+            foreign_nouns.update(_tagged_foreign)
             protected_words.update(_collect_summary_name_candidates(summary))
             L.append(f"  {summary}")
         else:
