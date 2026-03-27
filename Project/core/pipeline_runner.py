@@ -329,7 +329,8 @@ class PipelineRunner:
             os.environ.get("VITOS_DATABASE_ROOT") or
             r"D:\DATABASE\FilmDizi"
         )
-        work_dir = os.path.join(db_root, vname)
+        folder_name = self._build_output_folder_name(vname)
+        work_dir = os.path.join(db_root, folder_name)
         os.makedirs(work_dir, exist_ok=True)
         self._live_log_path = os.path.join(work_dir, "_live_debug.log")
         # BOM ile başlat — Notepad UTF-8 olarak doğru okusun
@@ -2538,6 +2539,22 @@ class PipelineRunner:
                             return title
                 break
 
+        return stem
+
+    @staticmethod
+    def _build_output_folder_name(stem: str) -> str:
+        """Çıktı klasörü için 'FILM_ADI ID' formatında isim üret.
+
+        Örnek: 'web_client_CAG_1995-0288-1-0000-00-1-KARA_RAHİP'
+               → 'KARA RAHİP 1995-0288-1-0000-00-1'
+        Eşleşme yoksa orijinal stem döndürülür.
+        """
+        m = re.search(r'(\d{4}-\d{3,4}-\d-\d{3,4}-\d{2}-\d)-(.+)$', stem)
+        if m:
+            film_id = m.group(1)
+            title = m.group(2).replace('_', ' ').strip()
+            if title:
+                return f"{title} {film_id}"
         return stem
 
     @staticmethod
