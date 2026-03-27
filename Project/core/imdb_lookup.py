@@ -576,17 +576,31 @@ class IMDBLookup:
         # Her OCR oyuncusu için nconst listesi bul
         person_tconsts: dict[str, set] = {}  # nconst → set of tconsts
         for ocr_name in ocr_cast_names:
+            # Kiril isim tespiti — IMDb Latin, LIKE sorgusu Kiril ile eşleşmez
+            _cyrillic = any(0x0400 <= ord(c) <= 0x04FF for c in ocr_name)
+            if _cyrillic:
+                # unidecode ile Latin'e çevir; soyadı (son kelime) ile ara — transkripsiyon
+                # varyasyonları (Tatiana/Tatyana) sadece ön adı etkiler, soyad daha güvenilir
+                _transliterated = _norm_ascii(ocr_name)
+                _parts = _transliterated.split()
+                like_token = _parts[-1] if _parts else _transliterated
+            else:
+                like_token = _norm(ocr_name)
             try:
                 rows = con.execute("""
                     SELECT nconst, primaryName FROM names
                     WHERE lower(primaryName) LIKE ?
                     LIMIT 10
-                """, [f"%{_norm(ocr_name)}%"]).fetchall()
+                """, [f"%{like_token}%"]).fetchall()
             except Exception:
                 continue
             for row in rows:
                 nconst, db_name = row[0], row[1] or ""
-                if not _fuzzy_match(ocr_name, db_name):
+                # Fuzzy match: Kiril ise her iki tarafı da translitere ederek karşılaştır
+                if _cyrillic:
+                    if _fuzzy_score(_norm_ascii(ocr_name), _norm_ascii(db_name)) < _FUZZY_THRESHOLD:
+                        continue
+                elif not _fuzzy_match(ocr_name, db_name):
                     continue
                 try:
                     tc_rows = con.execute(
