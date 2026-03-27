@@ -1421,38 +1421,44 @@ class TMDBVerify:
         director_neg = 0.0
 
         if ocr_director_names:
-            tmdb_crew_names = self._extract_names(credits_data, section="crew")
-            tmdb_director_names = [
-                (item.get("name") or "").strip()
-                for item in (credits_data.get("crew") or [])
-                if (item.get("job") or "").lower() == "director"
-                and (item.get("name") or "").strip()
-            ]
-
-            director_found   = False
-            director_similar = False
-
-            for d in ocr_director_names:
-                if _fuzzy_match(d, tmdb_director_names, threshold=95):
-                    director_found = True
-                    break
-                if _fuzzy_match(d, tmdb_director_names, threshold=80):
-                    director_similar = True
-                elif _fuzzy_match(d, tmdb_crew_names, threshold=82):
-                    director_similar = True
-
-            if director_found:
-                director_pos = 2.5
-            elif director_similar:
-                director_pos = 1.5
+            # Kiril yönetmen adları TMDB Latin isimlerle kıyaslanamaz → ceza verme, atla
+            if all(_is_cyrillic(d) for d in ocr_director_names if d):
+                self._log(
+                    f"  [TMDB]   Yönetmen: {ocr_director_names!r} — Kiril alfabe, kıyaslama atlandı → +0.0 / 0.0"
+                )
             else:
-                director_neg = -2.5
+                tmdb_crew_names = self._extract_names(credits_data, section="crew")
+                tmdb_director_names = [
+                    (item.get("name") or "").strip()
+                    for item in (credits_data.get("crew") or [])
+                    if (item.get("job") or "").lower() == "director"
+                    and (item.get("name") or "").strip()
+                ]
 
-            self._log(
-                f"  [TMDB]   Yönetmen: {ocr_director_names!r} vs crew → "
-                f"{'eşleşme var' if director_found or director_similar else 'eşleşme yok'} → "
-                f"+{director_pos} / {director_neg}"
-            )
+                director_found   = False
+                director_similar = False
+
+                for d in ocr_director_names:
+                    if _fuzzy_match(d, tmdb_director_names, threshold=95):
+                        director_found = True
+                        break
+                    if _fuzzy_match(d, tmdb_director_names, threshold=80):
+                        director_similar = True
+                    elif _fuzzy_match(d, tmdb_crew_names, threshold=82):
+                        director_similar = True
+
+                if director_found:
+                    director_pos = 2.5
+                elif director_similar:
+                    director_pos = 1.5
+                else:
+                    director_neg = -2.5
+
+                self._log(
+                    f"  [TMDB]   Yönetmen: {ocr_director_names!r} vs crew → "
+                    f"{'eşleşme var' if director_found or director_similar else 'eşleşme yok'} → "
+                    f"+{director_pos} / {director_neg}"
+                )
         else:
             self._log("  [TMDB]   Yönetmen: bilgi yok → +0.0 / 0.0")
 

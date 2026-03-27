@@ -1109,7 +1109,20 @@ class PipelineRunner:
                 # ══ [LLM] LLM_CAST_FILTER (opsiyonel) ════════════════
                 # Sadece TMDB/IMDb eşleşmezse LLM devreye girsin
                 if not tmdb_matched and not imdb_matched:
-                    if self._llm_filter_enabled:
+                    # Cast'ın çoğunluğu Kiril ise LLM filter çalıştırma — farklı alfabe, hepsini reddeder
+                    _cast_for_check = cdata.get("cast") or []
+                    _cast_names_check = [e.get("actor_name", "") for e in _cast_for_check if isinstance(e, dict)]
+                    _cyrillic_count = sum(
+                        1 for n in _cast_names_check
+                        if n and any(0x0400 <= ord(c) <= 0x04FF for c in n)
+                    )
+                    _cyrillic_majority = len(_cast_names_check) > 0 and (_cyrillic_count / len(_cast_names_check)) > 0.5
+                    if _cyrillic_majority:
+                        self._log(
+                            f"\n[LLM] Cast %{int(_cyrillic_count/max(len(_cast_names_check),1)*100)} "
+                            f"Kiril ({_cyrillic_count}/{len(_cast_names_check)}) — LLM filtresi atlanıyor"
+                        )
+                    elif self._llm_filter_enabled:
                         self._log(f"\n[LLM] Cast Filtreleme (TMDB/IMDb eşleşmedi)")
                         t = time.time()
                         import core.llm_provider as _llm_prov
