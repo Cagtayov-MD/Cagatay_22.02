@@ -370,11 +370,7 @@ def _to_upper_tr_ozet(text: str, foreign_nouns: set) -> str:
     4. Türkçe isim DB'sinde var → Türkçe kural
     5. Safeguard kelimeler → Türkçe kural
     6. Türkçe ek kalıbı var → Türkçe kural
-    7. İlk harf büyük + saf ASCII + DB'de yok → yabancı isim → İngilizce
-    8. Diğer → Türkçe kural (varsayılan)
-
-    NOT: Adım 7'de sadece büyük harfle başlayan kelimeler yabancı sayılır.
-    LLM çıktısında özel isimler büyük harfle başlar: "Ivan geldi" vs "gitti".
+    7. Varsayılan → Türkçe kural (özel isimler hariç her şey Türkçe)
 
     Args:
         text:          Özet satırı.
@@ -418,18 +414,7 @@ def _to_upper_tr_ozet(text: str, foreign_nouns: set) -> str:
         elif _has_turkish_suffix(base_cleaned):
             result.append(_upper_word_turkish(word))
 
-        # 7. Saf ASCII + DB'de yok + Türkçe kelime değil → yabancı isim
-        #    Büyük/küçük harf fark etmez — Gemini bazen küçük harfle yazıyor
-        elif (base_cleaned
-                and base_cleaned.isascii()
-                and base_cleaned.isalpha()
-                and len(base_cleaned) >= 3
-                and not _is_known_name(base_cleaned)
-                and not _has_turkish_suffix(base_cleaned)
-                and base_cleaned.lower() not in _TR_SAFEGUARD_ASCII):
-            result.append(_upper_word_english(word))
-
-        # 8. Varsayılan: Türkçe kural
+        # 7. Varsayılan: Türkçe kural (özel isimler hariç her şey Türkçe)
         else:
             result.append(_upper_word_turkish(word))
     return ' '.join(result)
