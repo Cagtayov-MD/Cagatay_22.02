@@ -54,6 +54,7 @@ except ImportError:
     HAS_ONEOCR = False
 
 from core.ocr_engine import OCRLine  # Aynı veri yapısını kullan
+from utils.unicode_io import imread_unicode
 
 # ── Sabitler ──────────────────────────────────────────────────
 WATERMARK_THRESHOLD = 15    # Bu kadar frame'de geçen metin → watermark
@@ -260,13 +261,7 @@ class OneOCREngine:
         """
         # cv2 ile oku (unicode yol desteği)
         if HAS_CV2 and HAS_NUMPY:
-            img = cv2.imread(str(frame_path))
-            if img is None:
-                # Unicode path fallback
-                img = cv2.imdecode(
-                    np.fromfile(str(frame_path), dtype=np.uint8),
-                    cv2.IMREAD_COLOR
-                )
+            img = imread_unicode(str(frame_path))
             if img is None:
                 return []
             result = self._model.recognize_cv2(img)
@@ -403,7 +398,7 @@ class OneOCREngine:
             return "unknown"
 
         try:
-            img = cv2.imread(str(frame_path))
+            img = imread_unicode(str(frame_path))
             if img is None:
                 return "unknown"
 

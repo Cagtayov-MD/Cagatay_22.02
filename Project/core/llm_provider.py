@@ -30,6 +30,8 @@ _DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 _DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com"
 _DEFAULT_OLLAMA_URL = "http://localhost:11434"
 _DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
+_DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+_DEFAULT_OPENAI_BASE_URL = "https://api.openai.com"
 _TIMEOUT_SEC = 60
 
 
@@ -93,43 +95,55 @@ def _gemini_generate(
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            # Extract text from candidates[0].content.parts[0].text
-            candidates = data.get("candidates", [])
-            if not candidates:
-                if log_cb:
-                    log_cb("  [LLM/Gemini] Yanıt boş (no candidates)")
-                return None
-            parts = candidates[0].get("content", {}).get("parts", [])
-            text = "".join(p.get("text", "") for p in parts).strip()
-            # Strip thinking tags if present
-            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-            return text or None
-    except urllib.error.HTTPError as e:
-        body = ""
+    import time as _time
+    _RETRY_CODES = {429, 503}
+    _MAX_RETRIES = 3
+    _RETRY_DELAY = 12  # saniye — 503/429 geçici yük artışı için
+    for _attempt in range(_MAX_RETRIES):
         try:
-            body = e.read().decode("utf-8", errors="replace")[:200]
-        except Exception:
-            pass
-        if log_cb:
-            log_cb(f"  [LLM/Gemini] HTTP {e.code}: {e.reason} — {body}")
-        return None
-    except urllib.error.URLError as e:
-        if log_cb:
-            log_cb(f"  [LLM/Gemini] Bağlantı hatası: {e.reason}")
-        return None
-    except TimeoutError:
-        if timeout_flag is not None:
-            timeout_flag.append(True)
-        if log_cb:
-            log_cb(f"  [LLM/Gemini] Zaman aşımı ({timeout}s)")
-        return None
-    except Exception as e:
-        if log_cb:
-            log_cb(f"  [LLM/Gemini] Beklenmedik hata: {e}")
-        return None
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                candidates = data.get("candidates", [])
+                if not candidates:
+                    if log_cb:
+                        log_cb("  [LLM/Gemini] Yanıt boş (no candidates)")
+                    return None
+                parts = candidates[0].get("content", {}).get("parts", [])
+                text = "".join(p.get("text", "") for p in parts).strip()
+                text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+                return text or None
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode("utf-8", errors="replace")[:200]
+            except Exception:
+                pass
+            if e.code in _RETRY_CODES and _attempt < _MAX_RETRIES - 1:
+                if log_cb:
+                    log_cb(
+                        f"  [LLM/Gemini] HTTP {e.code} — "
+                        f"{_attempt + 1}/{_MAX_RETRIES} deneme, {_RETRY_DELAY}s bekleniyor..."
+                    )
+                _time.sleep(_RETRY_DELAY)
+                continue
+            if log_cb:
+                log_cb(f"  [LLM/Gemini] HTTP {e.code}: {e.reason} — {body}")
+            return None
+        except urllib.error.URLError as e:
+            if log_cb:
+                log_cb(f"  [LLM/Gemini] Bağlantı hatası: {e.reason}")
+            return None
+        except TimeoutError:
+            if timeout_flag is not None:
+                timeout_flag.append(True)
+            if log_cb:
+                log_cb(f"  [LLM/Gemini] Zaman aşımı ({timeout}s)")
+            return None
+        except Exception as e:
+            if log_cb:
+                log_cb(f"  [LLM/Gemini] Beklenmedik hata: {e}")
+            return None
+    return None  # tüm denemeler tükendi
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -194,6 +208,88 @@ def _ollama_generate(
     except Exception as e:
         if log_cb:
             log_cb(f"  [LLM/Ollama] Beklenmedik hata: {e}")
+        return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OpenAI backend
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _openai_generate(
+    prompt: str,
+    *,
+    system: str | None = None,
+    api_key: str | None = None,
+    model: str | None = None,
+    base_url: str | None = None,
+    timeout: int = _TIMEOUT_SEC,
+    log_cb=None,
+) -> str | None:
+    """Call OpenAI chat/completions endpoint and return text response."""
+    api_key = api_key or _env("OPENAI_API_KEY")
+    if not api_key:
+        if log_cb:
+            log_cb("  [LLM/OpenAI] OPENAI_API_KEY tanımlı değil — atlanıyor")
+        return None
+
+    model = model or _env("OPENAI_MODEL", _DEFAULT_OPENAI_MODEL)
+    base_url = (base_url or _env("OPENAI_BASE_URL", _DEFAULT_OPENAI_BASE_URL)).rstrip("/")
+    endpoint = f"{base_url}/v1/chat/completions"
+
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+
+    payload = json.dumps({
+        "model": model,
+        "messages": messages,
+        "temperature": 0.1,
+    }).encode("utf-8")
+
+    if log_cb:
+        log_cb(f"  [LLM/OpenAI] İstek gönderiliyor: model={model}")
+
+    req = urllib.request.Request(
+        endpoint,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            text = (
+                data.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                or ""
+            ).strip()
+            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+            return text or None
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8", errors="replace")[:200]
+        except Exception:
+            pass
+        if log_cb:
+            log_cb(f"  [LLM/OpenAI] HTTP {e.code}: {e.reason} — {body}")
+        return None
+    except urllib.error.URLError as e:
+        if log_cb:
+            log_cb(f"  [LLM/OpenAI] Bağlantı hatası: {e.reason}")
+        return None
+    except TimeoutError:
+        if log_cb:
+            log_cb(f"  [LLM/OpenAI] Zaman aşımı ({timeout}s)")
+        return None
+    except Exception as e:
+        if log_cb:
+            log_cb(f"  [LLM/OpenAI] Beklenmedik hata: {e}")
         return None
 
 
@@ -271,6 +367,16 @@ def generate(
 
     if active == "gemini":
         return _gemini_generate(
+            prompt,
+            system=system,
+            api_key=kwargs.get("api_key"),
+            model=kwargs.get("model"),
+            base_url=kwargs.get("base_url"),
+            timeout=kwargs.get("timeout", _TIMEOUT_SEC),
+            log_cb=log_cb,
+        )
+    elif active == "openai":
+        return _openai_generate(
             prompt,
             system=system,
             api_key=kwargs.get("api_key"),

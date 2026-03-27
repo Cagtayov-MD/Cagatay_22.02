@@ -759,14 +759,14 @@ def test_title_penalty_removed():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# REVVAL-15: Yüksek güven bypass — %90+ oranında ters doğrulama atlanır
+# REVVAL-15: Yüksek güven — ters doğrulama her zaman çalışır, bypass yok
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_high_confidence_bypass():
     """
-    REVVAL-15: forward_hits=7, toplam cast=7 → ratio=%100 ≥ %90 ve hits ≥ 3
-    → verify_credits ters doğrulamayı atlar, result.rejected=False olur
-    ve reverse_breakdown içinde 'skipped': True bulunur.
+    REVVAL-15: forward_hits=7, toplam cast=7 → ratio=%100, yönetmen eşleşiyor.
+    Bypass kaldırıldı — ters doğrulama HER ZAMAN çalışır.
+    Yüksek skor (7.5 ≥ eşik 4.4) → rejected=False olur AMA 'skipped' key'i yok.
     """
     verifier, _ = _make_verifier()
 
@@ -818,12 +818,15 @@ def test_high_confidence_bypass():
 
         result = verifier.verify_credits(cdata)
 
+    # Yüksek skor → hâlâ kabul edilir
     assert result.rejected is False, (
-        f"Yüksek güven bypass ile rejected=False bekleniyor, aldık: {result.rejected}"
+        f"Yüksek cast oranında rejected=False bekleniyor, aldık: {result.rejected}"
     )
-    assert result.reverse_breakdown.get("skipped") is True, (
-        f"reverse_breakdown içinde 'skipped': True bekleniyor: {result.reverse_breakdown}"
+    # Bypass kaldırıldı — ters doğrulama çalıştı, 'skipped' key'i olmamalı
+    assert result.reverse_breakdown.get("skipped") is not True, (
+        f"Bypass kaldırıldı; reverse_breakdown 'skipped': True içermemeli: {result.reverse_breakdown}"
     )
-    assert result.reverse_breakdown.get("reason") == "high_confidence_bypass", (
-        f"reverse_breakdown['reason'] == 'high_confidence_bypass' bekleniyor: {result.reverse_breakdown}"
+    # Gerçek skor hesaplandı
+    assert result.reverse_breakdown.get("total", 0) > 0, (
+        f"reverse_breakdown 'total' > 0 bekleniyor: {result.reverse_breakdown}"
     )

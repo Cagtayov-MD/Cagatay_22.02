@@ -48,14 +48,12 @@ class TestFuzzyFindTop2(unittest.TestCase):
         except ImportError:
             self.skipTest("rapidfuzz not installed")
 
-        from core.turkish_name_db import TurkishNameDB
+        from core.turkish_name_db import TurkishNameDB, _normalize_key
         db = TurkishNameDB.__new__(TurkishNameDB)
-        db._all_names = names
-        db._db_first = {}
-        db._db_surname = {}
-        db._all_keys = set()
+        db._names_list = list(names)
+        db._norm_to_canonical = {_normalize_key(n.replace(" ", "")): n for n in names}
         db._hardcoded = {}
-        db._phonetic_index = {}
+        db._db_load_error = None
         return db
 
     def test_ft01_returns_list_of_tuples(self):
@@ -107,10 +105,13 @@ class TestFuzzyFindTop2(unittest.TestCase):
             _m.HAS_RAPIDFUZZ = old
 
     def test_ft06_empty_names_returns_empty(self):
-        """FT-06: _fuzzy_find_top2() returns [] when _all_names is empty."""
+        """FT-06: _fuzzy_find_top2() returns [] when _names_list is empty."""
         from core.turkish_name_db import TurkishNameDB
         db = TurkishNameDB.__new__(TurkishNameDB)
-        db._all_names = []
+        db._names_list = []
+        db._norm_to_canonical = {}
+        db._hardcoded = {}
+        db._db_load_error = None
         result = db._fuzzy_find_top2("Ahmet")
         self.assertEqual(result, [])
 
@@ -123,13 +124,12 @@ class TestVerifySingleName(unittest.TestCase):
 
     def _call(self, mock_response):
         """Call verify_single_name with a mocked llm_provider.generate."""
-        fake_llm = types.ModuleType("core.llm_provider")
-        fake_llm.generate = MagicMock(return_value=mock_response)
-        with patch.dict("sys.modules", {"core.llm_provider": fake_llm}):
-            from importlib import reload
-            import core.gemini_crew_validator as mod
-            reload(mod)
-            return mod.verify_single_name("Test Name")
+        # patch("core.llm_provider.generate") gerçek modül attribute'unu yumlar;
+        # patch.dict(sys.modules) tek başına yeterli değildir çünkü modül
+        # zaten core.__dict__["llm_provider"] olarak set edilmiş olabilir.
+        with patch("core.llm_provider.generate", return_value=mock_response):
+            from core.gemini_crew_validator import verify_single_name
+            return verify_single_name("Test Name")
 
     def test_vs01_yes_response(self):
         """VS-01: 'YES' response → 'YES'."""
@@ -161,35 +161,23 @@ class TestVerifySingleName(unittest.TestCase):
 
     def test_vs08_timeout_error(self):
         """VS-08: TimeoutError → 'gemini_timeout' (fail-closed)."""
-        fake_llm = types.ModuleType("core.llm_provider")
-        fake_llm.generate = MagicMock(side_effect=TimeoutError("timeout"))
-        with patch.dict("sys.modules", {"core.llm_provider": fake_llm}):
-            from importlib import reload
-            import core.gemini_crew_validator as mod
-            reload(mod)
-            result = mod.verify_single_name("Test Name")
+        from core.gemini_crew_validator import verify_single_name
+        with patch("core.llm_provider.generate", side_effect=TimeoutError("timeout")):
+            result = verify_single_name("Test Name")
         self.assertEqual(result, "gemini_timeout")
 
     def test_vs09_oserror(self):
         """VS-09: OSError → 'gemini_network_error' (fail-closed)."""
-        fake_llm = types.ModuleType("core.llm_provider")
-        fake_llm.generate = MagicMock(side_effect=OSError("connection refused"))
-        with patch.dict("sys.modules", {"core.llm_provider": fake_llm}):
-            from importlib import reload
-            import core.gemini_crew_validator as mod
-            reload(mod)
-            result = mod.verify_single_name("Test Name")
+        from core.gemini_crew_validator import verify_single_name
+        with patch("core.llm_provider.generate", side_effect=OSError("connection refused")):
+            result = verify_single_name("Test Name")
         self.assertEqual(result, "gemini_network_error")
 
     def test_vs10_unexpected_exception(self):
         """VS-10: Unexpected exception → 'gemini_parse_error' (fail-closed)."""
-        fake_llm = types.ModuleType("core.llm_provider")
-        fake_llm.generate = MagicMock(side_effect=RuntimeError("unexpected"))
-        with patch.dict("sys.modules", {"core.llm_provider": fake_llm}):
-            from importlib import reload
-            import core.gemini_crew_validator as mod
-            reload(mod)
-            result = mod.verify_single_name("Test Name")
+        from core.gemini_crew_validator import verify_single_name
+        with patch("core.llm_provider.generate", side_effect=RuntimeError("unexpected")):
+            result = verify_single_name("Test Name")
         self.assertEqual(result, "gemini_parse_error")
 
     def test_vs11_validate_crew_still_works(self):

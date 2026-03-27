@@ -1,0 +1,580 @@
+{
+  "meta": {
+    "title": "VITOS Control Tower",
+    "mode": "read-only",
+    "source": "mock",
+    "active_project_touched": false,
+    "profiles_enabled": [
+      "FilmDizi-Hybrid",
+      "Spor"
+    ]
+  },
+  "profiles": [
+    {
+      "id": "film_dizi_hybrid",
+      "name": "FilmDizi-Hybrid",
+      "scope": "video+audio",
+      "description": "OneOCR birincil, Qwen 2.5 VL handwriting fallback. ASR tarafinda large-v3 kullanilir.",
+      "rules": [
+        "ocr_engine=hybrid",
+        "qwen_fallback_on_handwriting=true",
+        "whisper_model=large-v3",
+        "tmdb_enabled=true",
+        "gemini_enabled=false"
+      ]
+    },
+    {
+      "id": "spor",
+      "name": "Spor",
+      "scope": "video+audio",
+      "description": "Ilk+son segment ASR, son segment OCR, Gemini ile spor analizi ve capraz dogrulama.",
+      "rules": [
+        "segment_minutes=15",
+        "frame_interval_sec=10",
+        "asr_model=large-v3",
+        "ocr_engine=paddleocr",
+        "gemini_enabled=true"
+      ]
+    }
+  ],
+  "jobs": [
+    {
+      "id": "film-kirik-kalpler-001",
+      "profile_id": "film_dizi_hybrid",
+      "title": "Kirik Kalpler",
+      "status": "running",
+      "current_node_id": "ocr_worker",
+      "total_elapsed": "18m 42s",
+      "bottleneck": "OCR Worker",
+      "summary_cards": [
+        {
+          "label": "Toplam Gecen Sure",
+          "value": "18m 42s",
+          "subtext": "Bottleneck: OCR"
+        },
+        {
+          "label": "OCR Worker",
+          "value": "0.81",
+          "subtext": "Qwen usage: 18%"
+        },
+        {
+          "label": "ASR Worker",
+          "value": "0.89",
+          "subtext": "Low conf ratio: 7%"
+        },
+        {
+          "label": "Makine Durumu",
+          "value": "GPU 62%",
+          "subtext": "Worker load: 3 / 6"
+        }
+      ],
+      "dag": {
+        "nodes": [
+          {
+            "id": "input_video",
+            "label": "Input Video",
+            "status": "done",
+            "elapsed": "0.2s",
+            "score": "--",
+            "x": 30,
+            "y": 30,
+            "detail": {
+              "subtitle": "Kaynak job girdisi",
+              "overview": [
+                ["type", "film"],
+                ["source", "local video"],
+                ["score", "--"],
+                ["items", "1"]
+              ],
+              "rules": [
+                ["ingest_mode", "manual"],
+                ["pool", "film_dizi"]
+              ],
+              "metrics": [
+                ["warnings", "0"]
+              ],
+              "decision_log": [
+                "[INPUT] Video alindi",
+                "[INPUT] Pool film_dizi olarak secildi"
+              ]
+            }
+          },
+          {
+            "id": "ffmpeg_splitter",
+            "label": "FFMPEG Splitter",
+            "status": "done",
+            "elapsed": "14.1s",
+            "score": "--",
+            "x": 260,
+            "y": 30,
+            "detail": {
+              "subtitle": "Video -> goruntu + ses akisi",
+              "overview": [
+                ["engine", "ffmpeg"],
+                ["outputs", "ocr + asr"],
+                ["elapsed", "14.1s"]
+              ],
+              "rules": [
+                ["extract_mode", "split"],
+                ["audio_extract", "on"],
+                ["frame_prepare", "on"]
+              ],
+              "metrics": [
+                ["streams", "2"],
+                ["errors", "0"]
+              ],
+              "decision_log": [
+                "[FFMPEG] OCR ve ASR girisleri olusturuldu"
+              ]
+            }
+          },
+          {
+            "id": "ocr_worker",
+            "label": "OCR Worker",
+            "status": "running",
+            "elapsed": "12m 14s",
+            "score": "0.81",
+            "x": 220,
+            "y": 165,
+            "detail": {
+              "subtitle": "Hybrid OCR | OneOCR + Qwen 2.5 VL fallback",
+              "overview": [
+                ["engine", "oneocr"],
+                ["fallback", "qwen2.5-vl"],
+                ["mode", "hybrid"],
+                ["frame_count", "240"],
+                ["final_candidate_count", "19"]
+              ],
+              "rules": [
+                ["frame_sampling", "1 fps"],
+                ["qwen_fallback_on_handwriting", "true"],
+                ["text_filter_threshold", "0.23"],
+                ["namedb_enabled", "true"]
+              ],
+              "metrics": [
+                ["avg_confidence", "0.78"],
+                ["qwen_usage_ratio", "0.18"],
+                ["rejected_noise_count", "54"],
+                ["rejected_non_person_count", "27"],
+                ["namedb_match_ratio", "0.41"]
+              ],
+              "decision_log": [
+                "[OCR] Hybrid motor calisiyor",
+                "[NameDB] 'AGMET' -> 'AHMET'",
+                "[Hybrid] 43 frame handwriting olarak isaretlendi"
+              ]
+            }
+          },
+          {
+            "id": "asr_worker",
+            "label": "ASR Worker",
+            "status": "done",
+            "elapsed": "8m 51s",
+            "score": "0.89",
+            "x": 500,
+            "y": 165,
+            "detail": {
+              "subtitle": "faster-whisper large-v3",
+              "overview": [
+                ["model", "large-v3"],
+                ["mode", "transcribe"],
+                ["language", "tr"],
+                ["segments", "82"]
+              ],
+              "rules": [
+                ["detect_language", "true"],
+                ["denoise", "false"],
+                ["diarize", "false"],
+                ["post_process", "false"]
+              ],
+              "metrics": [
+                ["avg_segment_confidence", "0.88"],
+                ["low_conf_ratio", "0.07"],
+                ["language_confidence", "0.92"]
+              ],
+              "decision_log": [
+                "[ASR] detect_language tamam",
+                "[ASR] transcript hazir"
+              ]
+            }
+          },
+          {
+            "id": "ocr_local_fix",
+            "label": "OCR Local Fix",
+            "status": "done",
+            "elapsed": "12s",
+            "score": "0.73",
+            "x": 220,
+            "y": 315,
+            "detail": {
+              "subtitle": "NameDB + hardcoded + local normalization",
+              "overview": [
+                ["source_lines", "118"],
+                ["fixed_lines", "23"],
+                ["kept_candidates", "42"]
+              ],
+              "rules": [
+                ["namedb", "true"],
+                ["hardcoded_fixes", "true"],
+                ["fuzzy", "true"],
+                ["phonetic", "true"]
+              ],
+              "metrics": [
+                ["repair_gain", "+23"],
+                ["match_ratio", "0.41"]
+              ],
+              "decision_log": [
+                "[LOCAL] 23 satir duzeltildi",
+                "[LOCAL] hardcoded duzeltmeler uygulandi"
+              ]
+            }
+          },
+          {
+            "id": "ocr_gemini_fix",
+            "label": "OCR Gemini Fix",
+            "status": "waiting",
+            "elapsed": "--",
+            "score": "--",
+            "x": 220,
+            "y": 450,
+            "detail": {
+              "subtitle": "Cast / crew extraction ve validation",
+              "overview": [
+                ["state", "queue"],
+                ["depends_on", "ocr_local_fix"]
+              ],
+              "rules": [
+                ["gemini_enabled", "false in active profile"],
+                ["stage_mode", "prepared"]
+              ],
+              "metrics": [
+                ["queue_position", "1"]
+              ],
+              "decision_log": [
+                "[GEMINI] Bu profilde su an kapali; web iskeletinde placeholder olarak tutuluyor"
+              ]
+            }
+          },
+          {
+            "id": "asr_filter",
+            "label": "ASR Filter",
+            "status": "done",
+            "elapsed": "33s",
+            "score": "0.84",
+            "x": 500,
+            "y": 450,
+            "detail": {
+              "subtitle": "detect_language + transcript quality",
+              "overview": [
+                ["stage", "filter"],
+                ["ready_for", "summary"]
+              ],
+              "rules": [
+                ["low_conf_mark", "true"],
+                ["post_process", "false"]
+              ],
+              "metrics": [
+                ["low_conf_segments", "9"],
+                ["language_confidence", "0.92"]
+              ],
+              "decision_log": [
+                "[FILTER] summary icin transcript hazir"
+              ]
+            }
+          },
+          {
+            "id": "summary_worker",
+            "label": "Summary Worker",
+            "status": "waiting",
+            "elapsed": "--",
+            "score": "--",
+            "x": 390,
+            "y": 585,
+            "detail": {
+              "subtitle": "Transcript tabanli ozet",
+              "overview": [
+                ["input", "asr_pool"],
+                ["state", "waiting"]
+              ],
+              "rules": [
+                ["summary_mode", "short_report"]
+              ],
+              "metrics": [],
+              "decision_log": [
+                "[SUMMARY] ASR hazir, OCR branch tamamlaninca acilabilir"
+              ]
+            }
+          },
+          {
+            "id": "verify_worker",
+            "label": "Verify Worker",
+            "status": "waiting",
+            "elapsed": "--",
+            "score": "--",
+            "x": 575,
+            "y": 585,
+            "detail": {
+              "subtitle": "IMDb / TMDB / confidence / flags",
+              "overview": [
+                ["input", "ocr+asr artifacts"],
+                ["state", "waiting"]
+              ],
+              "rules": [
+                ["tmdb_enabled", "true"],
+                ["person_verify", "true"]
+              ],
+              "metrics": [],
+              "decision_log": [
+                "[VERIFY] External truth asamasi daha sonra beslenecek"
+              ]
+            }
+          },
+          {
+            "id": "finalize_worker",
+            "label": "Finalize Worker",
+            "status": "waiting",
+            "elapsed": "--",
+            "score": "--",
+            "x": 485,
+            "y": 720,
+            "detail": {
+              "subtitle": "Final output / export / report",
+              "overview": [
+                ["input", "all verified artifacts"],
+                ["state", "waiting"]
+              ],
+              "rules": [
+                ["export_json", "true"],
+                ["export_txt", "true"]
+              ],
+              "metrics": [],
+              "decision_log": [
+                "[FINALIZE] Tum branch'ler tamamlaninca devreye girecek"
+              ]
+            }
+          }
+        ],
+        "edges": [
+          ["input_video", "ffmpeg_splitter"],
+          ["ffmpeg_splitter", "ocr_worker"],
+          ["ffmpeg_splitter", "asr_worker"],
+          ["ocr_worker", "ocr_local_fix"],
+          ["ocr_local_fix", "ocr_gemini_fix"],
+          ["asr_worker", "asr_filter"],
+          ["ocr_gemini_fix", "summary_worker"],
+          ["asr_filter", "summary_worker"],
+          ["ocr_gemini_fix", "verify_worker"],
+          ["asr_filter", "verify_worker"],
+          ["summary_worker", "finalize_worker"],
+          ["verify_worker", "finalize_worker"]
+        ]
+      },
+      "trace_rows": [
+        ["AGMET", "AHMET", "AHMET", "KEEP"],
+        ["AHMAS", "AHMAS", "AHMET", "KEEP"],
+        ["OASDJCA", "OASDJCA", "REJECTED", "REJECT"],
+        ["EV ARABA AKSA", "EV ARABA AKSA", "REJECTED", "REJECT"],
+        ["BURAK SAGYASAR", "Burak Sagyasar", "Burak Sagyasar", "KEEP"]
+      ]
+    },
+    {
+      "id": "spor-gs-fb-001",
+      "profile_id": "spor",
+      "title": "GS - FB 1978 Arsiv Maci",
+      "status": "running",
+      "current_node_id": "sport_asr_worker",
+      "total_elapsed": "07m 14s",
+      "bottleneck": "ASR Worker",
+      "summary_cards": [
+        {
+          "label": "Toplam Gecen Sure",
+          "value": "07m 14s",
+          "subtext": "Bottleneck: ASR"
+        },
+        {
+          "label": "ASR Worker",
+          "value": "0.84",
+          "subtext": "First+Last segment"
+        },
+        {
+          "label": "OCR Worker",
+          "value": "--",
+          "subtext": "Son 15 dk bekliyor"
+        },
+        {
+          "label": "Gemini Spor Analizi",
+          "value": "hazir degil",
+          "subtext": "ASR+OCR birlesimi bekleniyor"
+        }
+      ],
+      "dag": {
+        "nodes": [
+          {
+            "id": "sport_input_video",
+            "label": "Input Video",
+            "status": "done",
+            "elapsed": "0.2s",
+            "score": "--",
+            "x": 30,
+            "y": 40,
+            "detail": {
+              "subtitle": "Spor yayin girdisi",
+              "overview": [
+                ["type", "sport broadcast"],
+                ["pool", "spor"]
+              ],
+              "rules": [
+                ["auto_detect", "true"]
+              ],
+              "metrics": [],
+              "decision_log": [
+                "[INPUT] Spor profili secildi"
+              ]
+            }
+          },
+          {
+            "id": "sport_segment_extract",
+            "label": "Segment Extract",
+            "status": "done",
+            "elapsed": "22s",
+            "score": "--",
+            "x": 260,
+            "y": 40,
+            "detail": {
+              "subtitle": "Ilk 15dk + son 15dk segment hazirligi",
+              "overview": [
+                ["segment_minutes", "15"],
+                ["audio_windows", "2"],
+                ["ocr_window", "last 15m"]
+              ],
+              "rules": [
+                ["frame_interval_sec", "10"],
+                ["speech_separation", "true"]
+              ],
+              "metrics": [
+                ["prepared_segments", "3"]
+              ],
+              "decision_log": [
+                "[SEGMENT] Ilk ve son segmentler hazir"
+              ]
+            }
+          },
+          {
+            "id": "sport_asr_worker",
+            "label": "ASR Worker",
+            "status": "running",
+            "elapsed": "05m 03s",
+            "score": "0.84",
+            "x": 220,
+            "y": 190,
+            "detail": {
+              "subtitle": "Whisper large-v3 | first+last segment",
+              "overview": [
+                ["engine", "whisper"],
+                ["model", "large-v3"],
+                ["segments", "2 windows"]
+              ],
+              "rules": [
+                ["speech_separation", "true"],
+                ["include_mix_fallback", "true"]
+              ],
+              "metrics": [
+                ["avg_confidence", "0.84"],
+                ["selected_channel", "speech_left"]
+              ],
+              "decision_log": [
+                "[ASR] Ilk segment transcript tamam",
+                "[ASR] Son segment devam ediyor"
+              ]
+            }
+          },
+          {
+            "id": "sport_ocr_worker",
+            "label": "OCR Worker",
+            "status": "waiting",
+            "elapsed": "--",
+            "score": "--",
+            "x": 470,
+            "y": 190,
+            "detail": {
+              "subtitle": "Son 15 dakikadan scoreboard OCR",
+              "overview": [
+                ["engine", "paddleocr"],
+                ["state", "waiting"]
+              ],
+              "rules": [
+                ["frame_interval_sec", "10"],
+                ["ocr_scope", "scoreboard + stat graphics"]
+              ],
+              "metrics": [],
+              "decision_log": [
+                "[OCR] ASR ile birlikte kosacak sekilde hazirlandi"
+              ]
+            }
+          },
+          {
+            "id": "sport_analyze",
+            "label": "Sport Analyze",
+            "status": "waiting",
+            "elapsed": "--",
+            "score": "--",
+            "x": 345,
+            "y": 360,
+            "detail": {
+              "subtitle": "Gemini birlestirme + capraz dogrulama",
+              "overview": [
+                ["input", "asr+ocr"],
+                ["state", "waiting"]
+              ],
+              "rules": [
+                ["gemini_enabled", "true"],
+                ["sport_auto_detect", "true"]
+              ],
+              "metrics": [],
+              "decision_log": [
+                "[SPORT] ASR ve OCR birlikte gelince analiz baslayacak"
+              ]
+            }
+          },
+          {
+            "id": "sport_finalize",
+            "label": "Finalize",
+            "status": "waiting",
+            "elapsed": "--",
+            "score": "--",
+            "x": 345,
+            "y": 525,
+            "detail": {
+              "subtitle": "Rapor ve database export",
+              "overview": [
+                ["output", "txt + database"],
+                ["state", "waiting"]
+              ],
+              "rules": [
+                ["database_enabled", "true"],
+                ["output_format", "txt"]
+              ],
+              "metrics": [],
+              "decision_log": [
+                "[FINALIZE] Sport analyze sonucu bekleniyor"
+              ]
+            }
+          }
+        ],
+        "edges": [
+          ["sport_input_video", "sport_segment_extract"],
+          ["sport_segment_extract", "sport_asr_worker"],
+          ["sport_segment_extract", "sport_ocr_worker"],
+          ["sport_asr_worker", "sport_analyze"],
+          ["sport_ocr_worker", "sport_analyze"],
+          ["sport_analyze", "sport_finalize"]
+        ]
+      },
+      "trace_rows": [
+        ["Skor OCR", "GS 2 - FB 1", "cross-check pending", "WAIT"],
+        ["Ilk segment ASR", "Takim/lig bilgisi", "verified later", "WAIT"],
+        ["Son segment ASR", "Gol ve kart anlatimi", "verified later", "WAIT"]
+      ]
+    }
+  ]
+}

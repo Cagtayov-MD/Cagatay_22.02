@@ -1,0 +1,59 @@
+﻿================================================================
+  FİLM / PROGRAM BİLGİLERİ
+================================================================
+  FİLMİN ADI            :     LA CHIMERA
+  FİLMİN ORJİNAL ADI    :     VERİ YOK
+  FİLMİN ID             :     2023-1276-1-0000-85-1
+  BÖLÜM                 :     YOK
+  ÇÖZÜNÜRLÜK            :     854X480
+  FRAME                 :     25.0 FRAME
+  TOPLAM SÜRE           :     1:56:58
+  SESLENDİRME DİLİ      :     VERİ YOK
+================================================================
+  OZET
+================================================================
+  ÖZET OLUŞTURULAMADI.
+================================================================
+  ANAHTAR SÖZCÜKLER
+================================================================
+  JOSH O'CONNOR ; CAROL DUARTE ; ALBA ROHRWACHER ; ISABELLA ROSSELLINI ; VINCENZO NEMOLATO ; LOU ROY-LECOLLİNET ; GIULIANO MANTOVANI ;
+  GIAN PIERO CAPRETTO ; MELCHIORRE PALA ; RAMONA FIORINI ; LUCA GARGIULLO ; YILE VIANELLO ; BARBARA CHIESA ; ELISABETTA
+  PEROTTO ; CHIARA PAZZAGLIA
+================================================================
+  OYUNCULAR
+================================================================
+  JOSH O'CONNOR
+  CAROL DUARTE
+  ALBA ROHRWACHER
+  ISABELLA ROSSELLINI
+  VINCENZO NEMOLATO
+  LOU ROY-LECOLLİNET
+  GIULIANO MANTOVANI
+  GIAN PIERO CAPRETTO
+  MELCHIORRE PALA
+  RAMONA FIORINI
+  LUCA GARGIULLO
+  YILE VIANELLO
+  BARBARA CHIESA
+  ELISABETTA PEROTTO
+  CHIARA PAZZAGLIA
+================================================================
+  YAPIM EKİBİ
+================================================================
+  YAPIMCI             CARLO CRESTO-DİNA
+                      PIERRE-FRANCOIS PIET
+                      PAOLO DEL BROCCO
+  YONETMEN            ALICE ROHRWACHER
+  YONETMEN YARDIMCISI NICOLA SCORZA
+                      DANIELA BALDASARRE
+                      ANDREJ CHINAPPI
+                      IO BAUR
+  GÖRÜNTÜ YÖNETMENİ   HELENE LOUVART
+  SENARYO             ALICE ROHRWACHER
+  KAMERA              ILYA SAPEHA
+                      HELENE DEGRANDCOURT
+                      ALBERTO BRACALENTE
+  KURGU               NELLY QUETTIER
+================================================================
+  OLUŞTURULMA: 2026-03-24T22:01:57.809210
+================================================================

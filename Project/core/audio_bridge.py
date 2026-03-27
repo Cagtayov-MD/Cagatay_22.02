@@ -160,7 +160,10 @@ class AudioBridge:
 
             if proc.returncode != 0:
                 stderr_tail = "".join(stderr_lines).strip()[-500:]
-                self._log(f"  [AudioBridge] Hata (rc={proc.returncode}): {stderr_tail}")
+                # 0xC0000409 = STATUS_STACK_BUFFER_OVERRUN: ctranslate2 shutdown crash, zararsız
+                _BENIGN_EXIT_CODES = {3221226505}
+                level = "Uyarı" if proc.returncode in _BENIGN_EXIT_CODES else "Hata"
+                self._log(f"  [AudioBridge] {level} (rc={proc.returncode}): {stderr_tail}")
 
                 # Subprocess hatalı bitti ama audio_result.json yazılmış olabilir
                 if Path(result_path).is_file():

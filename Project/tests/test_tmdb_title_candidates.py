@@ -691,3 +691,85 @@ def _norm(s):
     """Normalize yardımcısı — core.tmdb_verify._norm ile aynı mantık."""
     from core.tmdb_verify import _norm as _tmdb_norm
     return _tmdb_norm(s)
+
+
+def test_original_title_preferred_before_local_title():
+    """XML/original_title varsa lookup ilk olarak bunu denemeli."""
+    from unittest.mock import patch
+    from core.tmdb_verify import TMDBVerify
+    import tempfile
+
+    tmp = tempfile.mkdtemp()
+    verifier = TMDBVerify(work_dir=tmp, api_key="test-key")
+
+    search_calls = []
+    correct_entry = {
+        "id": 77,
+        "media_type": "movie",
+        "title": "Original True",
+        "release_date": "2023-01-01",
+    }
+
+    def fake_search_multi(title):
+        search_calls.append(title)
+        if title == "Original True":
+            return [correct_entry]
+        return []
+
+    def fake_fetch_credits(kind, mid):
+        return {
+            "cast": [{"name": "Josh O'Connor"}],
+            "crew": [{"name": "Alice Rohrwacher", "job": "Director"}],
+        }
+
+    with patch.object(verifier.client, "search_multi", side_effect=fake_search_multi), \
+         patch.object(verifier, "_fetch_credits", side_effect=fake_fetch_credits), \
+         patch.object(verifier, "_load_cache", return_value=None), \
+         patch.object(verifier, "_save_cache"):
+        entry, kind, matched_via, _ = verifier._find_tmdb_entry(
+            film_title="Yerel Yanlış Başlık",
+            cast_names=["Josh O'Connor"],
+            director_names=["Alice Rohrwacher"],
+            original_title="Original True",
+        )
+
+    assert entry is not None
+    assert kind == "movie"
+    assert matched_via == "original_title"
+    assert search_calls[0] == "Original True", (
+        f"Lookup ilk olarak original_title kullanmalıydı, çağrılar: {search_calls}"
+    )
+
+
+def test_filter_match_candidates_keeps_people_and_drops_credit_noise():
+    """Eşleşme havuzu ham OCR'dan ayrılmalı; teşekkür/logo satırları dışarıda kalmalı."""
+    from core.tmdb_verify import _filter_match_candidates
+
+    filtered = _filter_match_candidates(
+        [
+            "WITH THE ASSISTANCE OF THE",
+            "No animals were harmed",
+            "John Smith",
+            "Alice Rohrwacher",
+            "THE END",
+        ],
+        label="cast",
+    )
+
+    assert filtered == ["John Smith", "Alice Rohrwacher"]
+
+
+def test_fuzzy_match_accepts_high_similarity_ocr_name():
+    """OCR bozulmuş ama yüksek benzerlikli kişi adı yine eşleşmeli."""
+    from core.tmdb_verify import _fuzzy_match
+
+    matched = _fuzzy_match("ALICE BOHKWACHEB", ["Alice Rohrwacher"], threshold=80)
+    assert matched == "Alice Rohrwacher"
+
+
+def test_fuzzy_match_rejects_unrelated_name():
+    """Kontrollü fuzzy tamamen alakasız isimleri kabul etmemeli."""
+    from core.tmdb_verify import _fuzzy_match
+
+    matched = _fuzzy_match("ALICE BOHKWACHEB", ["David Fincher"], threshold=80)
+    assert matched is None

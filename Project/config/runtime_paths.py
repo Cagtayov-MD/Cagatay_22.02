@@ -88,3 +88,10 @@ def get_gemini_api_key() -> str:
         return env_key
     keys = load_api_keys()
     return str(keys.get("gemini_api_key") or keys.get("google_api_key") or "").strip()
+
+
+def get_openai_api_key() -> str:
+    env_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
+    if env_key:
+        return env_key
+    return str(load_api_keys().get("openai_api_key", "")).strip()

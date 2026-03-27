@@ -25,7 +25,8 @@ class ExtractStage:
         self._log = log_cb or print
 
     def run(self, video_path: str, work_dir: str,
-            selected_channel: int | None = None, **opts) -> dict:
+            selected_channel: int | None = None,
+            max_duration_sec: int | None = None, **opts) -> dict:
         """
         Video → WAV çıkarma.
 
@@ -71,6 +72,9 @@ class ExtractStage:
         else:
             self._log(f"  [Extract] Karışık mono (tüm kanallar)")
 
+        if max_duration_sec:
+            self._log(f"  [Extract] Süre sınırı: {max_duration_sec}s ({max_duration_sec//60}dk)")
+
         try:
             # ── 48kHz mono WAV (DF3 için) — ana çıkarma ──
             self._log("  [Extract] 48kHz WAV çıkarılıyor...")
@@ -78,6 +82,7 @@ class ExtractStage:
                 video_path, wav_48k,
                 sample_rate=48000,
                 selected_channel=selected_channel,
+                max_duration_sec=max_duration_sec,
             )
 
             # ── 16kHz mono WAV (PyAnnote + faster-whisper) — 48kHz'den resample ──
@@ -118,7 +123,8 @@ class ExtractStage:
 
     def _ffmpeg_extract(self, video_path: str, out_path: str,
                         sample_rate: int = 16000,
-                        selected_channel: int | None = None):
+                        selected_channel: int | None = None,
+                        max_duration_sec: int | None = None):
         """FFmpeg subprocess çalıştır + hata kontrolü."""
         cmd = [
             self._ffmpeg, '-y',
@@ -127,6 +133,8 @@ class ExtractStage:
             '-acodec', 'pcm_s16le',
             '-ar', str(sample_rate),
         ]
+        if max_duration_sec:
+            cmd += ['-t', str(max_duration_sec)]
 
         if selected_channel is not None:
             # Belirli kanalı al → mono

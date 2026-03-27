@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VITOS Control Tower</title>
+  <link rel="stylesheet" href="./app.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar panel">
+      <div class="brand-group">
+        <div class="brand-mark">V</div>
+        <div class="brand-copy">
+          <div class="brand-label">VITOS</div>
+          <div class="brand-sub">Control Tower</div>
+        </div>
+      </div>
+
+      <div class="top-controls">
+        <label class="toolbar-field">
+          <span>Profil</span>
+          <select id="profile-select"></select>
+        </label>
+
+        <label class="toolbar-field toolbar-field-wide">
+          <span>Is</span>
+          <select id="job-select"></select>
+        </label>
+      </div>
+
+      <div class="top-actions">
+        <button class="action-btn primary" disabled>Baslat</button>
+        <button class="action-btn" disabled>Dur</button>
+        <button class="action-btn" disabled>Gec</button>
+        <span class="mode-pill">Mock</span>
+        <span class="mode-pill">Read-only</span>
+      </div>
+    </header>
+
+    <section class="status-ribbon panel">
+      <div class="status-card">
+        <div class="status-kicker">Current Node</div>
+        <div class="status-main" id="status-current-node">-</div>
+      </div>
+      <div class="status-card">
+        <div class="status-kicker">Elapsed</div>
+        <div class="status-main" id="status-elapsed">-</div>
+      </div>
+      <div class="status-card">
+        <div class="status-kicker">Bottleneck</div>
+        <div class="status-main" id="status-bottleneck">-</div>
+      </div>
+      <div class="status-card">
+        <div class="status-kicker">Queue / Active</div>
+        <div class="status-main" id="status-queue">-</div>
+      </div>
+    </section>
+
+    <main class="workspace">
+      <section class="canvas-shell panel">
+        <div class="canvas-header">
+          <div class="canvas-info">
+            <span class="eyebrow">Live Workflow</span>
+            <div class="canvas-context">
+              <span class="context-chip" id="toolbar-profile-chip">Profil</span>
+              <span class="context-chip" id="toolbar-job-chip">Is</span>
+            </div>
+          </div>
+
+          <div class="canvas-status">
+            <span class="status-chip" id="job-status-pill">status</span>
+            <span class="status-chip" id="job-bottleneck-pill">bottleneck</span>
+            <button class="zoom-btn" disabled>+</button>
+            <button class="zoom-btn" disabled>-</button>
+          </div>
+        </div>
+
+        <div class="dag-stage">
+          <svg id="dag-edges" class="dag-edges"></svg>
+          <div id="dag-nodes" class="dag-nodes"></div>
+          <div id="node-tooltip" class="node-tooltip hidden"></div>
+        </div>
+      </section>
+
+      <aside id="detail-drawer" class="detail-drawer panel">
+        <div class="drawer-header">
+          <div>
+            <div class="eyebrow">Node Detail</div>
+            <h2 id="node-title">Node secilmedi</h2>
+          </div>
+
+          <div class="drawer-actions">
+            <span class="status-chip" id="node-status-pill">status</span>
+            <span class="status-chip" id="node-score-pill">score</span>
+            <button id="drawer-close" class="drawer-close" type="button">×</button>
+          </div>
+        </div>
+
+        <div class="drawer-body">
+          <section class="drawer-section">
+            <div class="section-head">Overview</div>
+            <div id="overview-grid" class="kv-grid"></div>
+          </section>
+
+          <section class="drawer-section">
+            <div class="section-head">Rules</div>
+            <div id="rules-grid" class="kv-grid"></div>
+          </section>
+
+          <section class="drawer-section">
+            <div class="section-head">Metrics</div>
+            <div id="metrics-grid" class="kv-grid"></div>
+          </section>
+
+          <section class="drawer-section">
+            <div class="section-head">Decision Log</div>
+            <div id="decision-log" class="log-box"></div>
+          </section>
+        </div>
+      </aside>
+    </main>
+
+    <section class="bottom-dock panel">
+      <div class="dock-tabs">
+        <button class="dock-tab active" data-tab="logs">Logs</button>
+        <button class="dock-tab" data-tab="artifacts">Artifacts</button>
+        <button class="dock-tab" data-tab="trace">Trace</button>
+      </div>
+
+      <div class="dock-panels">
+        <div class="dock-panel active" data-panel="logs">
+          <div class="dock-title">Secili Node Logs</div>
+          <div id="logs-panel" class="log-box dock-log"></div>
+        </div>
+
+        <div class="dock-panel" data-panel="artifacts">
+          <div class="dock-title">Secili Node Artifacts</div>
+          <div id="artifacts-panel" class="dock-list"></div>
+        </div>
+
+        <div class="dock-panel" data-panel="trace">
+          <div class="dock-title">Kompakt Trace</div>
+          <div id="trace-panel" class="dock-list"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

@@ -1,47 +1,23 @@
 """
-turkish_name_db.py — Türkçe isim veritabanı + OCR karakter onarımı.
+turkish_name_db.py — IMDB-tabanlı isim veritabanı + OCR karakter onarımı.
 
-Kaynak: F:\\Source\\name_db\\compiled\\names.db
-        → 356.543 kayıt (166k ad + 190k soyad)
-        → Türkçe canonical öncelikli (canonical_tr + soyisimler_tr: 12.726 kayıt)
+Kaynak: F:\\IMDB\\db\\imdb.duckdb → names tablosu (15M+ kayıt)
 
 Görevler:
-1. names.db SQLite'dan isimleri yükle (RAM dict — 10-30 isim/video, hız yeterli)
-2. OCR ASCII bozulmalarını Türkçe'ye çevir (SEBNEM → Şebnem)
-3. Birleşik isim böl (SEBNEMSONMEZ → Şebnem Sönmez)
-4. is_name() ile doğrula
-5. is_also_surname / is_also_firstname flag'leri → CreditsParser swap tespiti
-
-DB Şeması (names.db):
-    CREATE TABLE names (
-        id INTEGER PRIMARY KEY,
-        name TEXT NOT NULL,
-        normalized TEXT NOT NULL,   -- ASCII key (SEBNEM gibi)
-        type TEXT NOT NULL,         -- 'first_male' | 'first_female' | 'surname' | 'international'
-        is_also_surname INTEGER DEFAULT 0,   -- Ad ama soyad da olabilir (Ali Kemal → Ali, Kemal)
-        is_also_firstname INTEGER DEFAULT 0, -- Soyad ama ad da olabilir
-        source TEXT,                -- 'canonical_tr' | 'soyisimler_tr' | 'tally' | ...
-        score REAL DEFAULT 1.0
-    );
-    CREATE INDEX idx_normalized ON names(normalized);
-    CREATE INDEX idx_type ON names(type);
+1. imdb.duckdb'den tüm primaryName değerlerini RAM'e yükle
+2. OCR ASCII bozulmalarını hardcoded tablo ile düzelt (SEBNEM → Şebnem)
+3. Tam eşleşme: normalize(ocr_text) → IMDB canonical ismi
+4. Fuzzy eşleşme: RapidFuzz WRatio ile en yakın "isim+soyisim" eşleştir
 
 Kullanım:
-    db = TurkishNameDB("F:/Source/name_db/compiled/names.db")
-    canonical, score = db.find("SEBNEM")            # → ("Şebnem", 1.0)
-    parts = db.split_concatenated("SEBNEMSONMEZ")   # → ["Şebnem", "Sönmez"]
-    ok = db.is_name("Şebnem")                       # → True
-    ok = db.is_surname("Sönmez")                    # → True
-    swap = db.check_swap_risk("Ali", "Kemal")       # → True (ikisi de ad olabilir)
+    db = TurkishNameDB()
+    canonical, score = db.find("Nida Sererli")   # → ("Nisa Serezli", 0.91)
+    ok = db.is_name("Nisa Serezli")              # → True
 """
 
 from __future__ import annotations
 
-import itertools
-import re
-import sqlite3
 import unicodedata
-from pathlib import Path
 from typing import Optional
 
 try:
@@ -52,19 +28,8 @@ except ImportError:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Sabit OCR hata düzeltme tablosu
-# Büyük öncelik: hardcoded > DB > fuzzy
-# Özellikle OCR'ın sistematik hataları buraya girer (V→U, M→N vb.)
+# Hardcoded OCR düzeltme tablosu (IMDB eşleşmeden önce uygulanır)
 # ─────────────────────────────────────────────────────────────────────────────
-# OCR'a özel fonetik karakter dönüşüm tablosu
-# Bu tablo OCR'ın sistematik karıştırmalarını (w↔n, q↔ğ) fonetik anahtar üretiminde kullanır.
-_OCR_PHONETIC_MAP: dict[str, str] = {
-    'w': 'n',   # OCR w↔n karışması (Camaw → Caman)
-    'W': 'N',
-    'q': 'g',   # OCR q↔ğ karışması
-    'Q': 'G',
-}
-
 _HARDCODED_FIXES: dict[str, str] = {
     'SEBNEM': 'Şebnem',
     'SONMEZ': 'Sönmez',
@@ -96,7 +61,6 @@ _HARDCODED_FIXES: dict[str, str] = {
     'SENOLSENTURK': 'Şenol Şentürk',
     'RUHISARI': 'Ruhi Sarı',
     'OYAYUCE': 'Oya Yüce',
-    # Sık görülen tekli bozulmalar
     'AYCA': 'Ayça',
     'GUNEY': 'Güney',
     'GULDEN': 'Gülden',
@@ -120,7 +84,6 @@ _HARDCODED_FIXES: dict[str, str] = {
     'SARI': 'Sarı',
     'DEMIR': 'Demir',
     'ONER': 'Öner',
-    # OCR t↔s karışması ve z eksikliği düzeltmeleri
     'NITA': 'Nisa',
     'SERELI': 'Serezli',
     'NITASERELI': 'Nisa Serezli',
@@ -131,8 +94,7 @@ _HARDCODED_FIXES: dict[str, str] = {
 def _normalize_key(text: str) -> str:
     """
     Karşılaştırma anahtarı üret: büyük harf, boşluksuz, Türkçe→ASCII.
-    Hem DB normalized kolonu hem de OCR girdi bu fonksiyondan geçer.
-    Örnek: 'Şebnem Sönmez' → 'SEBNEMSONMEZ'
+    Örnek: 'Nisa Serezli' → 'NISASEREZLI'
     """
     text = text.upper().strip().replace(' ', '')
     tr_map = str.maketrans({
@@ -150,366 +112,160 @@ def _normalize_key(text: str) -> str:
 
 def _phonetic_key(text: str) -> str:
     """
-    OCR fonetik anahtar üret.
-    _normalize_key'in genişletilmiş versiyonu:
-    - Önce OCR karıştırma tablosunu uygula (w→n, q→g)
-    - Türkçe→ASCII normalize et
-    - Tekrarlanan harfleri tek yap (CAMAAN→CAMAN)
+    OCR fonetik anahtarı: normalize et + yaygın harf karışıklıklarını düzelt.
+
+    Dönüşümler (büyük harf üzerinde):
+      W → N  (W ile N OCR'da karışır)
+      Q → G  (Q ile G karışır — Kiril/Türkçe fontlarda)
+    Ardından tekrarlanan harfler teke indirilir: CAMAAN → CAMAN
     """
-    # OCR-spesifik karakter dönüşümleri
-    result = []
-    for ch in text:
-        result.append(_OCR_PHONETIC_MAP.get(ch, ch))
-    text = ''.join(result)
-    # Standart normalizasyon
-    key = _normalize_key(text)
-    # Tekrarlanan harfleri tek yap (CAMAAN → CAMAN)
+    key = _normalize_key(text)           # büyük harf, boşluksuz, Türkçe→ASCII
+    key = key.replace("W", "N")
+    key = key.replace("Q", "G")
+    # Tekrarlanan ardışık harfleri teke indir
     deduped = []
     for ch in key:
         if not deduped or ch != deduped[-1]:
             deduped.append(ch)
-    return ''.join(deduped)
-
-
-def _normalize_spaced(text: str) -> str:
-    """Boşlukları koruyarak normalize et. Çok kelimeli isimler için."""
-    parts = text.strip().split()
-    return ' '.join(_normalize_key(p) for p in parts)
-
-
-class NameEntry:
-    """DB'den gelen tek isim kaydı."""
-    __slots__ = ('name', 'normalized', 'type', 'is_also_surname',
-                 'is_also_firstname', 'source', 'score')
-
-    def __init__(self, name, normalized, type_, is_also_surname,
-                 is_also_firstname, source, score):
-        self.name = name
-        self.normalized = normalized
-        self.type = type_
-        self.is_also_surname = bool(is_also_surname)
-        self.is_also_firstname = bool(is_also_firstname)
-        self.source = source or ''
-        self.score = float(score or 1.0)
-
-    @property
-    def is_first_name(self) -> bool:
-        return self.type in ('first_male', 'first_female', 'first_neutral')
-
-    @property
-    def is_surname(self) -> bool:
-        return self.type == 'surname'
-
-    @property
-    def gender(self) -> str:
-        if self.type == 'first_male':
-            return 'E'
-        if self.type == 'first_female':
-            return 'K'
-        return '?'
+    return "".join(deduped)
 
 
 class TurkishNameDB:
     """
-    Türkçe isim veritabanı — names.db SQLite tabanlı.
+    IMDB-tabanlı isim veritabanı.
 
-    RAM dict mimarisi:
-      - _db_first  : {normalized_key: NameEntry}  — adlar
-      - _db_surname: {normalized_key: NameEntry}  — soyadlar
-      - _all_keys  : set — hızlı is_name() için
+    Tüm 15M+ IMDB ismi RAM'e yüklenir:
+      _norm_to_canonical : {normalize(name): primaryName}  — exact match
+      _names_list        : [primaryName, ...]               — fuzzy için
 
-    Session log kararı: RAM dict, çünkü video başına 10-30 isim işleniyor,
-    SQLite'a tekrar tekrar bağlanmak overhead yaratır.
+    find() akışı: hardcoded → exact → RapidFuzz full-list fuzzy
     """
 
     def __init__(self, db_path: str = "", log_cb=None, sql_path: str = ""):
         self._log = log_cb or (lambda m: print(m))
-        self._db_first: dict[str, NameEntry] = {}
-        self._db_surname: dict[str, NameEntry] = {}
-        # Fuzzy için canonical isim listeleri
-        self._first_names: list[str] = []
-        self._surnames: list[str] = []
+        self._norm_to_canonical: dict[str, str] = {}
+        self._names_list: list[str] = []
+        self._db_load_error: str | None = None
 
-        # Hardcoded düzeltmeleri yükle (ham string → canonical)
         self._hardcoded: dict[str, str] = {
             _normalize_key(k): v for k, v in _HARDCODED_FIXES.items()
         }
-        # Fonetik index: phonetic_key → canonical_name
-        self._phonetic_index: dict[str, str] = {}
 
+        # PERF-1: _all_names cache — _fuzzy_find her çağrıda yeni liste oluşturmamalı
+        self._first_names: list[str] = []
+        self._surnames: list[str] = []
+        self._all_names: list[str] = []
 
-        # Backward-compatible alias: some callers use sql_path instead of db_path
-        if (not db_path) and sql_path:
-            db_path = sql_path
-
-        # Enforce file format contract: runtime expects a SQLite .db.
-        # If a .sql seed is provided, auto-materialize a sibling .db once.
-        db_path = (db_path or "").strip()
-        if db_path.lower().endswith(".sql"):
-            sql_seed = Path(db_path)
-            db_candidate = sql_seed.with_suffix(".db")
-            if not db_candidate.is_file():
-                try:
-                    self._log(f"  [NameDB] SQL seed bulundu, DB üretiliyor: {db_candidate}")
-                    self._materialize_sqlite_from_sql(sql_seed, db_candidate)
-                except Exception as e:
-                    self._log(f"  [NameDB] SQL→DB dönüşümü başarısız: {e}")
-            db_path = str(db_candidate)
-
-        if db_path and Path(db_path).is_file():
-            n_first, n_sur = self._load_sqlite(db_path)
-            self._log(
-                f"  [NameDB] Yüklendi — ad:{n_first:,} soyad:{n_sur:,} "
-                f"| {db_path}"
-            )
+        if db_path:
+            self._load_from_explicit_path(db_path)
         else:
-            self._log(
-                "  [NameDB] names.db bulunamadı — sadece hardcoded tablo aktif. "
-                f"Beklenen: {db_path}"
-            )
+            self._load_imdb()
 
-        self._first_names = [e.name for e in self._db_first.values()]
-        self._surnames = [e.name for e in self._db_surname.values()]
-        self._all_names = self._first_names + self._surnames  # cached; avoids O(n) alloc on every _fuzzy_find call
-        self._all_keys = set(self._db_first) | set(self._db_surname)
-        # Fonetik index'i oluştur: phonetic_key → canonical_name
-        for key, entry in itertools.chain(self._db_first.items(), self._db_surname.items()):
-            pkey = _phonetic_key(entry.name)
-            if pkey not in self._phonetic_index:
-                self._phonetic_index[pkey] = entry.name
+        # Cache'i yüklemeden sonra güncelle
+        self._first_names = self._names_list
+        self._all_names = self._first_names + self._surnames
 
-
-    def _materialize_sqlite_from_sql(self, sql_path: Path, db_path: Path) -> None:
-        """Create a SQLite DB from a .sql seed (one-time)."""
-        sql_text = sql_path.read_text(encoding="utf-8", errors="ignore")
-        # Basic safety: create parent dir if needed
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        con = sqlite3.connect(str(db_path))
-        try:
-            con.executescript(sql_text)
-            con.commit()
-        finally:
-            con.close()
-
-    # ─────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────
     # Yükleme
-    # ─────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────
 
-    def _load_sqlite(self, db_path: str) -> tuple[int, int]:
-        """names.db'den tüm kayıtları RAM dict'e yükle."""
-        n_first = n_sur = 0
+    def _load_from_explicit_path(self, path: str) -> None:
+        """db_path ile açık olarak verilen yolu işle (test uyumluluğu)."""
+        from pathlib import Path
+        if path.lower().endswith(".sql"):
+            if not Path(path).is_file():
+                self._db_load_error = f"SQL seed bulunamadı: {path}"
+                self._log(f"  [NameDB] {self._db_load_error}")
+        else:
+            if not Path(path).is_file():
+                self._db_load_error = f"DB bulunamadı: {path}"
+                self._log(f"  [NameDB] {self._db_load_error}")
+
+    def _load_imdb(self) -> None:
+        """imdb.duckdb'den tüm primaryName değerlerini RAM'e yükle."""
         try:
-            con = sqlite3.connect(db_path)
-            con.row_factory = sqlite3.Row
-            cur = con.cursor()
-            try:
-                cur.execute("""
-                    SELECT name, normalized, type, is_also_surname,
-                           is_also_firstname, source, score
-                    FROM names
-                    ORDER BY score DESC
-                """)
-            except sqlite3.OperationalError as e:
-                if "no such table" in str(e).lower():
-                    con.close()
-                    # Sibling .sql seed dosyası ara ve rebuild et
-                    db_file = Path(db_path)
-                    sql_seed = db_file.with_suffix(".sql")
-                    if sql_seed.is_file():
-                        self._log(f"  [NameDB] '{e}' — .sql seed ile yeniden oluşturuluyor: {sql_seed}")
-                        try:
-                            db_file.unlink(missing_ok=True)
-                        except Exception:
-                            pass
-                        self._materialize_sqlite_from_sql(sql_seed, db_file)
-                        return self._load_sqlite(db_path)
-                    else:
-                        self._log(f"  [NameDB] SQLite yükleme hatası: {e} (seed .sql bulunamadı)")
-                        return n_first, n_sur
-                raise
-            for row in cur.fetchall():
-                entry = NameEntry(
-                    row['name'], row['normalized'], row['type'],
-                    row['is_also_surname'], row['is_also_firstname'],
-                    row['source'], row['score']
-                )
-                key = row['normalized'] or _normalize_key(row['name'])
-                if entry.is_first_name:
-                    # Yüksek score öncelikli (score DESC ile geldi)
-                    if key not in self._db_first:
-                        self._db_first[key] = entry
-                    n_first += 1
-                elif entry.is_surname:
-                    if key not in self._db_surname:
-                        self._db_surname[key] = entry
-                    n_sur += 1
-            con.close()
-        except Exception as e:
-            self._log(f"  [NameDB] SQLite yükleme hatası: {e}")
-        return n_first, n_sur
+            import duckdb
+        except ImportError:
+            self._db_load_error = "duckdb paketi yüklü değil"
+            self._log(f"  [NameDB] {self._db_load_error} — hardcoded tablo aktif")
+            return
 
-    # ─────────────────────────────────────────────────────────────────────
+        try:
+            from config.runtime_paths import get_imdb_db_path
+            imdb_path = get_imdb_db_path()
+        except Exception:
+            self._db_load_error = "DB yapılandırılmadı"
+            self._log("  [NameDB] DB yapılandırılmadı — hardcoded tablo aktif")
+            return
+
+        from pathlib import Path
+        if not Path(imdb_path).is_file():
+            self._db_load_error = f"IMDB DB bulunamadı: {imdb_path}"
+            self._log(f"  [NameDB] {self._db_load_error} — hardcoded tablo aktif")
+            return
+
+        try:
+            self._log(f"  [NameDB] IMDB yükleniyor: {imdb_path}")
+            con = duckdb.connect(imdb_path, read_only=True)
+            cur = con.execute("SELECT primaryName FROM names")
+            loaded = 0
+            batch_size = 100_000
+            while True:
+                rows = cur.fetchmany(batch_size)
+                if not rows:
+                    break
+                for (name,) in rows:
+                    if name:
+                        key = _normalize_key(name)
+                        if key not in self._norm_to_canonical:
+                            self._norm_to_canonical[key] = name
+                loaded += len(rows)
+                if loaded % 1_000_000 == 0:
+                    self._log(f"  [NameDB] {loaded:,} kayıt yüklendi...")
+            con.close()
+
+            self._names_list = list(self._norm_to_canonical.values())
+            self._log(
+                f"  [NameDB] IMDB yüklendi — "
+                f"{len(self._names_list):,} benzersiz isim | {imdb_path}"
+            )
+        except Exception as e:
+            self._db_load_error = str(e)
+            self._log(f"  [NameDB] IMDB yüklenemedi: {e} — hardcoded tablo aktif")
+
+    # ─────────────────────────────────────────────────────────────────
     # Temel sorgular
-    # ─────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────
 
     def is_name(self, text: str) -> bool:
-        """Bu metin bir Türkçe isim ya da soyad mı?"""
+        """
+        Bu metin IMDB'de kayıtlı bir isim mi? (tam eşleşme)
+
+        Kural: en az 2 kelime (isim+soyisim) zorunlu.
+        Tek kelime girişler her zaman False döner.
+        """
+        if not text:
+            return False
+        if len(text.strip().split()) < 2:
+            return False
         key = _normalize_key(text.replace(' ', ''))
-        if key in self._all_keys or key in self._hardcoded:
-            return True
-        # Çok kelimeli: herhangi bir kelime DB'de varsa True
-        words = text.strip().split()
-        if len(words) >= 2:
-            return any(
-                (k := _normalize_key(w)) in self._all_keys or k in self._hardcoded
-                for w in words
-            )
-        return False
+        return key in self._norm_to_canonical or key in self._hardcoded
 
-    def is_first_name(self, text: str) -> bool:
-        key = _normalize_key(text)
-        return key in self._db_first
-
-    def is_surname(self, text: str) -> bool:
-        key = _normalize_key(text)
-        return key in self._db_surname
-
-    def gender(self, text: str) -> str:
-        """'E' | 'K' | '?' — ilk kelimeye göre."""
-        for word in text.split():
-            key = _normalize_key(word)
-            if key in self._db_first:
-                return self._db_first[key].gender
-        return '?'
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Swap tespiti (CreditsParser entegrasyonu)
-    # ─────────────────────────────────────────────────────────────────────
-
-    def check_swap_risk(self, left_token: str, right_token: str) -> bool:
-        """
-        Sütun yer değişimi riski var mı?
-        Sol sütun token'ı is_also_firstname=1 olan bir soyad ise
-        → oyuncu/karakter sütunları karışmış olabilir.
-
-        Örnek:
-            Sol sütun: "Kemal"  → hem ad hem soyad olabilir → swap riski
-            Sağ sütun: "Ali"    → aynı durum → swap riski
-        """
-        lk = _normalize_key(left_token)
-        rk = _normalize_key(right_token)
-
-        # Sol taraf soyad DB'sinde is_also_firstname=1 ise risk var
-        left_entry = self._db_surname.get(lk)
-        if left_entry and left_entry.is_also_firstname:
-            return True
-
-        # Sağ taraf ad DB'sinde is_also_surname=1 ise risk var
-        right_entry = self._db_first.get(rk)
-        if right_entry and right_entry.is_also_surname:
-            return True
-
-        return False
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Birleşik isim bölme
-    # ─────────────────────────────────────────────────────────────────────
-
-    def split_concatenated(
-        self, text: str, max_parts: int = 3
-    ) -> list[str]:
-        """
-        Birleşik OCR token'ı böl.
-        SEBNEMSONMEZ → ["Şebnem", "Sönmez"]
-        GOLDENCUNEY  → (hardcoded) ["Gülden", "Güney"]
-
-        Algoritma:
-        1. Hardcoded tam eşleşme dene
-        2. Tüm bölme noktalarını dene (DP, DB'de eşleşeni seç)
-        3. Bulunamazsa orijinali tek parça döndür
-
-        Returns:
-            List[str] — canonical parçalar, boş token'lar dahil edilmez
-        """
-        if not text or not text.strip():
-            return [text]
-
-        key = _normalize_key(text)
-
-        # 1. Hardcoded tam eşleşme
-        if key in self._hardcoded:
-            canonical = self._hardcoded[key]
-            return canonical.split()
-
-        # 2. DB'de tek token olarak bulunuyor mu?
-        entry = self._db_first.get(key) or self._db_surname.get(key)
-        if entry:
-            return [entry.name]
-
-        # 3. DP ile bölme: tüm split noktalarını dene
-        best = self._dp_split(key, max_parts)
-        if best:
-            return best
-
-        # 4. Bulunamadı — orijinali döndür
-        return [text.strip()]
-
-    def _dp_split(self, normalized_key: str, max_parts: int) -> list[str]:
-        """
-        Dynamic programming ile birleşik kelimeyi bölme.
-        normalized_key: boşluksuz büyük harf ASCII (SEBNEMSONMEZ gibi)
-
-        Her bölme noktasında sol parça DB'de varsa devam eder.
-        En fazla max_parts parçaya böler.
-        """
-        n = len(normalized_key)
-        if n < 3:
-            return []
-
-        # dp[i] = (canonical_parts, split_score) — i pozisyonuna kadar en iyi bölme
-        dp: list[Optional[tuple[list[str], float]]] = [None] * (n + 1)
-        dp[0] = ([], 1.0)
-
-        for i in range(1, n + 1):
-            for j in range(max(0, i - 15), i):  # max 15 karakter per token
-                if dp[j] is None:
-                    continue
-                prev_parts, prev_score = dp[j]
-                if len(prev_parts) >= max_parts:
-                    continue
-                segment = normalized_key[j:i]
-                if len(segment) < 2:
-                    continue
-                entry = self._db_first.get(segment) or self._db_surname.get(segment)
-                if entry:
-                    new_parts = prev_parts + [entry.name]
-                    # Kaynak önceliği: canonical_tr daha yüksek
-                    seg_score = entry.score * (1.2 if entry.source == 'canonical_tr' else 1.0)
-                    new_score = prev_score * seg_score
-                    if dp[i] is None or new_score > dp[i][1]:
-                        dp[i] = (new_parts, new_score)
-
-        result = dp[n]
-        # En az 2 parça gerektir (tek parça zaten yukarıda yakalandı)
-        if result and len(result[0]) >= 2:
-            return result[0]
-        return []
-
-    # ─────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────
     # OCR satır onarımı
-    # ─────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────
 
     def find(
-        self, ocr_text: str, fuzzy_threshold: int = 85
+        self, ocr_text: str, fuzzy_threshold: int = 75
     ) -> tuple[Optional[str], float]:
         """
-        OCR metninden kanonik Türkçe isim bul.
+        OCR metninden IMDB canonical isim bul.
 
-        Öncelik sırası:
+        Öncelik:
           1. Hardcoded tam eşleşme
-          2. DB tam eşleşme (normalized key)
-          3. Kelime kelime düzeltme (çok kelimeli)
-          4. Fuzzy match (RapidFuzz)
+          2. IMDB exact match (normalize edilmiş key)
+          3. RapidFuzz token_sort_ratio fuzzy (tüm isimler, score_cutoff ile erken çıkış)
+             token_sort_ratio: kelime sırası farkını tolere eder, substring tuzağına düşmez.
 
         Returns:
             (canonical_name, score 0.0-1.0)
@@ -517,108 +273,88 @@ class TurkishNameDB:
         if not ocr_text or not ocr_text.strip():
             return None, 0.0
 
-        key = _normalize_key(ocr_text.replace(' ', ''))
+        # Kural: en az 2 kelime (isim+soyisim) zorunlu.
+        # Tek kelime girişler hardcoded tablosunda olmadıkça hiçbir şeyle eşleşmez.
+        stripped = ocr_text.strip()
+        key = _normalize_key(stripped.replace(' ', ''))
 
-        # 1. Hardcoded
+        # 1. Hardcoded (tek kelime OCR artifact'ları için istisna)
         if key in self._hardcoded:
             return self._hardcoded[key], 1.0
 
-        # 2. DB tam eşleşme
-        entry = self._db_first.get(key) or self._db_surname.get(key)
-        if entry:
-            return entry.name, 1.0
+        # 2 kelime minimum kontrolü
+        if len(stripped.split()) < 2:
+            return None, 0.0
 
-        # 3. Çok kelimeli: kelime kelime düzelt
-        parts = ocr_text.strip().split()
-        if len(parts) > 1:
-            fixed, changed = self._fix_parts(parts, fuzzy_threshold)
-            if changed:
-                return ' '.join(fixed), 0.9
+        # 2. Exact match
+        if key in self._norm_to_canonical:
+            return self._norm_to_canonical[key], 1.0
 
-        # 4. Fonetik match — OCR bozulma tablosu ile fonetik anahtar üret
-        pkey = _phonetic_key(ocr_text.replace(' ', ''))
-        if pkey in self._phonetic_index:
-            return self._phonetic_index[pkey], 0.88
-
-        # 5. Fuzzy
-        return self._fuzzy_find(ocr_text, fuzzy_threshold)
+        # 3. Fuzzy
+        return self._fuzzy_find(stripped, fuzzy_threshold)
 
     def find_with_method(
-        self, ocr_text: str, fuzzy_threshold: int = 85
+        self, ocr_text: str, fuzzy_threshold: int = 75
     ) -> tuple[Optional[str], float, str]:
         """
-        find() ile aynı ama eşleşme yöntemini de döndürür.
+        find() ile aynı, ek olarak eşleşme yöntemini döndürür.
 
         Returns:
             (canonical_name, score, method)
-            method: "hardcoded" | "exact_db" | "parts" | "phonetic" | "fuzzy" | ""
+            method: "hardcoded" | "exact_db" | "fuzzy" | ""
         """
         if not ocr_text or not ocr_text.strip():
             return None, 0.0, ""
 
-        key = _normalize_key(ocr_text.replace(' ', ''))
+        stripped = ocr_text.strip()
+        key = _normalize_key(stripped.replace(' ', ''))
 
+        # 1. Hardcoded
         if key in self._hardcoded:
             return self._hardcoded[key], 1.0, "hardcoded"
 
-        entry = self._db_first.get(key) or self._db_surname.get(key)
-        if entry:
-            return entry.name, 1.0, "exact_db"
+        # 2 kelime minimum
+        if len(stripped.split()) < 2:
+            return None, 0.0, ""
 
-        parts = ocr_text.strip().split()
-        if len(parts) > 1:
-            fixed, changed = self._fix_parts(parts, fuzzy_threshold)
-            if changed:
-                return ' '.join(fixed), 0.9, "parts"
+        # 2. Exact match
+        if key in self._norm_to_canonical:
+            return self._norm_to_canonical[key], 1.0, "exact_db"
 
-        pkey = _phonetic_key(ocr_text.replace(' ', ''))
-        if pkey in self._phonetic_index:
-            return self._phonetic_index[pkey], 0.88, "phonetic"
-
-        canonical, score = self._fuzzy_find(ocr_text, fuzzy_threshold)
+        canonical, score = self._fuzzy_find(stripped, fuzzy_threshold)
         return canonical, score, "fuzzy" if canonical else ""
 
-    def _fix_parts(
-        self, parts: list[str], threshold: int
-    ) -> tuple[list[str], bool]:
-        """Her kelimeyi ayrı ayrı DB'den düzelt."""
-        fixed = []
-        changed = False
-        for part in parts:
-            pk = _normalize_key(part)
-            # Hardcoded
-            if pk in self._hardcoded:
-                fixed.append(self._hardcoded[pk])
-                changed = True
-                continue
-            # DB
-            entry = self._db_first.get(pk) or self._db_surname.get(pk)
-            if entry:
-                fixed.append(entry.name)
-                if entry.name != part:
-                    changed = True
-            else:
-                # Fuzzy — only when no exact DB match found
-                candidate, score = self._fuzzy_find(part, threshold)
-                if candidate and score >= threshold / 100.0:
-                    fixed.append(candidate)
-                    changed = True
-                else:
-                    fixed.append(part)
-        return fixed, changed
+    def correct_line(self, line: str) -> str:
+        """
+        Tek OCR satırını düzelt.
+        score >= 0.85 ise düzeltilmiş canonical ismi döndür, altında orijinal.
+        """
+        stripped = line.strip()
+        if not stripped:
+            return line
+        canonical, score = self.find(stripped)
+        if canonical and score >= 0.85:
+            return canonical
+        return line
 
     def _fuzzy_find(
         self, text: str, threshold: int
     ) -> tuple[Optional[str], float]:
-        """RapidFuzz ile en yakın canonical ismi bul."""
-        if not HAS_RAPIDFUZZ:
-            return None, 0.0
-        if not self._all_names:
+        """
+        RapidFuzz token_sort_ratio ile en yakın IMDB ismini bul.
+
+        token_sort_ratio seçildi çünkü:
+        - Kelime sırası farkını tolere eder (Serezli Nisa == Nisa Serezli)
+        - WRatio'nun partial_ratio substring tuzağına düşmez
+          (WRatio, 'Nida' kısa ismini 'Nida Sererli' sorgusuna ~90 verir)
+        - Benzer uzunluktaki isimlerde edit distance oranını doğru yansıtır
+        """
+        if not HAS_RAPIDFUZZ or not self._names_list:
             return None, 0.0
         result = rf_process.extractOne(
-            text, self._all_names,
-            scorer=fuzz.WRatio,
-            score_cutoff=threshold
+            text, self._names_list,
+            scorer=fuzz.token_sort_ratio,
+            score_cutoff=threshold,
         )
         if result:
             return result[0], round(result[1] / 100.0, 3)
@@ -627,62 +363,23 @@ class TurkishNameDB:
     def _fuzzy_find_top2(
         self, text: str, threshold: int = 0
     ) -> list[tuple[str, float]]:
-        """RapidFuzz ile en yakın 2 canonical ismi döndür.
-
-        _fuzzy_find()'ın imzasını/kontratını değiştirmeden üst-2 aday
-        almanın ayrı yolu. Mevcut çağrı noktaları etkilenmez.
-
-        Args:
-            text: OCR metni
-            threshold: Minimum skor (0–100 arası); 0 = kısıtsız
-
-        Returns:
-            En fazla 2 elemanlı liste: [(canonical_name, score_0_to_1), ...]
-            RapidFuzz yoksa veya aday bulunamazsa boş liste.
-        """
-        if not HAS_RAPIDFUZZ:
-            return []
-        if not self._all_names:
+        """RapidFuzz ile en yakın 2 IMDB ismini döndür."""
+        if not HAS_RAPIDFUZZ or not self._names_list:
             return []
         results = rf_process.extract(
-            text, self._all_names,
-            scorer=fuzz.WRatio,
+            text, self._names_list,
+            scorer=fuzz.token_sort_ratio,
             score_cutoff=threshold,
             limit=2,
         )
         return [(r[0], round(r[1] / 100.0, 3)) for r in results]
 
-    def correct_line(self, line: str) -> str:
-        """
-        Tek OCR satırını düzelt.
-        Önce birleşik isim mi diye bak, sonra find() ile düzelt.
-        score >= 0.85 ise düzeltilmiş, altında orijinal.
-        """
-        stripped = line.strip()
-        if not stripped:
-            return line
-
-        # Boşluk yoksa → birleşik isim adayı
-        if ' ' not in stripped and len(stripped) > 8:
-            parts = self.split_concatenated(stripped)
-            if len(parts) > 1:
-                return ' '.join(parts)
-
-        canonical, score = self.find(stripped)
-        if canonical and score >= 0.85:
-            return canonical
-        return line
-
-    # ─────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────
     # Pipeline entegrasyon yardımcıları
-    # ─────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────
 
     def repair_ocr_lines(self, ocr_lines: list) -> tuple[list, int]:
-        """
-        pipeline_runner._repair_turkish() için drop-in replacement.
-        ocr_lines: list of dict veya OCRLine nesneleri
-        Returns: (repaired_lines, repair_count)
-        """
+        """pipeline_runner için drop-in replacement."""
         repaired = 0
         for line in ocr_lines:
             if isinstance(line, dict):
@@ -706,9 +403,7 @@ class TurkishNameDB:
         return ocr_lines, repaired
 
     def repair_layout_pairs(self, layout_pairs: list) -> tuple[list, int]:
-        """
-        pipeline_runner._repair_layout_pairs() için drop-in replacement.
-        """
+        """pipeline_runner için drop-in replacement."""
         repaired = 0
         for pair in layout_pairs:
             original = getattr(pair, 'actor_name', '')
@@ -720,13 +415,116 @@ class TurkishNameDB:
                 repaired += 1
         return layout_pairs, repaired
 
+    # ─────────────────────────────────────────────────────────────────
+    # Geriye dönük uyumluluk stub'ları
+    # ─────────────────────────────────────────────────────────────────
+
+    def is_first_name(self, text: str) -> bool:
+        """Stub: IMDB ad/soyad ayrımı yapmaz, is_name() olarak davranır."""
+        return self.is_name(text)
+
+    def is_surname(self, text: str) -> bool:
+        """Stub: IMDB ad/soyad ayrımı yapmaz, is_name() olarak davranır."""
+        return self.is_name(text)
+
+    def gender(self, text: str) -> str:
+        """Stub: IMDB cinsiyet bilgisi içermez."""
+        return '?'
+
+    def check_swap_risk(self, left_token: str, right_token: str) -> bool:
+        """Stub: IMDB ad/soyad tipi olmadığından swap tespiti yapılamaz."""
+        return False
+
+    def _fix_parts(self, parts: list[str], threshold: int = 85) -> tuple[list[str], bool]:
+        """
+        Her token için: hardcoded → exact_db → fuzzy.
+        Fuzzy yalnızca DB'de bulunamazsa çağrılır (BUG-ANALYZE-02 düzeltmesi).
+        Returns (fixed_parts, changed_flag).
+        """
+        fixed = []
+        changed = False
+        for part in parts:
+            key = _normalize_key(part.replace(" ", ""))
+
+            # 1. Hardcoded
+            if key in self._hardcoded:
+                canonical = self._hardcoded[key]
+                fixed.append(canonical)
+                if canonical != part:
+                    changed = True
+                continue
+
+            # 2. Exact DB match
+            if key in self._norm_to_canonical:
+                canonical = self._norm_to_canonical[key]
+                fixed.append(canonical)
+                if canonical != part:
+                    changed = True
+                continue
+
+            # 3. Fuzzy (sadece DB'de bulunamazsa)
+            result, _ = self._fuzzy_find(part, threshold)
+            if result and result != part:
+                fixed.append(result)
+                changed = True
+            else:
+                fixed.append(part)
+
+        return fixed, changed
+
+    def split_concatenated(self, text: str, max_parts: int = 3) -> list[str]:
+        """Birleşik ismi parçalara ayır; hardcoded tablosundan canonical split yapar."""
+        if not text:
+            return [text]
+        stripped = text.strip()
+        key = _normalize_key(stripped.replace(" ", ""))
+        if key in self._hardcoded:
+            canonical = self._hardcoded[key]
+            parts = canonical.split()
+            if len(parts) >= 2:
+                return parts[:max_parts]
+        return [stripped]
+
+    # ─────────────────────────────────────────────────────────────────
+    # Dunder
+    # ─────────────────────────────────────────────────────────────────
+
     def __len__(self) -> int:
-        return len(self._db_first) + len(self._db_surname)
+        return len(self._norm_to_canonical)
 
     def __repr__(self) -> str:
-        return (
-            f"TurkishNameDB("
-            f"first={len(self._db_first):,}, "
-            f"surname={len(self._db_surname):,}, "
-            f"hardcoded={len(self._hardcoded)})"
-        )
+        return f"TurkishNameDB(imdb={len(self._norm_to_canonical):,}, hardcoded={len(self._hardcoded)})"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Singleton API  — uygulama ömrü boyunca tek örnek, RAM'de kalır
+# ─────────────────────────────────────────────────────────────────────────────
+
+import threading as _threading
+
+_SINGLETON: "TurkishNameDB | None" = None
+_SINGLETON_LOCK = _threading.Lock()
+
+
+def get_instance(log_cb=None) -> "TurkishNameDB":
+    """Global tekil örneği döndürür; ilk çağrıda yükler (thread-safe)."""
+    global _SINGLETON
+    if _SINGLETON is not None:
+        return _SINGLETON
+    with _SINGLETON_LOCK:
+        if _SINGLETON is None:
+            _SINGLETON = TurkishNameDB(log_cb=log_cb)
+    return _SINGLETON
+
+
+def start_preload(log_cb=None) -> None:
+    """Arka planda yüklemeyi başlatır; birden fazla kez çağrılabilir (idempotent)."""
+    if _SINGLETON is not None:
+        return  # zaten yüklü
+    t = _threading.Thread(
+        target=get_instance,
+        kwargs={"log_cb": log_cb},
+        daemon=True,
+        name="NameDB-Preload",
+    )
+    t.start()

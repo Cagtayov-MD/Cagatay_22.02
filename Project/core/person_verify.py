@@ -13,22 +13,6 @@ Kullanım:
 
 import re
 
-# TMDB department → VİTOS rol eşleştirmesi
-_TMDB_DEPT_TO_ROLE: dict[str, str | None] = {
-    "directing": "YÖNETMEN",
-    "writing": "SENARYO",
-    "camera": "GÖRÜNTÜ YÖNETMENİ",
-    "editing": "KURGU",
-    "production": "YAPIMCI",
-    "acting": "OYUNCU",
-    "sound": None,
-    "art": None,
-    "costume & make-up": None,
-    "visual effects": None,
-    "lighting": None,
-    "crew": None,
-}
-
 # Asgari kişi ismi kriterleri
 _MIN_NAME_LEN = 3
 _MAX_NAME_WORDS = 5
@@ -67,6 +51,7 @@ _NON_PERSON_EXACT: frozenset[str] = frozenset({
 _NON_PERSON_CONTAINS: frozenset[str] = frozenset({
     "ministere", "ministre", "les eleves", "ecole publique",
     "une coproduction", "les films", "copyright",
+    "with the assistance of", "no animals were harmed", "no animal was harmed",
 })
 
 # İngilizce/Türkçe/Fransızca jenerik etiketleri (tek veya çok kelime)
@@ -94,7 +79,7 @@ def _is_likely_non_person(name: str) -> bool:
             return True
 
     words = low.split()
-    if len(words) > _MAX_NAME_WORDS:
+    if len(words) > 4:
         return True
 
     if _ROLE_TITLE_PATTERNS.match(low):
@@ -132,7 +117,7 @@ class PersonVerifier:
         pv = PersonVerifier(tmdb_client=client, log_cb=log)
         result = pv.verify_name("Joseph Guerin")
         # {"name": "Joseph Guerin", "found": True, "tmdb_person_id": ...,
-        #  "known_for_department": "camera", "mapped_role": "GÖRÜNTÜ YÖNETMENİ",
+        #  "known_for_department": "camera",
         #  "confidence": 0.9, "source": "tmdb_person"}
 
         verified_crew = pv.verify_crew_list(crew_entries)
@@ -154,7 +139,7 @@ class PersonVerifier:
         Önce hızlı filtreden geçirir (rol başlığı/mekan/kısa):
           - Eğer non-person → found=False, reason="non_person_term"
         Sonra TMDB'de arar:
-          - Bulunduysa → found=True + department + mapped_role
+          - Bulunduysa → found=True + canonical name
           - Bulunamadıysa → found=False, reason="not_found"
 
         Returns:
@@ -163,7 +148,6 @@ class PersonVerifier:
                 "found": bool,
                 "tmdb_person_id": int | None,
                 "known_for_department": str | None,
-                "mapped_role": str | None,   # _TMDB_DEPT_TO_ROLE'den
                 "confidence": float,
                 "source": str,               # "tmdb_person" | "non_person_filter" | "no_client"
                 "reason": str,
@@ -183,7 +167,6 @@ class PersonVerifier:
                 "found": False,
                 "tmdb_person_id": None,
                 "known_for_department": None,
-                "mapped_role": None,
                 "confidence": 0.0,
                 "source": "non_person_filter",
                 "reason": "non_person_term",
@@ -199,7 +182,6 @@ class PersonVerifier:
                 "found": is_person,
                 "tmdb_person_id": None,
                 "known_for_department": None,
-                "mapped_role": None,
                 "confidence": 0.4 if is_person else 0.1,
                 "source": "no_client",
                 "reason": "structural_guess",
@@ -217,7 +199,6 @@ class PersonVerifier:
                 "found": False,
                 "tmdb_person_id": None,
                 "known_for_department": None,
-                "mapped_role": None,
                 "confidence": 0.3,
                 "source": "tmdb_error",
                 "reason": f"api_error:{exc}",
@@ -231,7 +212,6 @@ class PersonVerifier:
                 "found": False,
                 "tmdb_person_id": None,
                 "known_for_department": None,
-                "mapped_role": None,
                 "confidence": 0.2,
                 "source": "tmdb_person",
                 "reason": "not_found",
@@ -241,13 +221,11 @@ class PersonVerifier:
 
         best = results[0]
         dept_raw = (best.get("known_for_department") or "").lower()
-        mapped_role = _TMDB_DEPT_TO_ROLE.get(dept_raw)
         result = {
             "name": best.get("name", name),
             "found": True,
             "tmdb_person_id": best.get("id"),
             "known_for_department": dept_raw or None,
-            "mapped_role": mapped_role,
             "confidence": 0.9,
             "source": "tmdb_person",
             "reason": "found",

@@ -122,10 +122,8 @@ def _get_name_db():
     global _name_db
     if _name_db is None:
         try:
-            from core.turkish_name_db import TurkishNameDB
-            from config.runtime_paths import resolve_name_db_path
-            db_path = resolve_name_db_path()
-            _name_db = TurkishNameDB(db_path=db_path)
+            from core.turkish_name_db import get_instance
+            _name_db = get_instance()
         except Exception:
             _name_db = False   # Yükleme başarısız — False olarak işaretle
     return _name_db if _name_db is not False else None

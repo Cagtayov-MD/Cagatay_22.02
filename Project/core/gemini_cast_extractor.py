@@ -128,12 +128,19 @@ If no confident person found for a role, use an empty list [].
 """
 
 class GeminiCastExtractor:
-    """Cast/crew ayıklama için Gemini 2.5 Flash kullanır; OCR metinden kişi isimlerini ayıklar."""
+    """Cast/crew ayıklama için LLM kullanır (varsayılan: Gemini; openai da desteklenir)."""
 
-    def __init__(self, api_key: str, model: str = "gemini-2.5-flash", log_cb=None):
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "gemini-2.5-flash",
+        log_cb=None,
+        provider: str = "gemini",   # "gemini" | "openai"
+    ):
         self._api_key = api_key
         self._model = model
         self._log_cb = log_cb
+        self._provider = provider.lower()
         self.timed_out: bool = False
 
     def _log(self, msg: str) -> None:
@@ -156,13 +163,13 @@ class GeminiCastExtractor:
             return {}
 
         if not self._api_key:
-            self._log("  [Gemini] API key yok — atlanıyor")
+            self._log(f"  [LLM/{self._provider}] API key yok — atlanıyor")
             return {}
 
         # Çok büyük OCR listesi → ilk max_lines satırla sınırla
         if len(ocr_lines) > max_lines:
             ocr_lines = ocr_lines[:max_lines]
-            self._log(f"  [Gemini] OCR satırı sınırlandı: {max_lines}")
+            self._log(f"  [LLM/{self._provider}] OCR satırı sınırlandı: {max_lines}")
 
         ocr_text = "\n".join(line.strip() for line in ocr_lines if line and line.strip())
         if not ocr_text:
@@ -175,34 +182,41 @@ Bu başlığı referans al. OCR satırlarında farklı bir başlık görünse bi
 OCR'dan okunan kısa/anlamsız metin parçaları (örn. "XX", "AB", "CD") film başlığı DEĞİLDİR.
 
 """
-            self._log(f"  [Gemini] Cast ayıklama: '{film_title}'")
+            self._log(f"  [LLM/{self._provider}] Cast ayıklama: '{film_title}'")
         else:
             title_section = "Film başlığı bilinmiyor.\n\n"
-            self._log("  [Gemini] Cast ayıklama başlatılıyor...")
+            self._log(f"  [LLM/{self._provider}] Cast ayıklama başlatılıyor...")
 
         prompt = _EXTRACT_PROMPT + title_section + "GİRDİ:\n" + ocr_text
 
-        # Timeout tespiti için açık bayrak — log mesajı yerine doğrudan kontrol
         _timed_out_flag: list[bool] = []
-
         try:
-            response = _llm._gemini_generate(
-                prompt,
-                api_key=self._api_key,
-                model=self._model,
-                timeout=_TIMEOUT_SEC,
-                log_cb=self._log_cb,
-                timeout_flag=_timed_out_flag,
-            )
+            if self._provider == "openai":
+                response = _llm._openai_generate(
+                    prompt,
+                    api_key=self._api_key,
+                    model=self._model,
+                    timeout=_TIMEOUT_SEC,
+                    log_cb=self._log_cb,
+                )
+            else:
+                response = _llm._gemini_generate(
+                    prompt,
+                    api_key=self._api_key,
+                    model=self._model,
+                    timeout=_TIMEOUT_SEC,
+                    log_cb=self._log_cb,
+                    timeout_flag=_timed_out_flag,
+                )
         except Exception as e:
-            self._log(f"  [Gemini] API hatası: {e}")
+            self._log(f"  [LLM/{self._provider}] API hatası: {e}")
             return {}
         finally:
             if _timed_out_flag:
                 self.timed_out = True
 
         if not response:
-            self._log("  [Gemini] Boş yanıt")
+            self._log(f"  [LLM/{self._provider}] Boş yanıt")
             return {}
 
         return self._parse_response(response)
@@ -235,13 +249,13 @@ OCR'dan okunan kısa/anlamsız metin parçaları (örn. "XX", "AB", "CD") film b
         if not ocr_scores:
             return {}
         if not self._api_key:
-            self._log("  [Gemini] API key yok — crew skor ayıklama atlanıyor")
+            self._log(f"  [LLM/{self._provider}] API key yok — crew skor ayıklama atlanıyor")
             return {}
 
         # Büyük listeler için sınırla
         entries = ocr_scores[:max_entries]
         if len(ocr_scores) > max_entries:
-            self._log(f"  [Gemini] OCR skor sınırlandı: {max_entries}")
+            self._log(f"  [LLM/{self._provider}] OCR skor sınırlandı: {max_entries}")
 
         # Compact JSON payload — sadece gerekli alanlar
         payload = json.dumps(entries, ensure_ascii=False)
@@ -259,29 +273,38 @@ OCR'dan okunan kısa/anlamsız metin parçaları (örn. "XX", "AB", "CD") film b
         )
 
         if film_title:
-            self._log(f"  [Gemini] Crew skor ayıklama: '{film_title}'")
+            self._log(f"  [LLM/{self._provider}] Crew skor ayıklama: '{film_title}'")
         else:
-            self._log("  [Gemini] Crew skor ayıklama başlatılıyor...")
+            self._log(f"  [LLM/{self._provider}] Crew skor ayıklama başlatılıyor...")
 
         _timed_out_flag: list[bool] = []
         try:
-            response = _llm._gemini_generate(
-                prompt,
-                api_key=self._api_key,
-                model=self._model,
-                timeout=_TIMEOUT_SEC,
-                log_cb=self._log_cb,
-                timeout_flag=_timed_out_flag,
-            )
+            if self._provider == "openai":
+                response = _llm._openai_generate(
+                    prompt,
+                    api_key=self._api_key,
+                    model=self._model,
+                    timeout=_TIMEOUT_SEC,
+                    log_cb=self._log_cb,
+                )
+            else:
+                response = _llm._gemini_generate(
+                    prompt,
+                    api_key=self._api_key,
+                    model=self._model,
+                    timeout=_TIMEOUT_SEC,
+                    log_cb=self._log_cb,
+                    timeout_flag=_timed_out_flag,
+                )
         except Exception as e:
-            self._log(f"  [Gemini] API hatası (crew skor): {e}")
+            self._log(f"  [LLM/{self._provider}] API hatası (crew skor): {e}")
             return {}
         finally:
             if _timed_out_flag:
                 self.timed_out = True
 
         if not response:
-            self._log("  [Gemini] Boş yanıt (crew skor)")
+            self._log(f"  [LLM/{self._provider}] Boş yanıt (crew skor)")
             return {}
 
         return self._parse_crew_score_response(response)
@@ -306,7 +329,7 @@ OCR'dan okunan kısa/anlamsız metin parçaları (örn. "XX", "AB", "CD") film b
         try:
             data = json.loads(text)
         except (json.JSONDecodeError, ValueError) as e:
-            self._log(f"  [Gemini] JSON parse hatası (crew skor): {e}")
+            self._log(f"  [LLM/{self._provider}] JSON parse hatası (crew skor): {e}")
             return {}
 
         if not isinstance(data, dict):
@@ -345,7 +368,7 @@ OCR'dan okunan kısa/anlamsız metin parçaları (örn. "XX", "AB", "CD") film b
         try:
             data = json.loads(text)
         except (json.JSONDecodeError, ValueError) as e:
-            self._log(f"  [Gemini] JSON parse hatası: {e}")
+            self._log(f"  [LLM/{self._provider}] JSON parse hatası: {e}")
             return {}
 
         if not isinstance(data, dict):

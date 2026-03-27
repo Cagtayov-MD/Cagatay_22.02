@@ -33,6 +33,39 @@ class VideoQueueManager:
         self._items: list[VideoItem] = []
         self._lock = threading.RLock()
 
+    def ensure_videos(self, paths: list[str]) -> int:
+        """
+        Video dosyalarını kuyruğa al veya tamamlanan/hatalı kayıtları yeniden beklemeye çek.
+        PROCESSING durumundaki öğe olduğu gibi bırakılır.
+        """
+        with self._lock:
+            changed = 0
+            existing = {item.path: item for item in self._items}
+            for p in paths:
+                p = str(Path(p).resolve())
+                ext = Path(p).suffix.lower()
+                if ext not in VIDEO_EXTENSIONS or not os.path.isfile(p):
+                    continue
+
+                item = existing.get(p)
+                if item is None:
+                    xml_path = find_xml_sidecar(p) or ""
+                    self._items.append(VideoItem(path=p, xml_path=xml_path))
+                    existing[p] = self._items[-1]
+                    changed += 1
+                    continue
+
+                if item.status == VideoStatus.PROCESSING:
+                    continue
+
+                item.status = VideoStatus.PENDING
+                item.duration_sec = None
+                item.error_msg = ""
+                item.xml_path = item.xml_path or (find_xml_sidecar(p) or "")
+                changed += 1
+
+            return changed
+
     def add_videos(self, paths: list[str]) -> int:
         """Video dosyalarını kuyruğa ekle. Eklenen sayıyı döndür."""
         with self._lock:

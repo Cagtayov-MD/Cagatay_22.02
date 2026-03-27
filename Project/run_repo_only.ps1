@@ -29,12 +29,15 @@ if (!(Test-Path $mainVenvActivate)) {
 
 # 4) Repo'ya gir ve calistir
 Write-Host "Repo'ya geciliyor ve main.py baslatiliyor..." -ForegroundColor Green
+$env:PATH        = "F:\Source\ffmpeg\bin;" + $env:PATH
+$env:PYTHONUTF8  = "1"   # tum Python processleri (ana + subprocessler) UTF-8 kullanir
+$env:PYTHONIOENCODING = "utf-8"
 Set-Location $repoRoot
 
 # (Opsiyonel) Python'un nereden geldigini gorelim
 Write-Host ("Python: " + (Get-Command python).Source) -ForegroundColor DarkGray
 
-python .\main.py
+python .\main.py @args
 
 # Konsol acik kalsin
 Write-Host "`nBitti. Pencere acik kalacak." -ForegroundColor Cyan

@@ -22,6 +22,7 @@ import urllib.error
 from pathlib import Path
 
 from core._ollama_url import normalize_ollama_url
+from utils.unicode_io import imread_unicode
 
 try:
     import cv2
@@ -236,7 +237,7 @@ class VLMReader:
         """Frame'i (veya bbox crop'unu) base64'e çevir."""
         try:
             if bbox and len(bbox) == 4 and HAS_CV2 and HAS_NUMPY:
-                img = cv2.imread(str(frame_path))
+                img = imread_unicode(str(frame_path))
                 if img is not None:
                     h, w = img.shape[:2]
                     x1, y1, x2, y2 = bbox

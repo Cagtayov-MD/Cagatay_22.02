@@ -15,6 +15,7 @@ import os
 import re
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -34,6 +35,98 @@ def _norm(s: str) -> str:
     return "".join(ch for ch in (s or "").lower() if ch.isalnum())
 
 
+def _fold_text(text: str) -> str:
+    """Aksanları sadeleştirerek ASCII-benzeri karşılaştırma metni üret."""
+    nfkd = unicodedata.normalize("NFKD", text or "")
+    return "".join(ch for ch in nfkd if not unicodedata.combining(ch))
+
+
+def _name_tokens(text: str) -> List[str]:
+    folded = _fold_text(text).lower()
+    return [tok for tok in re.findall(r"[a-z0-9]+", folded) if tok]
+
+
+_MATCH_CANDIDATE_EXACT = frozenset({
+    "the", "end", "presents", "present", "featuring", "introducing",
+    "copyright", "fin", "play", "foul", "thanks", "thank",
+    "dolby", "thx", "panavision", "technicolor",
+    "director", "writer", "producer", "editor", "yönetmen",
+    "yonetmen", "oyuncu", "kamera", "kurgu", "senaryo",
+})
+
+_MATCH_CANDIDATE_CONTAINS = frozenset({
+    "all rights reserved",
+    "no animals were harmed",
+    "no animal was harmed",
+    "with the assistance of",
+    "sincere thanks",
+    "special thanks",
+    "additional assistant directors",
+    "district administration",
+    "war memorial opera",
+    "h.m.s. pinafore",
+    "seoul olympics",
+    "technicolor",
+    "panavision",
+    "dolby",
+    "copyright",
+})
+
+
+def _strong_person_name_match(query: str, choice: str, threshold: int) -> bool:
+    """OCR bozulmuş kişi isimleri için kontrollü fuzzy eşleşme."""
+    if not HAS_RAPIDFUZZ:
+        return False
+
+    query_tokens = _name_tokens(query)
+    choice_tokens = _name_tokens(choice)
+    if len(query_tokens) < 2 or len(choice_tokens) < 2:
+        return False
+
+    query_first, query_last = query_tokens[0], query_tokens[-1]
+    choice_first, choice_last = choice_tokens[0], choice_tokens[-1]
+
+    if min(len(query_first), len(choice_first)) < 4:
+        return False
+    if min(len(query_last), len(choice_last)) < 5:
+        return False
+    if len("".join(query_tokens)) < 10 or len("".join(choice_tokens)) < 10:
+        return False
+
+    first_ratio = fuzz.ratio(query_first, choice_first)
+    last_ratio = fuzz.ratio(query_last, choice_last)
+    full_ratio = fuzz.ratio(" ".join(query_tokens), " ".join(choice_tokens))
+
+    if first_ratio >= 92 and last_ratio >= 58 and full_ratio >= max(74, threshold - 8):
+        return True
+
+    if query_first == choice_first and last_ratio >= 62 and full_ratio >= max(76, threshold - 6):
+        return True
+
+    return False
+
+
+def _accept_fuzzy_candidate(query: str, choice: str, threshold: int) -> bool:
+    """Kısa/generic token'larda fuzzy sonucu biraz daha sıkı doğrula."""
+    if not HAS_RAPIDFUZZ:
+        return True
+
+    query_tokens = _name_tokens(query)
+    choice_tokens = _name_tokens(choice)
+    if len(query_tokens) < 2 or len(choice_tokens) < 2:
+        return True
+
+    if query_tokens[0] != choice_tokens[0]:
+        return True
+
+    query_last = query_tokens[-1]
+    choice_last = choice_tokens[-1]
+    if min(len(query_last), len(choice_last)) >= 5:
+        return True
+
+    return fuzz.ratio(query_last, choice_last) >= max(88, threshold)
+
+
 def parse_imdb_characters(characters_raw: str | None) -> list[str]:
     """IMDB characters alanını parse et: '["Malo"]' → ['Malo']"""
     if not characters_raw:
@@ -48,11 +141,17 @@ def parse_imdb_characters(characters_raw: str | None) -> list[str]:
 
 
 _TURKISH_CHARS = frozenset("çşğıöüÇŞĞİÖÜ")
+_CYRILLIC_RANGE = (0x0400, 0x04FF)
 
 
 def _is_turkish(text: str) -> bool:
     """Türkçe özel karakterler içeriyorsa True döner."""
     return bool(set(text) & _TURKISH_CHARS)
+
+
+def _is_cyrillic(text: str) -> bool:
+    """Kiril karakter içeriyorsa True döner."""
+    return any(_CYRILLIC_RANGE[0] <= ord(c) <= _CYRILLIC_RANGE[1] for c in (text or ""))
 
 
 # Şirket/organizasyon isimlerini tespit etmek için anahtar kelimeler
@@ -123,9 +222,98 @@ def _fuzzy_match(query: str, choices: List[str], threshold: int = 85) -> Optiona
     if HAS_RAPIDFUZZ:
         res = rf_process.extractOne(query, choices, scorer=fuzz.WRatio,
                                     score_cutoff=threshold)
-        if res:
+        if res and _accept_fuzzy_candidate(query, res[0], threshold):
             return res[0]
+        folded_query = _fold_text(query)
+        folded_choices = [_fold_text(c) for c in choices]
+        folded_res = rf_process.extractOne(
+            folded_query,
+            folded_choices,
+            scorer=fuzz.WRatio,
+            score_cutoff=max(75, threshold - 3),
+        )
+        if folded_res:
+            candidate = choices[folded_choices.index(folded_res[0])]
+            if _accept_fuzzy_candidate(query, candidate, threshold):
+                return candidate
+        for choice in choices:
+            if _strong_person_name_match(query, choice, threshold):
+                return choice
     return None
+
+
+def _is_reasonable_match_candidate(name: str) -> bool:
+    """TMDB/IMDb eşleşmesine gönderilecek aday ismi filtrele."""
+    raw = (name or "").strip()
+    if len(raw) < 3:
+        return False
+    words_raw = raw.split()
+    if _looks_like_company(raw):
+        looks_like_titlecase_person = (
+            len(words_raw) >= 2
+            and not raw.isupper()
+            and all(word and word[0].isupper() for word in words_raw)
+        )
+        if not looks_like_titlecase_person:
+            return False
+    if any(ch.isdigit() for ch in raw):
+        return False
+
+    lowered = _fold_text(raw).lower().strip()
+    if lowered in _MATCH_CANDIDATE_EXACT:
+        return False
+    if any(term in lowered for term in _MATCH_CANDIDATE_CONTAINS):
+        return False
+
+    try:
+        from core.name_verify import is_valid_person_name as _is_valid_person_name
+    except Exception:
+        _is_valid_person_name = None
+
+    if _is_valid_person_name is not None and _is_valid_person_name(raw):
+        return True
+
+    words = _name_tokens(raw)
+    if not words or len(words) > 4:
+        return False
+    if len(words) == 1:
+        return len(words[0]) >= 4 and words[0] not in _MATCH_CANDIDATE_EXACT
+    if sum(1 for tok in words if tok in _MATCH_CANDIDATE_EXACT) >= len(words) - 1:
+        return False
+    return True
+
+
+def _filter_match_candidates(
+    names: List[str],
+    *,
+    label: str,
+    log_cb=None,
+) -> List[str]:
+    """Ham OCR adayı listesinden sadece eşleşmede kullanılacak isimleri seç."""
+    filtered: List[str] = []
+    seen: set[str] = set()
+    rejected: List[str] = []
+
+    for raw_name in names or []:
+        name = (raw_name or "").strip()
+        if not name:
+            continue
+        norm_name = _norm(name)
+        if not norm_name or norm_name in seen:
+            continue
+        seen.add(norm_name)
+        if _is_reasonable_match_candidate(name):
+            filtered.append(name)
+        else:
+            rejected.append(name)
+
+    if log_cb and rejected:
+        log_cb(
+            f"  [TMDB] {label} aday filtresi: {len(names or [])} → {len(filtered)} "
+            f"(elenen örnekler: {rejected[:5]})"
+        )
+
+    return filtered
 
 
 @dataclass
@@ -389,8 +577,30 @@ class TMDBVerify:
             if len(name) >= 3 and name not in director_names and name not in cast_names:
                 crew_names.append(name)
 
+        cast_names = _filter_match_candidates(cast_names, label="cast", log_cb=self._log)
+        director_names = _filter_match_candidates(
+            director_names, label="yönetmen", log_cb=self._log
+        )
+        crew_names = _filter_match_candidates(crew_names, label="crew", log_cb=self._log)
+
+        cdata["_tmdb_match_candidates"] = {
+            "cast": list(cast_names),
+            "directors": list(director_names),
+            "crew": list(crew_names),
+        }
+
+        original_title_input = (
+            (cdata.get("original_title") or "").strip() or
+            (cdata.get("original_name") or "").strip() or
+            (cdata.get("_gemini_suggested_title") or "").strip()
+        )
+
         if not cast_names and not director_names and not crew_names:
-            return TMDBVerifyResult(False, "no cast or directors to verify")
+            if not film_title and not original_title_input:
+                return TMDBVerifyResult(False, "no cast or directors to verify")
+            self._log(
+                "  [TMDB] Kişi adayları filtrede elendi; yalnızca başlık kanıtı ile arama deneniyor"
+            )
 
         if not cast_names:
             if director_names or crew_names:
@@ -403,61 +613,6 @@ class TMDBVerify:
             self._log(f"  [TMDB] ⚠️ Anormal cast sayısı: {len(cast_names)} — muhtemelen OCR çöpü")
             self._log(f"  [TMDB] Sadece en güvenilir ilk 50 isim kullanılıyor")
             cast_names = cast_names[:50]
-
-        # ── cast_names ön-filtreleme: Şirket/organizasyon isimlerini çıkar ──
-        company_filtered = [n for n in cast_names if not _looks_like_company(n)]
-        if len(cast_names) != len(company_filtered):
-            self._log(f"  [TMDB] Şirket filtresi: {len(cast_names)} → {len(company_filtered)} isim")
-            removed = [n for n in cast_names if n not in set(company_filtered)]
-            if removed[:5]:
-                self._log(f"  [TMDB] Şirket olarak elenenler: {removed[:5]}")
-        cast_names = company_filtered
-
-        # ── İsim kalite filtresi: OCR çöpünü TMDB'ye göndermeden ele ──
-        def _is_plausible_name(name: str) -> bool:
-            """İsim olarak makul mü? Sesli harf, kelime yapısı kontrolü."""
-            alpha_chars = [c for c in name.lower() if c.isalpha()]
-            if not alpha_chars:
-                return False
-            vowels = sum(1 for c in alpha_chars if c in 'aeıioöuü')
-            vowel_ratio = vowels / len(alpha_chars)
-            if vowel_ratio < 0.15:
-                return False
-            if vowel_ratio > 0.80:
-                return False
-            if name.isupper() and ' ' not in name and len(name) > 12:
-                return False
-            noise_words = {
-                'filme', 'filmer', 'cinema', 'telecinco', 'production', 'studio', 'channel',
-                'mk2', 'productions', 'musicales', 'musicale', 'editions', 'edition', 'sa', 'ltd',
-            }
-            if name.lower().strip() in noise_words:
-                return False
-            # Şirket/organizasyon isimlerini reddet (çift güvence — company_filtered adımından sonra)
-            if _looks_like_company(name):
-                return False
-            return True
-
-        qualified_names = [n for n in cast_names if _is_plausible_name(n)]
-
-        if len(cast_names) != len(qualified_names):
-            self._log(f"  [TMDB] İsim kalite filtresi: {len(cast_names)} → {len(qualified_names)} isim")
-            qualified_set = set(qualified_names)
-            rejected = [n for n in cast_names if n not in qualified_set]
-            if rejected[:5]:
-                self._log(f"  [TMDB] Elenen örnekler: {rejected[:5]}")
-
-        cast_names = qualified_names
-
-        if not cast_names and not director_names and not crew_names:
-            return TMDBVerifyResult(False, "no cast or directors to verify")
-
-        # ── Orijinal başlık: cdata'dan al (OCR/Gemini tarafından çıkarılmış olabilir) ──
-        original_title_input = (
-            (cdata.get("original_title") or "").strip() or
-            (cdata.get("original_name") or "").strip() or
-            (cdata.get("_gemini_suggested_title") or "").strip()
-        )
 
         # ── OCR yılı (Strateji B crew kıyaslaması için) ──
         _ocr_year_pre = 0
@@ -542,46 +697,34 @@ class TMDBVerify:
                 except ValueError:
                     pass
 
-        # ── Yüksek güven: reverse validation'ı atla ──
-        _total_cast = len(cast_names)
-        _hit_ratio = (_forward_hits / _total_cast) if _total_cast > 0 else 0.0
-        if _hit_ratio >= 0.90 and _forward_hits >= 3:
-            self._log(
-                f"  [TMDB] Yüksek güven: {_forward_hits}/{_total_cast} = "
-                f"{_hit_ratio*100:.0f}% eşleşme → ters doğrulama atlandı"
-            )
-            _rv_accepted = True
-            _rv_score = 0.0
-            _rv_breakdown = {"skipped": True, "reason": "high_confidence_bypass"}
-        else:
-            # ── Ters doğrulama ──
-            _rv_accepted, _rv_score, _rv_breakdown = self._reverse_validate(
-                ocr_title=film_title,
-                ocr_cast_names=cast_names,
-                ocr_director_names=director_names,
-                ocr_year=_ocr_year,
-                tmdb_entry=tmdb_entry,
-                credits_data=credits_data,
-                forward_hits=_forward_hits,
-                forward_misses=_forward_misses,
-            )
+        # ── Ters doğrulama HER ZAMAN çalışacak ──
+        _rv_accepted, _rv_score, _rv_breakdown = self._reverse_validate(
+            ocr_title=film_title,
+            ocr_cast_names=cast_names,
+            ocr_director_names=director_names,
+            ocr_year=_ocr_year,
+            tmdb_entry=tmdb_entry,
+            credits_data=credits_data,
+            forward_hits=_forward_hits,
+            forward_misses=_forward_misses,
+        )
 
-            if not _rv_accepted:
-                if person_evidence:
-                    self._log(
-                        f"  [TMDB] Ters doğrulama reddetti ama "
-                        f"{len(person_evidence)} kişi kanıtı korunuyor"
-                    )
-                return TMDBVerifyResult(
-                    updated=False,
-                    reason="reverse_validation_rejected",
-                    matched_title=tmdb_title,
-                    matched_id=0,
-                    reverse_score=_rv_score,
-                    reverse_breakdown=_rv_breakdown,
-                    rejected=True,
-                    person_evidence=person_evidence,
+        if not _rv_accepted:
+            if person_evidence:
+                self._log(
+                    f"  [TMDB] Ters doğrulama reddetti ama "
+                    f"{len(person_evidence)} kişi kanıtı korunuyor"
                 )
+            return TMDBVerifyResult(
+                updated=False,
+                reason="reverse_validation_rejected",
+                matched_title=tmdb_title,
+                matched_id=0,
+                reverse_score=_rv_score,
+                reverse_breakdown=_rv_breakdown,
+                rejected=True,
+                person_evidence=person_evidence,
+            )
 
         # Cast kanonikleştir
         updated, hits, misses = self._canonicalize(cdata, credits_data)
@@ -685,12 +828,17 @@ class TMDBVerify:
         director_names = director_names or []
         crew_names = crew_names or []
         ocr_crew_dicts = ocr_crew_dicts or []
+        cast_names = _filter_match_candidates(cast_names, label="cast", log_cb=self._log)
+        director_names = _filter_match_candidates(
+            director_names, label="yönetmen", log_cb=self._log
+        )
+        crew_names = _filter_match_candidates(crew_names, label="crew", log_cb=self._log)
 
         def _director_matches_crew(credits: dict) -> bool:
             """TMDB crew'unda yönetmen eşleşmesi var mı?"""
             tmdb_crew = self._extract_names(credits, section="crew")
             return any(
-                _fuzzy_match(d, tmdb_crew, threshold=82)
+                _fuzzy_match(d, tmdb_crew, threshold=80)
                 for d in director_names
             )
 
@@ -791,8 +939,6 @@ class TMDBVerify:
         _ORIG_CAST_DIVISOR = 3   # orijinal başlık için dinamik eşik: cast / bu sayı
 
         title_sources = []
-        if film_title:
-            title_sources.append(("primary", film_title, 2))
         if _orig_usable:
             orig_min_cast = (
                 max(_ORIG_MIN_CAST_ABS, len(cast_names) // _ORIG_CAST_DIVISOR)
@@ -800,6 +946,8 @@ class TMDBVerify:
                 else 2
             )
             title_sources.append(("original", original_title, orig_min_cast))
+        if film_title:
+            title_sources.append(("primary", film_title, 2))
         elif original_title and not _orig_usable:
             self._log(f"  [TMDB] Orijinal başlık yerel başlıkla aynı, tekrar aranmıyor")
 
@@ -826,16 +974,18 @@ class TMDBVerify:
                     matched = self._count_matches(cast_names, tmdb_names)
                     self._log(f"  [TMDB]   → {matched}/{len(cast_names)} oyuncu eşleşti")
                     _via = "title" if _src_label == "primary" else "original_title"
-                    if matched >= _min_cast:
-                        self._log(
-                            f"  [TMDB] Strateji A başarılı: '{title}' — "
-                            f"başlık + {matched} oyuncu eşleşti"
-                        )
-                        return r, kind, _via, []
+                    # Strateji A: sadece-cast eşleşmesi devre dışı —
+                    # başlık + yönetmen zorunlu (Sorun 5: Flashdance %64 kayıp giderme)
                     if matched >= 1 and director_names and _director_matches_crew(credits):
                         self._log(
                             f"  [TMDB] Strateji A başarılı: '{title}' — "
                             f"başlık + {matched} oyuncu + yönetmen eşleşti"
+                        )
+                        return r, kind, _via, []
+                    if _src_label == "original" and not director_names and matched >= _min_cast:
+                        self._log(
+                            f"  [TMDB] Strateji A başarılı: '{title}' — "
+                            f"orijinal başlık + güçlü cast eşleşmesi ({matched}/{len(cast_names)})"
                         )
                         return r, kind, _via, []
         self._log(f"  [TMDB] Strateji A başarısız")
@@ -953,11 +1103,14 @@ class TMDBVerify:
                         if HAS_RAPIDFUZZ:
                             ratio = fuzz.ratio(actor.lower(), person_name.lower())
                             if ratio < 80:
-                                self._log(
-                                    f"  [TMDB] Strateji D: '{person_name}' OCR ismiyle "
-                                    f"('{actor}') eşleşmiyor ({ratio:.0f}%) — atlanıyor"
-                                )
-                                continue
+                                name_words = [_norm(w) for w in person_name.split()]
+                                surname_match = len(_norm(actor)) >= 4 and _norm(actor) in name_words
+                                if not surname_match:
+                                    self._log(
+                                        f"  [TMDB] Strateji D: '{person_name}' OCR ismiyle "
+                                        f"('{actor}') eşleşmiyor ({ratio:.0f}%) — atlanıyor"
+                                    )
+                                    continue
                         else:
                             if _norm(actor) != _norm(person_name):
                                 continue
@@ -1198,16 +1351,30 @@ class TMDBVerify:
 
         compare_title: Optional[str] = None
         if ocr_title and tmdb_title:
-            ocr_is_tr  = _is_turkish(ocr_title)
-            tmdb_is_tr = _is_turkish(tmdb_title)
-            orig_is_tr = _is_turkish(tmdb_original_title) if tmdb_original_title else False
+            # Kiril başlıkla kıyaslama yapma — farklı alfabe, fuzzy her zaman sıfır çıkar
+            _tmdb_cyrillic = _is_cyrillic(tmdb_title)
+            _orig_cyrillic = _is_cyrillic(tmdb_original_title) if tmdb_original_title else True
 
-            # Aynı dildeki TMDB başlığını seç
-            if ocr_is_tr == tmdb_is_tr:
-                compare_title = tmdb_title
-            elif tmdb_original_title and (ocr_is_tr == orig_is_tr):
-                compare_title = tmdb_original_title
-            # else: farklı dil → atla (title_active=False, 0.0/0.0)
+            if _tmdb_cyrillic:
+                # TMDB ana başlığı Kiril → orijinal başlık Latin mi diye bak
+                if tmdb_original_title and not _orig_cyrillic:
+                    # Orijinal başlık Latin: dil eşleşmesi kontrol et
+                    ocr_is_tr  = _is_turkish(ocr_title)
+                    orig_is_tr = _is_turkish(tmdb_original_title)
+                    if ocr_is_tr == orig_is_tr:
+                        compare_title = tmdb_original_title
+                # else: her iki başlık da Kiril veya alternatif yok → compare_title=None, atla
+            else:
+                ocr_is_tr  = _is_turkish(ocr_title)
+                tmdb_is_tr = _is_turkish(tmdb_title)
+                orig_is_tr = _is_turkish(tmdb_original_title) if tmdb_original_title else False
+
+                # Aynı dildeki TMDB başlığını seç
+                if ocr_is_tr == tmdb_is_tr:
+                    compare_title = tmdb_title
+                elif tmdb_original_title and (ocr_is_tr == orig_is_tr) and not _orig_cyrillic:
+                    compare_title = tmdb_original_title
+                # else: farklı dil → atla (title_active=False, 0.0/0.0)
 
             if compare_title is not None:
                 title_active = True

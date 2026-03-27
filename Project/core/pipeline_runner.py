@@ -20,19 +20,20 @@ import os
 from pathlib import Path
 from datetime import datetime
 
-from config.runtime_paths import get_tmdb_api_key, get_gemini_api_key, resolve_name_db_path
+from core import profiler as _profiler
+
+from config.runtime_paths import get_tmdb_api_key, get_gemini_api_key
 
 from core.frame_extractor import FrameExtractor
 from core.text_filter import TextFilter
 from core.ocr_engine import OCREngine
 from core.qwen_ocr_engine import QwenOCREngine
-from core.credits_parser import CreditsParser
+from core.credits_parser import CreditsParser, _is_noise
 from core.export_engine import ExportEngine, _map_crew_to_roles
-from core.turkish_name_db import TurkishNameDB
 from core.qwen_verifier import QwenVerifier
 from core.llm_cast_filter import LLMCastFilter
 from core.vlm_reader import VLMReader
-from core.name_verify import NameVerifier
+from core.name_verify import NameVerifier, _blacklist_check, _structural_check
 from core.person_verify import PersonVerifier
 from core.xml_sidecar import resolve_xml_sidecar, XmlSidecarInfo
 from utils.stats_logger import StatsLogger
@@ -63,11 +64,12 @@ def _safe_path(path: Path) -> Path:
     suffix = path.suffix
     parent = path.parent
     n = 2
-    while True:
+    while n < 10_000:
         candidate = parent / f"{stem}_{n}{suffix}"
         if not candidate.exists():
             return candidate
         n += 1
+    raise RuntimeError(f"_safe_path: 9999'den fazla çakışma — {path}")
 
 
 def _merge_tmdb_person_evidence(cdata: dict, person_evidence: list, log_cb) -> int:
@@ -178,15 +180,9 @@ class PipelineRunner:
         self._text_filter = None
         self._ocr_engine  = None
 
-        # TurkishNameDB
-        name_db_path = (
-            self.config.get("name_db_path") or
-            os.environ.get("NAME_DB_PATH") or
-            resolve_name_db_path()
-        )
-        self._name_db = TurkishNameDB(
-            sql_path=name_db_path if os.path.isfile(name_db_path) else "",
-        )
+        # TurkishNameDB — singleton; uygulama açılışında önyüklendi, RAM'den döner
+        from core.turkish_name_db import get_instance as _get_namedb
+        self._name_db = _get_namedb(log_cb=self._log)
 
         # VLM / QwenVerifier — config precedence:
         # 1. vlm_verify / vlm_enabled (config)
@@ -233,7 +229,7 @@ class PipelineRunner:
             model=vlm_model,
             confidence_threshold=vlm_thresh,
             enabled=vlm_enabled,
-            name_checker=self._name_db.is_name,
+            name_checker=None,  # namedb sadece name_verify.py'de aktif
         )
 
         # LLMCastFilter config
@@ -296,6 +292,13 @@ class PipelineRunner:
                 "tmdb_enabled", "tmdb_person_verify",
                 "gemini_enabled", "llm_cast_filter", "blok2_enabled",
                 "qwen_fallback_on_handwriting", "imdb_enabled",
+                "external_truth_enabled",
+                "local_inferred_enabled", "ocr_grounded_arbitration",
+                "ocr_cleanup_provider", "ocr_cleanup_model",
+                "ocr_cleanup_heavy_provider", "ocr_cleanup_heavy_model",
+                "source_arbitration_provider", "source_arbitration_model",
+                "source_escalation_provider", "source_escalation_model",
+                "final_qc_provider", "final_qc_model",
             )
             for _pk in _profile_merge_keys:
                 if _pk in content_profile:
@@ -310,7 +313,7 @@ class PipelineRunner:
                 merged_config.update(content_profile)
             merged_config["ffmpeg"] = self._ffmpeg
             merged_config["ffprobe"] = self._ffprobe
-            return run_sport_pipeline(video_path, merged_config, cdata)
+            return run_sport_pipeline(video_path, merged_config, cdata, log_cb=self._log_cb)
 
         # Scope hâlâ None ise config'den veya varsayılandan al
         if scope is None:
@@ -326,7 +329,7 @@ class PipelineRunner:
             os.environ.get("VITOS_DATABASE_ROOT") or
             r"D:\DATABASE\FilmDizi"
         )
-        work_dir = os.path.join(db_root, f"arsiv_{vname}_{ts}")
+        work_dir = os.path.join(db_root, vname)
         os.makedirs(work_dir, exist_ok=True)
         self._live_log_path = os.path.join(work_dir, "_live_debug.log")
         # BOM ile başlat — Notepad UTF-8 olarak doğru okusun
@@ -336,6 +339,11 @@ class PipelineRunner:
         self.stats.start_job(video_path, "WORKSTATION", scope, profile_name)
         self.stage_stats = {}
         self._log_messages = []
+
+        # Profiler başlat (PROFILE=1 değilse no-op)
+        self._profile_job_id = Path(video_path).stem
+        self._profiler_sampler = _profiler.ResourceSampler(self._profile_job_id)
+        self._profiler_sampler.start()
 
         self._log(f"\n{'='*60}")
         self._log(f"  VİTOS — Pipeline v7")
@@ -370,21 +378,21 @@ class PipelineRunner:
                         self._ocr_engine = HybridOCRRouter(
                             cfg=self.config,
                             log_cb=self._log,
-                            name_db=self._name_db,
+                            name_db=None,  # namedb sadece name_verify.py'de aktif
                         )
                     elif _HAS_ONEOCR:
                         self._log(f"  [OCR] Hybrid router yüklenemedi — OneOCR tek başına")
                         self._ocr_engine = OneOCREngine(
                             cfg=self.config,
                             log_cb=self._log,
-                            name_db=self._name_db,
+                            name_db=None,  # namedb sadece name_verify.py'de aktif
                         )
                     else:
                         self._log(f"  [OCR] oneocr kurulu değil — Qwen VLM'e fallback")
                         self._ocr_engine = QwenOCREngine(
                             cfg=self.config,
                             log_cb=self._log,
-                            name_db=self._name_db,
+                            name_db=None,  # namedb sadece name_verify.py'de aktif
                             ollama_url=self.config.get("ollama_url", "http://localhost:11434"),
                         )
                 elif _ocr_engine_type == "oneocr":
@@ -393,14 +401,14 @@ class PipelineRunner:
                         self._ocr_engine = OneOCREngine(
                             cfg=self.config,
                             log_cb=self._log,
-                            name_db=self._name_db,
+                            name_db=None,  # namedb sadece name_verify.py'de aktif
                         )
                     else:
                         self._log(f"  [OCR] OneOCR kurulu değil — Qwen VLM'e fallback")
                         self._ocr_engine = QwenOCREngine(
                             cfg=self.config,
                             log_cb=self._log,
-                            name_db=self._name_db,
+                            name_db=None,  # namedb sadece name_verify.py'de aktif
                             ollama_url=self.config.get("ollama_url", "http://localhost:11434"),
                         )
                 elif _ocr_engine_type == "qwen":
@@ -408,7 +416,7 @@ class PipelineRunner:
                     self._ocr_engine = QwenOCREngine(
                         cfg=self.config,
                         log_cb=self._log,
-                        name_db=self._name_db,
+                        name_db=None,  # namedb sadece name_verify.py'de aktif
                         ollama_url=self.config.get("ollama_url", "http://localhost:11434"),
                     )
                 else:
@@ -418,7 +426,7 @@ class PipelineRunner:
                         lang=self.config.get("ocr_languages", ["en"])[0],
                         cfg=self.config,
                         log_cb=self._log,
-                        name_db=self._name_db,
+                        name_db=None,  # namedb sadece name_verify.py'de aktif
                     )
             else:
                 self._log(f"  [OCR] Scope=audio_only — OCR motoru başlatılmıyor (atlanıyor)")
@@ -538,7 +546,7 @@ class PipelineRunner:
                 self._log(f"\n[5/6] CREDITS_PARSE")
                 t = time.time()
                 self.stats.start_stage("CREDITS_PARSE")
-                parser = CreditsParser(turkish_name_db=self._name_db)
+                parser = CreditsParser(turkish_name_db=None)  # namedb sadece name_verify.py'de aktif
                 parsed = parser.parse(ocr_lines, layout_pairs=layout_pairs)
                 cdata = parser.to_report_dict(parsed)
                 self._stage("CREDITS_PARSE", time.time() - t,
@@ -604,6 +612,17 @@ class PipelineRunner:
                     elif isinstance(d, dict):
                         director_names_raw.append(str(d.get("name", "")).strip())
                 director_names_raw = [n for n in director_names_raw if n]
+                # Blacklist + structural check — PR #196'da kaybolan filtre katmanı
+                _dir_filtered = []
+                for _dn in director_names_raw:
+                    _is_bl, _ = _blacklist_check(_dn)
+                    if _is_bl:
+                        continue
+                    _passed, _ = _structural_check(_dn)
+                    if not _passed:
+                        continue
+                    _dir_filtered.append(_dn)
+                director_names_raw = _dir_filtered
 
                 # ── Dosya adından dizi/film ayrımını yap ──
                 # Format: {prefix}_{YYYY}-{XXXX}-{B}-{SSSS}-{XX}-{X}-{BAŞLIK}
@@ -621,6 +640,27 @@ class PipelineRunner:
                 _nv_title = film_title_from_filename or cdata.get("film_title", "")
                 nv_match = None
 
+                # Yüksek skorlu oyuncuları hesapla — hem film hem dizi Strateji A için
+                _top_actors = []
+                _cast_sorted = sorted(
+                    [e for e in (cdata.get("cast") or []) if isinstance(e, dict)],
+                    key=lambda x: (float(x["confidence"]) if isinstance(x.get("confidence"), (int, float)) else 0.0),
+                    reverse=True,
+                )
+                for _entry in _cast_sorted[:5]:  # Filtreden geçecek 2 geçerli isim için daha fazla aday al
+                    _aname = (_entry.get("actor_name") or "").strip()
+                    if not _aname:
+                        continue
+                    _is_bl, _ = _blacklist_check(_aname)
+                    if _is_bl:
+                        continue
+                    _passed, _ = _structural_check(_aname)
+                    if not _passed:
+                        continue
+                    _top_actors.append(_aname)
+                    if len(_top_actors) >= 2:
+                        break
+
                 if _is_series:
                     # Dizi (flag=0): IMDb DuckDB önce çalışacak — verify_as_series() burada atlanıyor.
                     # IMDb miss sonrası fallback olarak aşağıda (_series_nv_pending) tetiklenecek.
@@ -628,16 +668,6 @@ class PipelineRunner:
                     cdata["_series_nv_pending"] = True
                 else:
                     # Film: başlık + yönetmen + 1-2 oyuncu kombinasyonu
-                    _top_actors = []
-                    _cast_sorted = sorted(
-                        [e for e in (cdata.get("cast") or []) if isinstance(e, dict)],
-                        key=lambda x: (float(x["confidence"]) if isinstance(x.get("confidence"), (int, float)) else 0.0),
-                        reverse=True,
-                    )
-                    for _entry in _cast_sorted[:2]:
-                        _aname = (_entry.get("actor_name") or "").strip()
-                        if _aname:
-                            _top_actors.append(_aname)
                     nv_match = verifier.verify_as_film(
                         title=_nv_title,
                         director_names=director_names_raw,
@@ -645,7 +675,7 @@ class PipelineRunner:
                     )
 
                 if nv_match:
-                    # ── Eşleşme bulundu: TMDB verisini cdata'ya uygula ──
+                    # ── Eşleşme bulundu: OCR backup al, sonra TMDB verisini uygula ──
                     _nv_credits = nv_match.get("credits", {})
                     _nv_tmdb_id = nv_match.get("tmdb_id")
                     _nv_tmdb_title = nv_match.get("tmdb_title", "")
@@ -657,12 +687,18 @@ class PipelineRunner:
                         f"({_nv_media_type}, id:{_nv_tmdb_id}, via:{_nv_matched_via})"
                     )
 
+                    # OCR crew'u TMDB ezilmeden önce sakla — boş sıfatlar için fallback
+                    cdata["_ocr_technical_crew"] = list(
+                        cdata.get("technical_crew") or cdata.get("crew") or []
+                    )
+
                     _tmdb_cast = [
                         {
                             "actor_name": item.get("name", ""),
                             "is_verified_name": True,
                             "is_tmdb_verified": True,
                             "confidence": 0.9,
+                            "raw": "tmdb",
                         }
                         for item in (_nv_credits.get("cast") or [])[:50]
                         if item.get("name")
@@ -674,6 +710,7 @@ class PipelineRunner:
                             "role": item.get("job", ""),
                             "is_verified_name": True,
                             "is_tmdb_verified": True,
+                            "raw": "tmdb",
                         }
                         for item in (_nv_credits.get("crew") or [])
                         if item.get("name")
@@ -698,7 +735,7 @@ class PipelineRunner:
                     else:
                         self._log(
                             "  [NAME_VERIFY] Eşleşme bulunamadı → "
-                            "Gemini 2.5 Flash fallback devreye giriyor"
+                            "LLM fallback devreye giriyor"
                         )
                         self._run_gemini_cast_extract(ocr_lines, cdata)
                         # Gemini film_title'ı ezmiş olabilir — dosya adı anchor'ını geri yükle
@@ -859,6 +896,7 @@ class PipelineRunner:
                     nv_match = verifier.verify_as_series(
                         title=_nv_title,
                         director_names=director_names_raw,
+                        top_actors=_top_actors,
                     )
                     if nv_match:
                         _nv_credits  = nv_match.get("credits", {})
@@ -870,12 +908,19 @@ class PipelineRunner:
                             f"  [NAME_VERIFY/Dizi] ✓ Eşleşme: '{_nv_tmdb_title}' "
                             f"({_nv_media_type}, id:{_nv_tmdb_id}, via:{_nv_matched_via})"
                         )
+
+                        # OCR crew'u TMDB ezilmeden önce sakla
+                        cdata["_ocr_technical_crew"] = list(
+                            cdata.get("technical_crew") or cdata.get("crew") or []
+                        )
+
                         _tmdb_cast = [
                             {
                                 "actor_name": item.get("name", ""),
                                 "is_verified_name": True,
                                 "is_tmdb_verified": True,
                                 "confidence": 0.9,
+                                "raw": "tmdb",
                             }
                             for item in (_nv_credits.get("cast") or [])[:50]
                             if item.get("name")
@@ -898,6 +943,7 @@ class PipelineRunner:
                                         "episode_count": job_entry.get("episode_count", 0),
                                         "is_verified_name": True,
                                         "is_tmdb_verified": True,
+                                        "raw": "tmdb",
                                     })
                             else:
                                 job = item.get("job", department)
@@ -908,6 +954,7 @@ class PipelineRunner:
                                     "department": department,
                                     "is_verified_name": True,
                                     "is_tmdb_verified": True,
+                                    "raw": "tmdb",
                                 })
                         if _tmdb_cast:
                             cdata["cast"] = _tmdb_cast
@@ -921,9 +968,9 @@ class PipelineRunner:
                         cdata["name_verify_tmdb_id"] = _nv_tmdb_id
                         cdata["name_verify_tmdb_title"] = _nv_tmdb_title
                     else:
-                        # IMDb da TMDB de miss → Gemini fallback
+                        # IMDb da TMDB de miss → LLM fallback
                         self._log(
-                            "  [NAME_VERIFY/Dizi] TMDB da eşleşmedi → Gemini fallback"
+                            "  [NAME_VERIFY/Dizi] TMDB da eşleşmedi → LLM fallback"
                         )
                         self._run_gemini_cast_extract(ocr_lines, cdata)
                         if film_title_from_filename and cdata.get("film_title") != film_title_from_filename:
@@ -956,9 +1003,9 @@ class PipelineRunner:
                             _reverse_threshold = 3.4  # varsayılan minimum eşik
                             if tmdb_result.reverse_breakdown:
                                 _reverse_threshold = tmdb_result.reverse_breakdown.get('threshold', 3.4)
+                            # Ters doğrulama her zaman zorunlu — "title" eşleşmesi bypass etmez
                             _lock_eligible = (
-                                _matched_via == "title"
-                                or (_reverse_score >= _reverse_threshold and tmdb_result.matched_id > 0)
+                                _reverse_score >= _reverse_threshold and tmdb_result.matched_id > 0
                             )
                             if (profile_name == "FilmDizi-Hybrid" and _lock_eligible):
                                 if _matched_via == "cast_only":
@@ -997,56 +1044,7 @@ class PipelineRunner:
                                             self._log(f"  {crew_qa.summary}")
                                     except Exception as e:
                                         self._log(f"  [Crew QA] {e}")
-                            else:
-                                # REFERANS MODU: LOCK koşulu sağlanamadı
-                                # (_lock_eligible=False: başlık eşleşmedi ve reverse_score < eşik veya matched_id=0)
-                                if _matched_via == "cast_only":
-                                    self._log(f"  [TMDB] cast_only eşleşme — reverse_score={_reverse_score:.1f} < {_reverse_threshold:.1f} — LOCK açılmıyor, referans modu")
-                                cdata["_tmdb_film_match"] = {
-                                    "title": tmdb_result.matched_title,
-                                    "id": tmdb_result.matched_id,
-                                    "hits": tmdb_result.hits,
-                                    "misses": tmdb_result.misses,
-                                }
-                                cdata["_tmdb_cast_ref"] = tmdb_result.cast or []
-                                cdata["_tmdb_crew_ref"] = tmdb_result.crew or []
-                                self._log(f"  [TMDB] Referans modu — OCR verisi korunuyor")
-                                # TMDB crew verisini raw:"tmdb" etiketiyle cdata["crew"]'a ekle
-                                # export_engine bu etiketi kullanarak TMDB'yi önceliklendirir
-                                _tmdb_backup_crew = []
-                                for item in (tmdb_result.crew or []):
-                                    _name = (item.get("name") or "").strip()
-                                    if not _name:
-                                        continue
-                                    _job = (item.get("job") or "").strip()
-                                    _tmdb_backup_crew.append({
-                                        "name": _name,
-                                        "job": _job,
-                                        "role": _job,
-                                        "role_tr": self._JOB_TR.get(_job, _job),
-                                        "raw": "tmdb",
-                                        "confidence": 0.8,
-                                    })
-                                # TMDB directors'ı da ekle
-                                for d in (tmdb_result.directors or []):
-                                    _dname = (d.get("name") or "").strip() if isinstance(d, dict) else str(d).strip()
-                                    if not _dname:
-                                        continue
-                                    _tmdb_backup_crew.append({
-                                        "name": _dname,
-                                        "job": "Director",
-                                        "role": "Director",
-                                        "role_tr": "Yönetmen",
-                                        "raw": "tmdb",
-                                        "confidence": 0.8,
-                                    })
-                                if _tmdb_backup_crew:
-                                    existing_crew = cdata.get("crew") or []
-                                    cdata["crew"] = existing_crew + _tmdb_backup_crew
-                                    self._log(
-                                        f"  [TMDB Backup] reverse_validation_rejected ama "
-                                        f"{len(_tmdb_backup_crew)} crew kaydı yedeklendi"
-                                    )
+                            # Her durumda TMDB crew endpoint'i ve ters doğrulama sonucu kullanılır, referans mod yok.
                         else:
                             if tmdb_result:
                                 self._log(f"  [TMDB Film] {tmdb_result.reason}")
@@ -1094,7 +1092,7 @@ class PipelineRunner:
                                         })
                         if vlm_ocr_lines:
                             ocr_lines = self._merge_blok2_results(ocr_lines, vlm_ocr_lines)
-                            parser = CreditsParser(turkish_name_db=self._name_db)
+                            parser = CreditsParser(turkish_name_db=None)  # namedb sadece name_verify.py'de aktif
                             parsed = parser.parse(ocr_lines, layout_pairs=layout_pairs)
                             cdata = parser.to_report_dict(parsed)
                             cdata_raw = copy.deepcopy(cdata)
@@ -1125,7 +1123,7 @@ class PipelineRunner:
                             model=_llm_filter_model,
                             enabled=self._llm_filter_enabled,
                             log_cb=self._log,
-                            name_checker=self._name_db.is_name,
+                            name_checker=None,  # namedb sadece name_verify.py'de aktif
                         )
                         cdata["cast"] = llm_filter.filter_cast(cdata.get("cast", []), log_cb=self._log)
                         cdata["total_actors"] = len(cdata["cast"])
@@ -1166,12 +1164,12 @@ class PipelineRunner:
                 # ══ [GOOGLE_VI] Akıllı tetik ════════════════════════════
                 # TMDB/IMDb miss + düşük çözünürlük veya non-standard font ise Google VI çağır
                 vi_decision = self._decide_google_vi(
-                    tmdb_matched=(tmdb_matched or imdb_matched),
-                    resolution=info.get("resolution", ""),
-                    ocr_lines=ocr_lines,
-                    segment_duration_min=(first_min + last_min),
-                    cast_count=cdata.get("total_actors", 0),
-                )
+                        tmdb_matched=(tmdb_matched or imdb_matched),
+                        resolution=info.get("resolution", ""),
+                        ocr_lines=ocr_lines,
+                        segment_duration_min=(first_min + last_min),
+                        cast_count=cdata.get("total_actors", 0),
+                    )
                 if vi_decision.should_run:
                     self._log(f"\n[GOOGLE_VI] {vi_decision.reason}")
                     for trigger in vi_decision.triggers:
@@ -1185,7 +1183,7 @@ class PipelineRunner:
                         except Exception as _e:
                             self._log(f"  [GOOGLE_VI] Merge hatası: {_e}")
                         # VI sonrası tekrar parse et
-                        parser = CreditsParser(turkish_name_db=self._name_db)
+                        parser = CreditsParser(turkish_name_db=None)  # namedb sadece name_verify.py'de aktif
                         parsed = parser.parse(ocr_lines, layout_pairs=layout_pairs)
                         cdata = parser.to_report_dict(parsed)
                         self._log(
@@ -1224,6 +1222,8 @@ class PipelineRunner:
                 except Exception as ae:
                     self._log(f"  [AUDIO] HATA: {ae}")
                     audio_result = {"status": "error", "error": str(ae)}
+                    if executor is not None:
+                        executor.shutdown(wait=False)
 
             # ══ TRANSCRIPT ÖZETİ (Gemini) ═════════════════════════
             if audio_result and isinstance(audio_result, dict) and audio_result.get("status") != "skipped":
@@ -1265,89 +1265,23 @@ class PipelineRunner:
                     else:
                         self._log("  [Summarizer] Gemini API key yok — özet atlanıyor")
 
-            # ══ EXPORT ════════════════════════════════════════════
-            self._log(f"\n[EXPORT]")
-            t = time.time()
-            self.stats.start_stage("EXPORT")
-            export_ts = datetime.now().strftime("%d%m%y-%H%M")
-            exp = ExportEngine(work_dir, name_db=self._name_db)
-            jp, tp, tr_p, user_tp = exp.generate(
-                info, cdata, ocr_lines, self.stage_stats,
-                "WORKSTATION", scope, first_min, last_min,
-                keywords=cdata.get("_tmdb_keywords") or None,
-                content_profile_name=profile_name,
+            return self._finalize_outputs(
+                info=info,
+                cdata=cdata,
+                cdata_raw=cdata_raw,
+                ocr_lines=ocr_lines,
                 audio_result=audio_result,
-                ts=export_ts)
-            self._stage("EXPORT", time.time() - t)
-
-            # Kullanıcı çıktı klasörüne (output_root) yalnızca kullanıcı TXT'yi kopyala
-            if self.output_root:
-                out_root = Path(self.output_root)
-                out_root.mkdir(parents=True, exist_ok=True)
-                for _src in (user_tp,):
-                    _src_p = Path(_src)
-                    if _src_p.is_file():
-                        _dst = _safe_path(out_root / _src_p.name)
-                        shutil.copy2(_src_p, _dst)
-                        self._log(f"  [EXPORT] Kullanıcı raporu kopyalandı: {_dst.name}")
-
-            # E-posta bildirimi (opsiyonel — config'de email_enabled: true ise çalışır)
-            if self.config.get("email_enabled", False) and tp and Path(tp).is_file():
-                try:
-                    from core.email_notifier import send_result_email
-                    send_result_email(tp, log_cb=self._log)
-                except Exception as _email_exc:
-                    self._log(f"  [Email] Gönderilemedi: {_email_exc}")
-
-            # ══ DATABASE ══════════════════════════════════════════
-            try:
-                self._write_database(
-                    video_info=info,
-                    credits_data=cdata,
-                    credits_raw=cdata_raw,
-                    ocr_lines=ocr_lines,
-                    stage_stats=self.stage_stats,
-                    audio_result=audio_result,
-                    work_dir=work_dir,
-                    content_profile_name=profile_name,
-                    ts=export_ts,
-                    xml_path=xml_info.xml_path if xml_info else "",
-                )
-            except Exception as e:
-                self._log(f"  [DATABASE] Yazma hatası (pipeline etkilenmedi): {e}")
-
-            total = time.time() - t0
-            self.stats.finish_job(total)
-
-            self._log(f"\n{'='*60}")
-            self._log(f"  TAMAMLANDI — {total:.1f}s "
-                      f"({info['duration_seconds']/max(total,0.1):.1f}x)")
-            self._log(f"  JSON      : {jp}")
-            self._log(f"  Rapor     : {tp}")
-            self._log(f"  Transcript: {tr_p}")
-            self._log(f"  Kullanıcı : {user_tp}")
-            self._log(f"{'='*60}")
-
-            xml_sidecar_dict = {
-                "path": xml_info.xml_path,
-                "original_title": xml_info.original_title,
-                "turkish_title": xml_info.turkish_title,
-            } if xml_info else None
-
-            return {
-                "report_json":       jp,
-                "report_txt":        tp,
-                "transcript_txt":    tr_p,
-                "user_report_txt":   user_tp,
-                "work_dir":          work_dir,
-                "video_info":        info,
-                "credits":           cdata,
-                "ocr_lines":         len(ocr_lines),
-                "tmdb_result":       tmdb_result,
-                "imdb_result":       imdb_result,
-                "audio_result":      audio_result,
-                "xml_sidecar":       xml_sidecar_dict,
-            }
+                work_dir=work_dir,
+                profile_name=profile_name,
+                scope=scope,
+                first_min=first_min,
+                last_min=last_min,
+                t0=t0,
+                xml_info=xml_info,
+                tmdb_result=tmdb_result,
+                imdb_result=imdb_result,
+                ocr_engine_type=_ocr_engine_type,
+            )
 
         except Exception as e:
             self.stats.log_error(str(e))
@@ -1356,6 +1290,106 @@ class PipelineRunner:
             import traceback
             traceback.print_exc()
             raise
+
+    def _finalize_outputs(
+        self,
+        *,
+        info: dict,
+        cdata: dict,
+        cdata_raw: dict | None,
+        ocr_lines: list,
+        audio_result: dict | None,
+        work_dir: str,
+        profile_name: str,
+        scope: str,
+        first_min: int,
+        last_min: int,
+        t0: float,
+        xml_info: XmlSidecarInfo | None,
+        tmdb_result=None,
+        imdb_result=None,
+        ocr_engine_type: str | None = None,
+    ) -> dict:
+        self._log(f"\n[EXPORT]")
+        t = time.time()
+        self.stats.start_stage("EXPORT")
+        export_ts = datetime.now().strftime("%d%m%y-%H%M")
+        exp = ExportEngine(work_dir, name_db=None)  # namedb sadece name_verify.py'de aktif
+        jp, tp, tr_p, user_tp = exp.generate(
+            info, cdata, ocr_lines, self.stage_stats,
+            "WORKSTATION", scope, first_min, last_min,
+            keywords=cdata.get("_tmdb_keywords") or None,
+            content_profile_name=profile_name,
+            audio_result=audio_result,
+            ts=export_ts,
+            ocr_engine=ocr_engine_type)
+        self._stage("EXPORT", time.time() - t)
+
+
+        if self.config.get("email_enabled", False) and tp and Path(tp).is_file():
+            try:
+                from core.email_notifier import send_result_email
+                send_result_email(tp, log_cb=self._log)
+            except Exception as _email_exc:
+                self._log(f"  [Email] Gönderilemedi: {_email_exc}")
+
+        try:
+            self._write_database(
+                video_info=info,
+                credits_data=cdata,
+                credits_raw=cdata_raw,
+                ocr_lines=ocr_lines,
+                stage_stats=self.stage_stats,
+                audio_result=audio_result,
+                work_dir=work_dir,
+                content_profile_name=profile_name,
+                ts=export_ts,
+                xml_path=xml_info.xml_path if xml_info else "",
+            )
+        except Exception as e:
+            self._log(f"  [DATABASE] Yazma hatası (pipeline etkilenmedi): {e}")
+
+        total = time.time() - t0
+        self.stats.finish_job(total)
+
+        # Profiler durdur ve özet logla
+        self._profiler_sampler.stop()
+        _profiler._log_event({
+            "type": "pipeline_end",
+            "job_id": self._profile_job_id,
+            "total_sec": round(total, 2),
+            "t": time.time(),
+        })
+
+        self._log(f"\n{'='*60}")
+        self._log(f"  TAMAMLANDI — {total:.1f}s "
+                  f"({info['duration_seconds']/max(total,0.1):.1f}x)")
+        self._log(f"  JSON      : {jp}")
+        self._log(f"  Rapor     : {tp}")
+        self._log(f"  Transcript: {tr_p}")
+        self._log(f"  Kullanıcı : {user_tp}")
+        self._log(f"{'='*60}")
+
+        xml_sidecar_dict = {
+            "path": xml_info.xml_path,
+            "original_title": xml_info.original_title,
+            "turkish_title": xml_info.turkish_title,
+        } if xml_info else None
+
+        return {
+            "report_json":       jp,
+            "report_txt":        tp,
+            "transcript_txt":    tr_p,
+            "user_report_txt":   user_tp,
+            "work_dir":          work_dir,
+            "video_info":        info,
+            "credits":           cdata,
+            "ocr_lines":         len(ocr_lines),
+            "tmdb_result":       tmdb_result,
+            "imdb_result":       imdb_result,
+            "audio_result":      audio_result,
+            "xml_sidecar":       xml_sidecar_dict,
+        }
 
     # ──────────────────────────────────────────────────────────────
     # SES PİPELİNE — BUG-02 DÜZELTİLDİ
@@ -1383,6 +1417,8 @@ class PipelineRunner:
 
         self._log(f"  [Audio] Stages: {stages}")
 
+        live_txt = str(Path(work_dir) / "transcript_live.txt")
+
         audio_cfg = {
             "program_type": self.config.get("program_type", "film_dizi"),
             "hf_token":     self.config.get("hf_token", ""),
@@ -1392,6 +1428,7 @@ class PipelineRunner:
             "stages": stages,
             "options": {
                 "denoise_enabled":  "denoise" in stages,
+                "live_transcript_path": live_txt,
                 "whisper_model":    self.config.get("whisper_model", "large-v3"),
                 "whisper_language": self.config.get("whisper_language", "tr"),
                 # float16 varsayılan; CPU'da TranscribeStage otomatik int8'e döner.
@@ -1399,6 +1436,8 @@ class PipelineRunner:
                 "max_speakers":     self.config.get("max_speakers", 10),
                 "ollama_model":     self.config.get("ollama_model", "llama3.1:8b"),
                 "beam_size":        self.config.get("beam_size", 1),
+                "initial_prompt":   self.config.get("initial_prompt", ""),
+                "audio_max_sec":    self.config.get("audio_max_sec"),
             },
         }
 
@@ -1421,9 +1460,13 @@ class PipelineRunner:
         "Screenplay": "Senaryo",
         "Screenwriter": "Senarist",
         "Writer": "Yazar",
+        "Written by": "Senaryo",
         "Story": "Hikaye",
         "Producer": "Yapımcı",
         "Executive Producer": "Baş Yapımcı",
+        "Line Producer": "Yapımcı",
+        "Associate Producer": "Yapımcı",
+        "Co-Producer": "Yapımcı",
         "Cinematography": "Görüntü Yönetmeni",
         "Director of Photography": "Görüntü Yönetmeni",
         "Editor": "Kurgu",
@@ -1522,44 +1565,6 @@ class PipelineRunner:
         cdata["verification_status"] = "tmdb_verified"
         cdata["keywords_source"] = "tmdb_only"
 
-        # ── OCR'da var, TMDB'de yok → crew'a merge et ────────────────────────
-        # _verified_crew_roles: {job_key: ["Name", ...]} veya {job_key: [{"name": ..., "confidence": ...}, ...]}
-        _DEFAULT_OCR_CONFIDENCE = 0.85
-        ocr_crew_roles = cdata.get("_verified_crew_roles") or {}
-        if ocr_crew_roles:
-            tmdb_crew_names = {_norm_name(c["name"]) for c in crew if c.get("name")}
-            for role_key, persons in ocr_crew_roles.items():
-                if not isinstance(persons, list):
-                    persons = [persons]
-                for person in persons:
-                    if isinstance(person, str):
-                        name = person.strip()
-                        confidence = _DEFAULT_OCR_CONFIDENCE
-                    elif isinstance(person, dict):
-                        name = (person.get("name") or "").strip()
-                        confidence = float(person.get("confidence", _DEFAULT_OCR_CONFIDENCE))
-                    else:
-                        continue
-                    if not name:
-                        continue
-                    if _norm_name(name) in tmdb_crew_names:
-                        continue  # Zaten TMDB'de var
-                    crew.append({
-                        "name": name,
-                        "job": role_key,
-                        "role": role_key,
-                        "role_tr": self._JOB_TR.get(role_key, role_key),
-                        "role_category": "crew",
-                        "raw": "ocr_verified",
-                        "confidence": confidence,
-                        "frame": "ocr",
-                    })
-                    tmdb_crew_names.add(_norm_name(name))  # tekrar eklemeyi önle
-            # merge sonrası toplamları güncelle
-            cdata["crew"] = crew
-            cdata["technical_crew"] = crew
-            cdata["total_crew"] = len(crew)
-
         # TMDB lock aktif — NAME_VERIFY'dan kalan _verified_crew_roles geçersiz
         cdata.pop("_verified_crew_roles", None)
         cdata.pop("_verification_log_text", None)
@@ -1622,12 +1627,28 @@ class PipelineRunner:
             })
 
         # crew listesi: imdb_result.crew → cdata["crew"], cdata["technical_crew"]
+        _IMDB_CATEGORY_TO_JOB = {
+            "writer": "Written by",
+            "director": "Director",
+            "producer": "Producer",
+            "composer": "",
+            "editor": "Editor",
+            "cinematographer": "Director of Photography",
+            "camera department": "",
+            "art department": "",
+            "costume department": "",
+            "sound department": "",
+        }
+
         crew = []
         for item in (imdb_result.crew or []):
             name = (item.get("name") or "").strip()
             if not name:
                 continue
             job = (item.get("job") or item.get("role") or "").strip()
+            if not job:
+                category = (item.get("category") or "").strip().lower()
+                job = _IMDB_CATEGORY_TO_JOB.get(category, "")
             crew.append({
                 "name": name,
                 "job": job,
@@ -1652,43 +1673,6 @@ class PipelineRunner:
         cdata["total_crew"] = len(crew)
         cdata["verification_status"] = "imdb_verified"
         cdata["keywords_source"] = "imdb_only"
-
-        # ── OCR'da var, IMDb'de yok → crew'a merge et ────────────────────────
-        _DEFAULT_OCR_CONFIDENCE = 0.85
-        ocr_crew_roles = cdata.get("_verified_crew_roles") or {}
-        if ocr_crew_roles:
-            imdb_crew_names = {_norm_name(c["name"]) for c in crew if c.get("name")}
-            for role_key, persons in ocr_crew_roles.items():
-                if not isinstance(persons, list):
-                    persons = [persons]
-                for person in persons:
-                    if isinstance(person, str):
-                        name = person.strip()
-                        confidence = _DEFAULT_OCR_CONFIDENCE
-                    elif isinstance(person, dict):
-                        name = (person.get("name") or "").strip()
-                        confidence = float(person.get("confidence", _DEFAULT_OCR_CONFIDENCE))
-                    else:
-                        continue
-                    if not name:
-                        continue
-                    if _norm_name(name) in imdb_crew_names:
-                        continue  # Zaten IMDb'de var
-                    crew.append({
-                        "name": name,
-                        "job": role_key,
-                        "role": role_key,
-                        "role_tr": self._JOB_TR.get(role_key, role_key),
-                        "role_category": "crew",
-                        "raw": "ocr_verified",
-                        "confidence": confidence,
-                        "frame": "ocr",
-                    })
-                    imdb_crew_names.add(_norm_name(name))
-            # merge sonrası toplamları güncelle
-            cdata["crew"] = crew
-            cdata["technical_crew"] = crew
-            cdata["total_crew"] = len(crew)
 
         # IMDb lock aktif — NAME_VERIFY'dan kalan _verified_crew_roles geçersiz
         cdata.pop("_verified_crew_roles", None)
@@ -1734,13 +1718,21 @@ class PipelineRunner:
             True — Gemini sonuç döndürdü ve cdata güncellendi.
             False — API key yok veya Gemini sonuç döndürmedi.
         """
-        api_key = get_gemini_api_key()
-        if not api_key:
-            self._log("  [Gemini] API key bulunamadı — atlanıyor")
+        _llm_provider = "gemini"
+        _llm_key   = get_gemini_api_key()
+        _llm_model = "gemini-2.5-flash"
+
+        if not _llm_key:
+            self._log("  [LLM] API key bulunamadı — atlanıyor")
             return False
 
         from core.gemini_cast_extractor import GeminiCastExtractor
-        extractor = GeminiCastExtractor(api_key=api_key, log_cb=self._log)
+        extractor = GeminiCastExtractor(
+            api_key=_llm_key,
+            model=_llm_model,
+            log_cb=self._log,
+            provider=_llm_provider,
+        )
         film_title = cdata.get("film_title", "")
 
         # ── Cast ayıklama (ham metin — oyuncu tespiti için geniş kapsam gerekir) ──
@@ -2475,6 +2467,16 @@ class PipelineRunner:
             **details,
         }
         self.stats.end_stage(name, status)
+        # Profiler hook (PROFILE=1 değilse no-op)
+        _profiler._log_event({
+            "type": "stage_end",
+            "job_id": getattr(self, "_profile_job_id", "unknown"),
+            "stage": name,
+            "duration_sec": round(elapsed, 2),
+            "ok": status != "error",
+            "error": details.get("error"),
+            "t": time.time(),
+        })
 
     @staticmethod
     def _extract_film_title_from_filename(stem: str) -> str:
@@ -2552,30 +2554,10 @@ class PipelineRunner:
         if not self.config.get("database_enabled", True):
             return
 
-        db_root = (
-            self.config.get("database_root") or
-            os.environ.get("VITOS_DATABASE_ROOT") or
-            r"D:\DATABASE\FilmDizi"
-        )
+        # work_dir zaten D:\DATABASE\FilmDizi\{vname}\ — ayrı klasör yok
+        db_dir = Path(work_dir)
 
-        film_title = (credits_data.get("film_title") or "").strip()
-        if film_title:
-            stem = film_title.replace(" ", "_")
-        else:
-            stem = Path(video_info.get("filename", "out")).stem
-
-        db_dir = Path(db_root) / stem
-        db_dir.mkdir(parents=True, exist_ok=True)
-
-        # 1. work_dir içindeki tüm dosyaları DB klasörüne kopyala
-        # work_dir zaten db_dir altındaysa (veya aynıysa) gereksiz kopyalamayı atla
-        work_path = Path(work_dir).resolve()
-        db_dir_resolved = db_dir.resolve()
-        if not (work_path == db_dir_resolved or db_dir_resolved in work_path.parents):
-            for src in Path(work_dir).iterdir():
-                if src.is_file():
-                    dst = _safe_path(db_dir / src.name)
-                    shutil.copy2(src, dst)
+        stem = Path(video_info.get("filename", "out")).stem
 
         # 1b. XML sidecar dosyasını DB klasörüne kopyala
         if xml_path and Path(xml_path).is_file():
@@ -2585,11 +2567,11 @@ class PipelineRunner:
 
         # 2. OCR dual-score JSON yaz
         ocr_scores = self._build_ocr_scores(ocr_lines, credits_data)
-        with open(_safe_path(db_dir / f"{stem}_{ts}_ocr_scores.json"), "w", encoding="utf-8") as f:
+        with open(_safe_path(db_dir / f"{stem}_ocr_scores.json"), "w", encoding="utf-8") as f:
             json.dump(ocr_scores, f, ensure_ascii=False, indent=2)
 
         # 3. Ham credits JSON yaz (LLM filtre öncesi)
-        with open(_safe_path(db_dir / f"{stem}_{ts}_credits_raw.json"), "w", encoding="utf-8") as f:
+        with open(_safe_path(db_dir / f"{stem}_credits_raw.json"), "w", encoding="utf-8") as f:
             json.dump(credits_raw if credits_raw is not None else credits_data,
                       f, ensure_ascii=False, indent=2)
 
@@ -2602,11 +2584,11 @@ class PipelineRunner:
                     "end": seg.get("end", 0),
                     "text": seg.get("text", ""),
                 })
-        with open(_safe_path(db_dir / f"{stem}_{ts}_transcript.json"), "w", encoding="utf-8") as f:
+        with open(_safe_path(db_dir / f"{stem}_transcript.json"), "w", encoding="utf-8") as f:
             json.dump(transcript, f, ensure_ascii=False, indent=2)
 
         # 5. Debug log yaz
-        with open(_safe_path(db_dir / f"{stem}_{ts}_debug.log"), "w", encoding="utf-8-sig") as f:
+        with open(_safe_path(db_dir / f"{stem}_debug.log"), "w", encoding="utf-8-sig") as f:
             f.write("\n".join(self._log_messages))
 
         # 6. ADA1 — OCR Ham Çıktı Listesi
@@ -2772,13 +2754,23 @@ class PipelineRunner:
         return {"scores": scores}
 
     def _repair_turkish(self, ocr_lines: list) -> list:
-        if not ocr_lines:
-            return ocr_lines
-        repaired = 0
+        # NameDB sadece name_verify.py katmanında aktif — burası devre dışı
+        return ocr_lines
+        repaired = 0  # noqa: unreachable
         for line in ocr_lines:
             original = (line.get("text", "") if isinstance(line, dict)
                         else getattr(line, "text", ""))
             if not original:
+                continue
+            # Pre-filter: sadece isim adayı görünen satırları namedb'ye gönder.
+            # Noise, blacklist ve yapısal kontrolden geçemeyen satırlar atlanır.
+            if _is_noise(original):
+                continue
+            is_blacklisted, _ = _blacklist_check(original)
+            if is_blacklisted:
+                continue
+            passed, _ = _structural_check(original)
+            if not passed:
                 continue
             fixed = self._name_db.correct_line(original)
             if fixed != original:
@@ -2799,7 +2791,9 @@ class PipelineRunner:
         Layout pair'lerden gelen bozuk actor isimlerini NameDB ile onar.
         TurkishNameDB.repair_layout_pairs() kullanır (threshold 0.85).
         """
-        if not layout_pairs:
+        # NameDB sadece name_verify.py katmanında aktif — burası devre dışı
+        return layout_pairs
+        if not layout_pairs:  # noqa: unreachable
             return layout_pairs
 
         if hasattr(self._name_db, 'repair_layout_pairs'):

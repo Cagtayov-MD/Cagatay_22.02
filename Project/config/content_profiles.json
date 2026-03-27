@@ -32,6 +32,10 @@
     "asr_engine": "whisper",
     "asr_model": "large-v3",
     "asr_language": "tr",
+    "speech_separation": true,
+    "include_mix_fallback": true,
+    "sport_vad_min_silence_ms": 450,
+    "sport_vad_speech_pad_ms": 200,
     "ocr_engine": "paddleocr",
     "gemini_enabled": true,
     "gemini_model": "gemini-2.0-flash",
@@ -46,6 +50,23 @@
     "database_enabled": true,
     "database_root": "D:\\DATABASE",
     "output_root": "F:\\Sonuclar"
+  },
+  "SpeechToText": {
+    "_description": "Sadece ses transkripsiyon profili. OCR yok, TMDB yok. detect_language → extract → denoise → transcribe. Tam transkript çıktısı.",
+    "scope": "audio_only",
+    "audio_stages": ["detect_language", "extract", "denoise", "transcribe"],
+    "whisper_model": "large-v3",
+    "whisper_language": "tr",
+    "compute_type": "float16",
+    "beam_size": 5,
+    "audio_max_sec": 480,
+    "initial_prompt": "Bu konuşma veri yönetimi ve depolama alanında Türkçe teknik bir içeriktir. Sık geçen terimler: veri yönetimi, veri depolama, veri kalitesi, veri mimarisi, metadata, data governance, master data, referans veri, data lake, data warehouse, veri ambarı, ETL, pipeline, schema, SQL, NoSQL, DAMA, DMBOK, bulut depolama, yedekleme, replikasyon, partitioning, indexing, veritabanı, tablo, sorgu.",
+    "ocr_enabled": false,
+    "tmdb_enabled": false,
+    "tmdb_person_verify": false,
+    "gemini_enabled": false,
+    "llm_cast_filter": false,
+    "blok2_enabled": false
   },
   "StudyoProgram": {
     "_placeholder": true

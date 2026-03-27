@@ -394,7 +394,7 @@ class TestSystemHealthChecks:
         import subprocess
 
         result = subprocess.run(
-            ["python3", "-m", "pytest", "tests/test_asr_ocr_fixes.py",
+            [sys.executable, "-m", "pytest", "tests/test_asr_ocr_fixes.py",
              "tests/test_transcribe_unit.py", "tests/test_asr_always_active.py",
              "-v", "--tb=no"],
             capture_output=True,
@@ -411,7 +411,7 @@ class TestSystemHealthChecks:
         import subprocess
 
         result = subprocess.run(
-            ["python3", "-m", "pytest", "tests/test_ocr_bug_fixes.py",
+            [sys.executable, "-m", "pytest", "tests/test_ocr_bug_fixes.py",
              "tests/test_ocr_analysis_report.py", "-v", "--tb=no"],
             capture_output=True,
             text=True,

@@ -44,10 +44,27 @@ class FrameExtractor:
         info = json.loads(r.stdout)
         vs = next((s for s in info.get("streams",[]) if s.get("codec_type")=="video"), None)
         aus = next((s for s in info.get("streams",[]) if s.get("codec_type")=="audio"), None)
-        if not vs:
-            raise RuntimeError("Video stream bulunamadı!")
+        if not vs and not aus:
+            raise RuntimeError("Video veya ses stream bulunamadı!")
 
         dur = float(info["format"].get("duration", 0))
+
+        # Saf ses dosyası (audio_only) — video stream yok, normal
+        if not vs:
+            return {
+                "filename": Path(video_path).name, "filepath": str(video_path),
+                "filesize_bytes": int(info["format"].get("size", 0)),
+                "duration_seconds": dur,
+                "duration_human": str(timedelta(seconds=int(dur))),
+                "resolution": "0x0",
+                "width": 0, "height": 0, "fps": 0.0,
+                "audio_channels": int(aus.get("channels", 0)),
+                "audio_sample_rate": int(aus.get("sample_rate", 0)),
+                "has_audio": True, "has_video": False,
+                "codec_video": "none",
+                "codec_audio": aus.get("codec_name", "?"),
+            }
+
         fp = vs.get("r_frame_rate","24/1").split("/")
         fps = float(fp[0])/float(fp[1]) if len(fp)==2 else 24.0
 

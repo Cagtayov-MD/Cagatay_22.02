@@ -39,6 +39,11 @@ class QueueTab(QWidget):
     def queue_manager(self) -> VideoQueueManager:
         return self._queue
 
+    def ensure_videos(self, paths: list[str]) -> int:
+        changed = self._queue.ensure_videos(paths)
+        self._refresh_table()
+        return changed
+
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)

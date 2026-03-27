@@ -1,0 +1,6 @@
+{"type": "session_start", "job_id": "pytest_1774521401", "t": 48141.1991355}
+{"type": "session_end", "job_id": "pytest_1774521401", "t": 48207.510278}
+{"type": "session_start", "job_id": "pytest_1774521548", "t": 48288.2523408}
+{"type": "session_end", "job_id": "pytest_1774521548", "t": 48316.4975979}
+{"type": "session_start", "job_id": "pytest_1774521648", "t": 48388.2345293}
+{"type": "session_end", "job_id": "pytest_1774521648", "t": 48390.987881}

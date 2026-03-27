@@ -500,16 +500,8 @@ class CreditsParser:
                         conf = min(1.0, conf + 0.2)
                         is_verified = True
                         match_method = "exact_db"
-                    else:
-                        canonical, score, match_method = self._name_db.find_with_method(text)
-                        if canonical and score >= 0.80:
-                            # Fonetik/fuzzy eşleşme → metni düzelt
-                            text = canonical
-                            conf = min(1.0, score)
-                            is_verified = True
-                        else:
-                            match_method = ""
-                        # NameDB'de bulunamasa da cast'a ekle — kural filtre + LLM sonra filtreler
+                    # Fuzzy buraya taşınmadı — name_verify.py'de blacklist+structural
+                    # filtrelerinden geçtikten sonra çalışır (pipeline sonu)
 
                 cast.append({
                     "actor_name": text,

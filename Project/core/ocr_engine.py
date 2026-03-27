@@ -850,17 +850,9 @@ class OCREngine:
             for frame_path, bboxes in frame_paths_and_bboxes:
                 if not bboxes:
                     continue
-                img = None
-                if _imread:
-                    try:
-                        img = _imread(str(frame_path))
-                    except Exception:
-                        img = None
-                if img is None:
-                    try:
-                        img = cv2.imread(str(frame_path))
-                    except Exception:
-                        continue
+                if not _imread:
+                    continue
+                img = _imread(str(frame_path))
                 if img is None:
                     continue
 

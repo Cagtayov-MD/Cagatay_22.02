@@ -138,8 +138,8 @@ class LLMCastFilter:
         # Gemini — availability determined at request time (API key check)
         return True
 
-    def _query_llm(self, prompt: str) -> str | None:
-        """Aktif sağlayıcıya prompt gönder, yanıt al."""
+    def _query_ollama(self, prompt: str) -> str | None:
+        """Aktif sağlayıcıya prompt gönder, yanıt al (test monkey-patching entry point)."""
         provider = self._active_provider()
         kwargs = {}
         if provider == "ollama":
@@ -154,9 +154,9 @@ class LLMCastFilter:
             **kwargs,
         )
 
-    # Keep _query_ollama as alias for backward compatibility / monkey-patching in tests
-    def _query_ollama(self, prompt: str) -> str | None:
-        return self._query_llm(prompt)
+    def _query_llm(self, prompt: str) -> str | None:
+        """_query_ollama üzerinden çağrı — instance-level monkey-patching destekler."""
+        return self._query_ollama(prompt)
 
     def _parse_response(self, response: str, total: int) -> set[int]:
         """LLM yanıtından 1-tabanlı satır numaralarını çıkar."""

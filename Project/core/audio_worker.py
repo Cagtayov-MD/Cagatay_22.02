@@ -40,8 +40,8 @@ import traceback
 import uuid
 from typing import Optional, Dict, Any
 
-# Windows konsolunda UTF-8 kullan
-if sys.platform == "win32":
+# Windows konsolunda UTF-8 kullan (sadece script olarak çalışırken)
+if sys.platform == "win32" and __name__ == "__main__":
     if hasattr(sys.stdout, "buffer"):
         sys.stdout = io.TextIOWrapper(
             sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True

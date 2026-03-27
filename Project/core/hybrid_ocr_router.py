@@ -305,8 +305,7 @@ class HybridOCRRouter:
                 continue
             total += 1
             try:
-                result, score = self._name_db.find(text)
-                if result and score >= 0.80:
+                if self._name_db.is_name(text):
                     matched += 1
             except Exception:
                 pass

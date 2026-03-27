@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from core._ollama_url import normalize_ollama_url
+from utils.unicode_io import imread_unicode
 
 try:
     import cv2
@@ -525,7 +526,7 @@ class QwenVerifier:
         """
         try:
             if bbox and len(bbox) == 4 and HAS_CV2 and HAS_NUMPY:
-                img = cv2.imread(frame_path)
+                img = imread_unicode(frame_path)
                 if img is not None:
                     h, w = img.shape[:2]
                     x1, y1, x2, y2 = bbox

@@ -15,13 +15,13 @@ def _safe_path(path: Path) -> Path:
     suffix = path.suffix
     parent = path.parent
     n = 2
-    while True:
+    while n < 10_000:
         candidate = parent / f"{stem}_{n}{suffix}"
         if not candidate.exists():
             return candidate
         n += 1
+    raise RuntimeError(f"_safe_path: 9999'den fazla çakışma — {path}")
 
-from config.runtime_paths import resolve_name_db_path
 
 try:
     from rapidfuzz import fuzz as _fuzz
@@ -200,10 +200,9 @@ def _upper_word(word: str, protected_words: set[str] | None = None) -> str:
     """Tek kelimeyi büyük harfe çevir.
 
     Karar sırası:
-    1. protected_words'te → yabancı kural (i→I, aksanlar korunur)
-    2. Aksanlı Latin karakter (é, ñ, ê) → kesinlikle yabancı
-    3. Kelimede ç/ö var ama ğ/ı/ş/ü yok → muhtemelen yabancı (Françoise, Böhm)
-    4. Diğer tüm kelimeler → Türkçe kural (varsayılan)
+    1. protected_words'te → yabancı kural (i→I, aksanlar ASCII'ye indirilir)
+    2. Aksanlı Latin karakter (é, ñ, ê, Türkçe'ye özgü olmayan) → yabancı kural
+    3. Diğer tüm kelimeler → Türkçe kural (varsayılan: i→İ, ç→Ç, ö→Ö, vb.)
 
     NOT: Yabancı isimler cast/crew'dan _collect_protected_words ile tespit edilip
     protected_words'e eklendiğinde yabancı büyütülür.
@@ -222,15 +221,7 @@ def _upper_word(word: str, protected_words: set[str] | None = None) -> str:
            for c in base_for_check):
         return _upper_word_foreign(raw)
 
-    # 3. ç/ö var ama ğ/ı/ş/ü yok → muhtemelen yabancı (Françoise, Böhm)
-    _STRICT_TR = set('ğışüĞİŞÜ')
-    _AMBIGUOUS = set('çöÇÖ')
-    has_ambiguous = any(c in _AMBIGUOUS for c in base_for_check)
-    has_strict_tr = any(c in _STRICT_TR for c in base_for_check)
-    if has_ambiguous and not has_strict_tr:
-        return _upper_word_foreign(raw)
-
-    # 4. VARSAYILAN: Türkçe kural
+    # 3. VARSAYILAN: Türkçe kural
     result = word.replace('i', 'İ').replace('ı', 'I')
     result = result.replace('ç', 'Ç').replace('ğ', 'Ğ')
     result = result.replace('ö', 'Ö').replace('ş', 'Ş').replace('ü', 'Ü')
@@ -476,8 +467,10 @@ def _wrap_max_words(text: str, max_words: int = 20, indent: str = "  ") -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 7 ÇIKTI ROLÜ (kullanıcı istenen sıra)
+# ÇIKTI ROLLERI (kullanıcı istenen sıra)
 # ═══════════════════════════════════════════════════════════════════
+MAX_DIRECTORS = 2  # Bir filmde en fazla 2 yönetmen kabul edilir
+
 _OUTPUT_ROLES = [
     "YAPIMCI",
     "YÖNETMEN",
@@ -487,6 +480,18 @@ _OUTPUT_ROLES = [
     "KAMERA",
     "KURGU",
 ]
+_OUTPUT_ROLE_SET = frozenset(_OUTPUT_ROLES)
+
+# Rapor sorgu şablonu için rol → Türkçe ifade eşlemesi
+_ROLE_QUESTIONS = {
+    "YAPIMCI":             "yapımcısı",
+    "YÖNETMEN":            "yönetmeni",
+    "YÖNETMEN YARDIMCISI": "yönetmen yardımcısı",
+    "GÖRÜNTÜ YÖNETMENİ":  "görüntü yönetmeni",
+    "SENARYO":             "senaristleri",
+    "KAMERA":              "kamera operatörü",
+    "KURGU":               "kurgusu (editörü)",
+}
 
 # Rol adlarını (küçük harf) → çıktı rolü adına map eden sözlük
 _ROLE_TO_OUTPUT: dict[str, str] = {
@@ -495,6 +500,9 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "yapım yönetmeni": "YAPIMCI",
     "producer": "YAPIMCI", "produced by": "YAPIMCI",
     "executive producer": "YAPIMCI",
+    "line producer": "YAPIMCI",
+    "associate producer": "YAPIMCI",
+    "co-producer": "YAPIMCI", "coproducer": "YAPIMCI",
     "produzent": "YAPIMCI", "producteur": "YAPIMCI",
     "productrice": "YAPIMCI", "produttore": "YAPIMCI",
     "productor": "YAPIMCI", "продюсер": "YAPIMCI",
@@ -503,6 +511,7 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "yönetmen": "YÖNETMEN", "yonetmen": "YÖNETMEN",
     "yöneten": "YÖNETMEN", "yoneten": "YÖNETMEN",
     "director": "YÖNETMEN", "directed by": "YÖNETMEN",
+    "co-director": "YÖNETMEN", "codirector": "YÖNETMEN",
     "réalisateur": "YÖNETMEN", "réalisatrice": "YÖNETMEN",
     "realisateur": "YÖNETMEN", "réalisation": "YÖNETMEN",
     "regisseur": "YÖNETMEN", "regie": "YÖNETMEN",
@@ -518,6 +527,8 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "assistant director": "YÖNETMEN YARDIMCISI",
     "first assistant director": "YÖNETMEN YARDIMCISI",
     "second assistant director": "YÖNETMEN YARDIMCISI",
+    "third assistant director": "YÖNETMEN YARDIMCISI",
+    "second second assistant director": "YÖNETMEN YARDIMCISI",
     "1st ad": "YÖNETMEN YARDIMCISI", "2nd ad": "YÖNETMEN YARDIMCISI",
     "regiassistent": "YÖNETMEN YARDIMCISI",
     "assistenzregisseur": "YÖNETMEN YARDIMCISI",
@@ -539,15 +550,20 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "drehbuchautor": "SENARYO",
     "sceneggiatore": "SENARYO", "guionista": "SENARYO",
     "сценарист": "SENARYO", "script": "SENARYO",
-    "story by": "SENARYO",
+    "story by": "SENARYO", "story": "SENARYO",
+    "screen story": "SENARYO", "original story": "SENARYO",
+    "dialogue": "SENARYO", "dialogues": "SENARYO",
+    "adaptation": "SENARYO",
     # Kamera (Camera Operator / Kameraman)
     "kameraman": "KAMERA", "kamera": "KAMERA",
     "camera": "KAMERA", "camera operator": "KAMERA",
+    "steadicam operator": "KAMERA", "steadicam": "KAMERA",
     "kameramann": "KAMERA",
     "operatör": "KAMERA", "operatoru": "KAMERA",
     # Kurgu
     "kurgu": "KURGU", "montaj": "KURGU",
     "editor": "KURGU", "film editor": "KURGU",
+    "supervising editor": "KURGU", "picture editor": "KURGU",
     "edited by": "KURGU", "editing": "KURGU",
     "monteur": "KURGU", "monteuse": "KURGU",
     "cutter": "KURGU", "schnitt": "KURGU",
@@ -566,10 +582,16 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "productora": "YAPIMCI",
     # Almanca
     "hergestellt von": "YAPIMCI", "hersteller": "YAPIMCI",
+    # İtalyanca
+    "produttrice": "YAPIMCI",          # kadın yapımcı
+    "produttore esecutivo": "YAPIMCI",
+    "coproduttore": "YAPIMCI", "coproduzione": "YAPIMCI",
     # Arapça (Latin transkripsiyon)
     "muntij": "YAPIMCI", "muntig": "YAPIMCI",
+    "muntij munaffidh": "YAPIMCI",     # executive producer
     # Hintçe (transkripsiyon)
     "nirmaata": "YAPIMCI", "nirmata": "YAPIMCI",
+    "nirmit": "YAPIMCI",               # "produced" — jenerik form
     # ─── YÖNETMEN ──────────────────────────────────────────────────────────
     # Fransızca
     "réalisation": "YÖNETMEN", "realisation": "YÖNETMEN",
@@ -582,10 +604,16 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "director de": "YÖNETMEN",
     # Almanca
     "regie führte": "YÖNETMEN",
+    # İtalyanca
+    "regista": "YÖNETMEN",             # İtalyancada yönetmen kişi
+    "diretto da": "YÖNETMEN", "diretta da": "YÖNETMEN",
+    "un film di": "YÖNETMEN",
     # Arapça transkripsiyon
     "ikhraa": "YÖNETMEN", "iqraj": "YÖNETMEN",
+    "mukhraj": "YÖNETMEN",             # makhraj/mukhraj — director
     # Hintçe transkripsiyon
     "nirdeshak": "YÖNETMEN", "nirdeshika": "YÖNETMEN",
+    "nirdeshit": "YÖNETMEN",           # "directed" — jenerik form
     # ─── YÖNETMEN YARDIMCISI ──────────────────────────────────────────────
     # Fransızca
     "assistant réalisateur": "YÖNETMEN YARDIMCISI",
@@ -600,8 +628,14 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "asistente de dirección": "YÖNETMEN YARDIMCISI",
     # Almanca
     "regieassistenz": "YÖNETMEN YARDIMCISI",
+    # İtalyanca
+    "aiuto regista": "YÖNETMEN YARDIMCISI",     # ana İtalyan terimi
+    "assistente alla regia": "YÖNETMEN YARDIMCISI",
+    "secondo aiuto regista": "YÖNETMEN YARDIMCISI",
+    "terzo aiuto regista": "YÖNETMEN YARDIMCISI",
     # Arapça transkripsiyon
     "musaid al mukhraj": "YÖNETMEN YARDIMCISI",
+    "musaid mukhraj": "YÖNETMEN YARDIMCISI",
     # Hintçe transkripsiyon
     "sahayak nirdeshak": "YÖNETMEN YARDIMCISI",
     # ─── GÖRÜNTÜ YÖNETMENİ ────────────────────────────────────────────────
@@ -615,10 +649,15 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     # Almanca
     "kameraführung": "GÖRÜNTÜ YÖNETMENİ",
     "bildgestaltung": "GÖRÜNTÜ YÖNETMENİ",
+    # İtalyanca
+    "direttore fotografia": "GÖRÜNTÜ YÖNETMENİ",    # kısa form
+    "fotografia di": "GÖRÜNTÜ YÖNETMENİ",           # kredi satırı formu
     # Arapça transkripsiyon
     "mudeer taswiir": "GÖRÜNTÜ YÖNETMENİ",
+    "mudirut taswir": "GÖRÜNTÜ YÖNETMENİ",
     # Hintçe transkripsiyon
     "chitragrahi": "GÖRÜNTÜ YÖNETMENİ",
+    "chayankaar": "GÖRÜNTÜ YÖNETMENİ",              # Bollywood kredi formu
     # ─── SENARYO ──────────────────────────────────────────────────────────
     # Fransızca
     "scénario": "SENARYO", "scenario": "SENARYO",
@@ -629,10 +668,17 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "guión": "SENARYO", "guion": "SENARYO",
     # Almanca
     "drehbuch von": "SENARYO",
+    # İtalyanca
+    "sceneggiatura": "SENARYO",                     # senaryo metni (sceneggiatore=senaryo yazarı)
+    "soggetto": "SENARYO",                          # hikaye/story by
+    "soggetto e sceneggiatura": "SENARYO",
+    "dialoghi": "SENARYO",                          # diyalog yazarı
     # Arapça transkripsiyon
     "sinaryu": "SENARYO", "nass": "SENARYO",
+    "qissa": "SENARYO",                             # story
     # Hintçe transkripsiyon
     "patakatha": "SENARYO", "patkatha": "SENARYO",
+    "kahani": "SENARYO",                            # story/hikaye
     # ─── KAMERA ───────────────────────────────────────────────────────────
     # Fransızca
     "cadreur": "KAMERA",
@@ -640,26 +686,41 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "opérateur de prise de vue": "KAMERA",
     "operateur de prise de vue": "KAMERA",
     "assistant opérateur": "KAMERA", "assistant operateur": "KAMERA",
+    "camera assistant": "KAMERA",
+    "assistant camera": "KAMERA",
+    "first assistant camera": "KAMERA",
+    "second assistant camera": "KAMERA",
+    "focus puller": "KAMERA",
     # İspanyolca
     "operador de cámara": "KAMERA", "operador de camara": "KAMERA",
     # Almanca
     "kameraoperateur": "KAMERA", "kamerabedienung": "KAMERA",
+    # İtalyanca
+    "operatore di ripresa": "KAMERA",
+    "operatore alla macchina": "KAMERA",
     # Arapça transkripsiyon
     "musawwir": "KAMERA",
     # Hintçe transkripsiyon
     "kaimraaman": "KAMERA", "kamraman": "KAMERA",
+    "chitrakaar": "KAMERA",                         # camera/cameraman
     # ─── KURGU ────────────────────────────────────────────────────────────
     # Fransızca
-    "assistant monteur": "KURGU",
+    "assistant monteur": "EXCLUDED",
     # İspanyolca
     "montaje": "KURGU", "edición": "KURGU",
     "editor de montaje": "KURGU",
     # Almanca
     "schnittführung": "KURGU",
+    # İtalyanca
+    "montatore": "KURGU",              # erkek kurgu editörü
+    "montatrice": "KURGU",             # kadın kurgu editörü
+    "montatura": "KURGU",              # kurgu/montaj süreci
     # Arapça transkripsiyon
     "montaaj": "KURGU",
+    "murikaaj": "KURGU",               # montaj (Mısır transkripsiyon varyantı)
     # Hintçe transkripsiyon
     "sampadak": "KURGU", "sampadan": "KURGU",
+    "sampaadak": "KURGU",              # uzun ünlü varyantı
     # ─── EXCLUDED — kategoride yok, çıktıya yazılmaz ─────────────────────
     # Script supervisor / dekor rolleri (senaryo yazarlığı değil)
     "scripte": "EXCLUDED", "chef décorateur": "EXCLUDED", "chef decorateur": "EXCLUDED",
@@ -669,39 +730,116 @@ _ROLE_TO_OUTPUT: dict[str, str] = {
     "composer": "EXCLUDED",
     # Ses
     "son": "EXCLUDED", "sound": "EXCLUDED",
+    # Fix-G: Ses/Müzik/VFX editörler fuzzy ile KURGU'ya düşmesin
+    "sound editor": "EXCLUDED", "supervising sound editor": "EXCLUDED",
+    "music editor": "EXCLUDED", "music supervisor": "EXCLUDED",
+    "music director": "EXCLUDED",
+    "adr editor": "EXCLUDED", "adr": "EXCLUDED",
+    "dialogue editor": "EXCLUDED",
+    "vfx editor": "EXCLUDED", "visual effects editor": "EXCLUDED",
+    "foley": "EXCLUDED", "foley artist": "EXCLUDED", "foley editor": "EXCLUDED",
+    "re-recording mixer": "EXCLUDED", "sound mixer": "EXCLUDED",
+    "negative cutter": "EXCLUDED",
+    "assistant editor": "EXCLUDED",
+    "first assistant editor": "EXCLUDED",
+    "script supervisor": "EXCLUDED",
+    "color timer": "EXCLUDED",
+    "casting": "EXCLUDED",
+    "casting director": "EXCLUDED",
+    "art direction": "EXCLUDED",
+    "assistant art director": "EXCLUDED",
+    "set decoration": "EXCLUDED",
     # Makyaj / Kostüm vb.
     "maquillage": "EXCLUDED", "makeup": "EXCLUDED",
     "costumes": "EXCLUDED",
 }
 
-# Bilinen rol başlıkları seti — bu değerler asla kişi ismi olamaz.
-# _ROLE_TO_OUTPUT'un tüm key'lerinden otomatik türetilir.
-_KNOWN_ROLE_TITLES: frozenset[str] = frozenset(_ROLE_TO_OUTPUT.keys())
+_EXCLUDED_ROLE_HINTS = frozenset({
+    "art direction",
+    "art director",
+    "set decoration",
+    "casting",
+    "music director",
+    "composer",
+    "music",
+    "sound",
+    "foley",
+    "script supervisor",
+    "assistant editor",
+    "dialogue editor",
+    "adr",
+    "color timer",
+    "costume",
+    "makeup",
+    "visual effects",
+    "vfx",
+    "stunt",
+})
 
-# Kişi ismi olmayan ek terimler (ülke, kurum, mekan, sunum ifadeleri vb.)
+_FUZZY_ROLE_CHOICES = [
+    role_name for role_name, output_role in _ROLE_TO_OUTPUT.items()
+    if output_role in _OUTPUT_ROLE_SET
+]
+
+def _contains_any(texts: list[str], terms: frozenset[str]) -> bool:
+    return any(term in text for text in texts for term in terms)
+
+
+def _classify_output_role(role_raw: str) -> str | None:
+    """Ham rol metnini 7'li çıktı rolüne indir; uymuyorsa dışarıda bırak."""
+    role_lower = (role_raw or "").strip().lower()
+    if not role_lower:
+        return None
+
+    mapped = _ROLE_TO_OUTPUT.get(role_lower)
+    if mapped:
+        return mapped
+
+    if any(term in role_lower for term in _EXCLUDED_ROLE_HINTS):
+        return "EXCLUDED"
+
+    if _HAS_RAPIDFUZZ:
+        match = _rf_process.extractOne(
+            role_lower,
+            _FUZZY_ROLE_CHOICES,
+            scorer=_fuzz.WRatio,
+            score_cutoff=82,
+        )
+        if match:
+            return _ROLE_TO_OUTPUT.get(match[0])
+
+    return None
+
+
+def _sanitize_output_roles(crew_roles: dict | None) -> dict[str, list[str]]:
+    """Çıktıyı yalnızca 7 rol ile sınırla ve duplike isimleri temizle."""
+    sanitized: dict[str, list[str]] = {role: [] for role in _OUTPUT_ROLES}
+
+    for role_name, names in (crew_roles or {}).items():
+        output_role = role_name if role_name in _OUTPUT_ROLE_SET else _classify_output_role(role_name)
+        if output_role not in _OUTPUT_ROLE_SET:
+            continue
+        for name in (names or []):
+            clean_name = (name or "").strip()
+            if clean_name and clean_name not in sanitized[output_role]:
+                sanitized[output_role].append(clean_name)
+
+    return sanitized
+
+
+# Rol unvanları — tek başına isim gibi OCR'a düşebilir
+_KNOWN_ROLE_TITLES: frozenset[str] = frozenset({
+    "yönetmen", "yapımcı", "senarist", "yazar", "editör", "kurgucu",
+    "görüntü yönetmeni", "müzik", "müzik yönetmeni", "kostüm",
+    "director", "producer", "writer", "editor", "cinematographer",
+    "music", "composer", "casting", "costume", "makeup",
+})
+
+# Kişi olmayan diğer terimler (şirket adları, teknik terimler vb.)
 _NON_PERSON_TERMS: frozenset[str] = frozenset({
-    # Ülke / şehir / coğrafi ifadeler
-    "france", "cameroun", "cameroon", "paris", "london",
-    "allemagne", "belgique", "canada", "senegal", "mali",
-    "burkina", "niger", "maroc", "tunisie", "algerie",
-    "italia", "espana", "portugal", "suisse", "suede",
-    # Kurum tipleri
-    "ministere", "ministre", "ministry",
-    "ecole", "universite", "lycee", "publique",
-    "editions", "edition", "editeur",
-    # Yapım / sunum ifadeleri
-    "fodic", "presentent", "presente", "presenten",
-    "les films", "les eleves",
-    # Teknik/jenerik etiketler
-    "hotel", "makonee", "makomee",
-    "un film de", "a film by", "une coproduction", "coproduction",
-    # Fransızca teknik terimler (rol başlığı ama _ROLE_TO_OUTPUT'ta olmayan)
-    "son", "scripte", "regie", "bruitage", "mixage", "maquillage",
-    "habilleur", "maintenance", "groupiste", "machinerie", "chauffeurs",
-    "stagiaires", "laboratoire", "repiquage", "avec", "avee",
-    "coopérative",
-    # İngilizce teknik etiketler
-    "presents", "presente", "presenting",
+    "production", "yapım", "stüdyo", "studio", "film", "tv",
+    "trt", "show tv", "kanal d", "atv", "fox", "star tv",
+    "copyright", "all rights reserved", "tüm hakları saklıdır",
 })
 
 
@@ -713,6 +851,16 @@ def _is_non_person(name: str) -> bool:
     """
     if len(name) < 3:
         return True
+    # Fix-C: CJK / Japonca / Korece karakter içeriyorsa kişi ismi değil
+    for ch in name:
+        cp = ord(ch)
+        if (0x4E00 <= cp <= 0x9FFF    # CJK Unified
+                or 0x3040 <= cp <= 0x30FF   # Hiragana / Katakana
+                or 0xAC00 <= cp <= 0xD7AF): # Hangul
+            return True
+    # Fix-D: boşluk içermeyen tek kelime → soyadı eksik / OCR çöpü (FIRSTLOOVER)
+    if " " not in name.strip():
+        return True
     low = name.strip().lower()
     if low in _KNOWN_ROLE_TITLES:
         return True
@@ -721,8 +869,171 @@ def _is_non_person(name: str) -> bool:
     return False
 
 
+# Rol bazlı OCR keyword listesi (VERİ YOK kararı için)
+_FIELD_KEYWORDS: dict[str, list[str]] = {
+    "YÖNETMEN YARDIMCISI": ["assistant director", "1st ad", "2nd ad",
+                             "first assistant", "second assistant"],
+    "GÖRÜNTÜ YÖNETMENİ":  ["cinematograph", "director of photography",
+                             "d.o.p.", "dop"],
+    "KAMERA":              ["camera operator", "steadicam", "focus puller",
+                             "camera assistant", "clapper"],
+    "KURGU":               ["editor", "editing", "cut", "post-production",
+                             "assembly", "negative cutter"],
+}
+
+
+def should_mark_veri_yok(output_role: str, crew_roles: dict, ocr_lines: list) -> bool:
+    """VERİ YOK yazmadan önce iki kontrol.
+
+    Kontrol: OCR satırlarında bu role ait keyword var mı?
+
+    Returns:
+        True  → gerçekten veri yok, VERİ YOK yaz.
+        False → iz var, VERİ YOK yazmaktan kaçın (ama log'a düş).
+    """
+    # OCR satırlarında keyword tarama
+    keywords = _FIELD_KEYWORDS.get(output_role, [])
+    if keywords and ocr_lines:
+        for line in ocr_lines:
+            text = (
+                line.get("text", "") if isinstance(line, dict)
+                else getattr(line, "text", "")
+            ).lower()
+            if any(kw in text for kw in keywords):
+                return False  # OCR'da iz var
+
+    return True  # Gerçekten veri yok
+
+
+def _search_crew_with_gemini(
+    target_role: str,
+    year: str,
+    film_title: str,
+    known_fields: dict,
+    episode_no: str = "YOK",
+) -> str | None:
+    """Eksik crew alanını Gemini Google Search grounding ile bulmaya çalış.
+
+    Args:
+        target_role:   Aranan rol (örn. "KAMERA")
+        year:          Film yapım yılı (örn. "1991")
+        film_title:    Türkçe film adı (örn. "FELANCA FİLM")
+        known_fields:  Rapordaki dolu olan diğer roller {rol: [isim, ...]}
+        episode_no:    Dizi bölüm numarası ("YOK" = film, "0042" = dizi)
+
+    Returns:
+        Bulunan isim(ler) string olarak, ya da None (bulunamazsa / güvenilir değilse)
+    """
+    rol_sorusu = _ROLE_QUESTIONS.get(target_role)
+    if not rol_sorusu or not year or not film_title:
+        return None
+
+    try:
+        from core.gemini_client import GeminiClient
+        from config.runtime_paths import get_gemini_api_key
+        api_key = get_gemini_api_key()
+    except Exception:
+        return None
+
+    is_series = episode_no not in ("YOK", "0000", "0", "")
+    episode_int = (episode_no.lstrip("0") or "0") if is_series else ""
+
+    # Bilinen alanlardan en fazla 1 tanesi kimlik doğrulayıcı olarak eklenir
+    anchor = ""
+    for role, names in known_fields.items():
+        if names and role in _ROLE_QUESTIONS:
+            first = names[0] if isinstance(names[0], str) else str(names[0])
+            if first.strip():
+                anchor = f"{_ROLE_QUESTIONS[role].capitalize()} {first.strip()} olan, "
+                break
+
+    if is_series:
+        içerik = f"dizinin {episode_int}. bölümünün"
+        if anchor:
+            prompt = (
+                f"{anchor}{year} yapımı {film_title} adlı "
+                f"{içerik} {rol_sorusu} kimdir? Sadece kişi adını yaz."
+            )
+        else:
+            prompt = (
+                f"{year} yılında yayımlanan {film_title} adlı "
+                f"{içerik} {rol_sorusu} kimdir? Sadece kişi adını yaz."
+            )
+        min_domains = 3
+    elif anchor:
+        prompt = (
+            f"{anchor}{year} yapımı {film_title} adlı filmin "
+            f"{rol_sorusu} kimdir? Sadece kişi adını yaz."
+        )
+        min_domains = 2
+    else:
+        prompt = (
+            f"{year} yılında çekilen {film_title} adlı filmin "
+            f"{rol_sorusu} kimdir? Sadece kişi adını yaz."
+        )
+        min_domains = 3
+
+    client = GeminiClient(model="gemini-2.0-flash", api_key=api_key)
+    answer, domains = client.generate_with_search(prompt)
+
+    if not answer or len(domains) < min_domains:
+        return None
+
+    # Cevabı tek satıra indir, fazla metin varsa ilk satırı al
+    first_line = answer.splitlines()[0].strip()
+    return first_line if first_line else None
+
+
+def post_validate_export(crew_roles: dict[str, list], cast: list) -> list[str]:
+    """Final çıktıyı dışa aktarmadan önce tutarlılık kontrolü yap.
+
+    Kontroller:
+      1. YÖNETMEN sayısı MAX_DIRECTORS'u aşıyor mu?
+      2. Oyuncu aynı zamanda ekip alanında mı?
+      3. Aynı kişi birden fazla ekip rolünde mi?
+    Returns:
+        Uyarı mesajları listesi (boşsa temiz çıktı).
+    """
+    warnings: list[str] = []
+
+    # 1. Yönetmen sayısı
+    directors = crew_roles.get("YÖNETMEN") or []
+    if len(directors) > MAX_DIRECTORS:
+        warnings.append(
+            f"WARN: {len(directors)} yönetmen atanmış (MAX={MAX_DIRECTORS}). "
+            f"Fazlalık YÖNETMEN YARDIMCISI'na taşınmış olmalı."
+        )
+
+    # 2. Oyuncu ↔ ekip çakışması
+    actor_set = {(a.get("actor_name") or "").strip().upper() for a in (cast or []) if a}
+    actor_set.discard("")
+    for role, people in crew_roles.items():
+        for p in (people or []):
+            if p.upper() in actor_set:
+                warnings.append(
+                    f"WARN: '{p}' hem OYUNCULAR hem {role} alanında — "
+                    f"muhtemelen yanlış sınıflandırma."
+                )
+
+    # 3. Aynı kişi birden fazla ekip rolünde
+    seen: dict[str, str] = {}
+    for role, people in crew_roles.items():
+        for p in (people or []):
+            key = p.strip().upper()
+            if not key:
+                continue
+            if key in seen:
+                warnings.append(
+                    f"WARN: '{p}' hem {seen[key]} hem {role} alanında — kontrol et."
+                )
+            else:
+                seen[key] = role
+
+    return warnings
+
+
 def _map_crew_to_roles(crew_data: list, directors: list) -> dict[str, list[str]]:
-    """Crew verilerini 7 çıktı rolüne dönüştür.
+    """Crew verilerini çıktı rollerine dönüştür.
 
     NOT: İsim doğrulaması artık burada değil — pipeline_runner'da
     NameVerifier tarafından yapılıyor. Bu fonksiyon sadece rol eşleştirmesi yapar.
@@ -733,12 +1044,16 @@ def _map_crew_to_roles(crew_data: list, directors: list) -> dict[str, list[str]]
     """
     result: dict[str, list[str]] = {role: [] for role in _OUTPUT_ROLES}
 
-    # Directors → YÖNETMEN
+    # Directors → YÖNETMEN (MAX_DIRECTORS sınırı)
+    # Taşan kişi ismi → YÖNETMEN YARDIMCISI
     for d in (directors or []):
         if d and d not in result["YÖNETMEN"]:
             name_d = d.get("name", "") if isinstance(d, dict) else str(d)
             if name_d and not _is_non_person(name_d):
-                result["YÖNETMEN"].append(name_d)
+                if len(result["YÖNETMEN"]) < MAX_DIRECTORS:
+                    result["YÖNETMEN"].append(name_d)
+                elif name_d not in result["YÖNETMEN YARDIMCISI"]:
+                    result["YÖNETMEN YARDIMCISI"].append(name_d)
 
     # Crew entries → matching output role
     for entry in (crew_data or []):
@@ -753,70 +1068,51 @@ def _map_crew_to_roles(crew_data: list, directors: list) -> dict[str, list[str]]
         role_raw = (
             entry.get("role_tr") or entry.get("role") or entry.get("job") or ""
         ).strip()
-        role_lower = role_raw.lower()
-        if not role_lower:
+        output_role = _classify_output_role(role_raw)
+        if not output_role or output_role == "EXCLUDED":
             continue
 
-        output_role = _ROLE_TO_OUTPUT.get(role_lower)
-
-        # Fuzzy fallback for OCR-corrupted job titles (e.g. "Fifm Editor" → "Film Editor")
-        if not output_role and _HAS_RAPIDFUZZ:
-            match = _rf_process.extractOne(
-                role_lower,
-                list(_ROLE_TO_OUTPUT.keys()),
-                scorer=_fuzz.WRatio,
-                score_cutoff=82,
-            )
-            if match:
-                output_role = _ROLE_TO_OUTPUT[match[0]]
-
-        if output_role and output_role != "EXCLUDED" and name not in result[output_role]:
-            result[output_role].append(name)
+        _n_words = len(name.split())
+        if name not in result[output_role]:
+            # Fix-F: 4+ kelimelik string → rol etiketi + isim karışımı (CIMERA OPERATOR RALPH GERLING)
+            if _n_words < 4:
+                result[output_role].append(name)
 
     return result
 
 
-def _map_tmdb_crew_to_roles(tmdb_crew: list, directors: list) -> dict[str, list[str]]:
-    """TMDB'den gelen crew verisini 7 çıktı rolüne dönüştür.
+def _map_tmdb_crew_to_roles(
+    tmdb_crew: list,
+    directors: list,
+) -> dict[str, list[str]]:
+    """TMDB'den gelen crew verisini çıktı rollerine dönüştür.
 
     TMDB verisi zaten doğrulanmış olduğundan ekstra kişi-adı filtresi gerekmez.
     """
     result: dict[str, list[str]] = {role: [] for role in _OUTPUT_ROLES}
 
-    # Directors → YÖNETMEN
+    # Directors → YÖNETMEN (MAX_DIRECTORS sınırı)
+    # TMDB verisi doğrulanmış olduğundan taşan kişi → YÖNETMEN YARDIMCISI
     for d in (directors or []):
         name = d if isinstance(d, str) else (d.get("name") or "")
         name = name.strip()
         if name and name not in result["YÖNETMEN"]:
-            result["YÖNETMEN"].append(name)
+            if len(result["YÖNETMEN"]) < MAX_DIRECTORS:
+                result["YÖNETMEN"].append(name)
+            elif name not in result["YÖNETMEN YARDIMCISI"]:
+                result["YÖNETMEN YARDIMCISI"].append(name)
 
     for entry in (tmdb_crew or []):
         name = (entry.get("name") or "").strip()
         if not name:
             continue
 
-        # role_tr varsa onu kullan (pipeline_runner'da çevrilmiş), yoksa job/role
-        role_raw = (
-            entry.get("role_tr") or entry.get("job") or entry.get("role") or ""
-        ).strip()
-        role_lower = role_raw.lower()
-        if not role_lower:
+        role_raw = (entry.get("role_tr") or entry.get("job") or entry.get("role") or "").strip()
+        output_role = _classify_output_role(role_raw)
+        if not output_role or output_role == "EXCLUDED":
             continue
 
-        output_role = _ROLE_TO_OUTPUT.get(role_lower)
-
-        # TMDB job title'ları standart olduğundan fuzzy match da dene
-        if not output_role and _HAS_RAPIDFUZZ:
-            match = _rf_process.extractOne(
-                role_lower,
-                list(_ROLE_TO_OUTPUT.keys()),
-                scorer=_fuzz.WRatio,
-                score_cutoff=82,
-            )
-            if match:
-                output_role = _ROLE_TO_OUTPUT[match[0]]
-
-        if output_role and output_role != "EXCLUDED" and name not in result[output_role]:
+        if name not in result[output_role]:
             result[output_role].append(name)
 
     return result
@@ -1438,24 +1734,24 @@ class ExportEngine:
 
         if name_db is not None:
             self._name_db = name_db
-        elif _HAS_NAME_DB:
-            try:
-                db_path = os.environ.get("NAME_DB_PATH", "") or resolve_name_db_path()
-                self._name_db = TurkishNameDB(
-                    sql_path=db_path if os.path.isfile(db_path) else "")
-            except Exception:
-                self._name_db = None
         else:
+            # namedb sadece name_verify.py katmanında aktif — auto-create devre dışı
+            # Yeniden aktif etmek için: self._name_db = TurkishNameDB()
             self._name_db = None
 
-        global _NAME_DB
-        _NAME_DB = self._name_db
+        # _NAME_DB global ataması kaldırıldı: self._name_db şu an None (TurkishNameDB devre dışı).
+        # Thread-safe erişim için modül fonksiyonları self._name_db üzerinden çalışır.
+        # TurkishNameDB yeniden aktif edilirse burayı da güncelleyin.
+
+    def _log(self, message: str):
+        print(message, flush=True)
 
     def generate(self, video_info, credits_data, ocr_lines, stage_stats,
                  profile, scope, first_min, last_min, keywords=None, logos=None,
                  content_profile_name: str | None = None,
                  audio_result: dict | None = None,
-                 ts: str | None = None):
+                 ts: str | None = None,
+                 ocr_engine: str | None = None):
         total_sec = sum(s.get("duration_sec", 0) for s in stage_stats.values())
         dur = video_info.get("duration_seconds", 1)
 
@@ -1471,6 +1767,8 @@ class ExportEngine:
                     credits_data['crew'] = _canonicalize_crew(credits_data['crew'])
             if credits_data.get('crew') and 'technical_crew' not in credits_data:
                 credits_data['technical_crew'] = list(credits_data['crew'])
+            credits_data['total_actors'] = len(credits_data.get('cast') or [])
+            credits_data['total_crew'] = len(credits_data.get('crew') or [])
         except Exception as e:
             import logging
             logging.warning(f"Credits canonicalization failed: {e}")
@@ -1495,7 +1793,15 @@ class ExportEngine:
             "processing": {
                 "scope": scope,
                 "content_type": content_profile_name or "FilmDizi-Hybrid",
-                "ocr_engine": "PaddleOCR (GPU)",
+                "source_mode": (
+                    credits_data.get("source_mode")
+                    or (
+                        "external_locked"
+                        if credits_data.get("verification_status") in ("imdb_verified", "tmdb_verified")
+                        else ""
+                    )
+                ),
+                "ocr_engine": ocr_engine or "?",
                 "first_segment_min": first_min,
                 "last_segment_min": last_min,
                 "stages": [
@@ -1527,7 +1833,7 @@ class ExportEngine:
         output_name, film_id_parsed, film_name_tr_parsed = _extract_output_name(filename)
         if not output_name:
             output_name = Path(filename).stem
-        jp = self.out / f"{output_name}_report.json"
+        jp = _safe_path(self.out / f"{output_name}_report.json")
         tp = _safe_path(self.out / f"{output_name}_teknik.txt")
         tr_p = _safe_path(self.out / f"{output_name}_tscr.txt")
 
@@ -1539,11 +1845,13 @@ class ExportEngine:
         self._write_user_report(
             report, user_tp, audio_result=audio_result,
             film_name_tr=film_name_tr_parsed, film_id=film_id_parsed,
+            ocr_lines=ocr_lines,
         )
         return str(jp), str(tp), str(tr_p), str(user_tp)
 
     def _write_user_report(self, r, path, audio_result: dict | None = None,
-                           film_name_tr: str = "", film_id: str = ""):
+                           film_name_tr: str = "", film_id: str = "",
+                           ocr_lines=None):
         """Kullanıcıya yönelik temiz, sabit formatlı TXT raporu yaz."""
         L = []
         sep = "=" * 64
@@ -1611,12 +1919,14 @@ class ExportEngine:
             L.append(f"  {'SESLENDİRME DİLİ':<{fw}}:     VERİ YOK")
 
         cast_list = cr.get("cast") or []
-        # IMDb LOCK: IMDb eşleşmesi varsa oyuncular ve yönetmenler yalnızca
-        # IMDb'den gelir. raw="imdb" dışı girişler rapora yansımaz.
-        if cr.get("verification_status") == "imdb_verified":
-            _imdb_cast = [c for c in cast_list if c.get("raw") == "imdb"]
-            if _imdb_cast:
-                cast_list = _imdb_cast
+        external_locked = cr.get("verification_status") in ("imdb_verified", "tmdb_verified")
+        if external_locked:
+            external_cast = [
+                c for c in cast_list
+                if c.get("raw") in ("imdb", "tmdb")
+            ]
+            if external_cast:
+                cast_list = external_cast
         actor_names = [
             (c.get("actor_name") or "").strip()
             for c in cast_list
@@ -1632,23 +1942,61 @@ class ExportEngine:
         tmdb_crew = [c for c in (cr.get("crew") or []) if c.get("raw") in ("tmdb", "imdb")]
         gemini_roles = cr.get("_gemini_crew_roles")
         if tmdb_crew:
-            # YÖNETMEN her zaman cdata["directors"]'tan gelir (IMDb kutsal kaynak).
-            # TMDB aggregate_credits bölüm yönetmenleri crew'a eklenebilir ama
-            # director_names'i asla ezmez.
-            crew_roles = _map_tmdb_crew_to_roles(tmdb_crew, director_names)
-            # TMDB'de eksik roller için OCR fallback
-            ocr_roles = cr.get("_verified_crew_roles") or _map_crew_to_roles(
-                cr.get("technical_crew") or [], director_names)
-            for role_key, names in ocr_roles.items():
-                if not crew_roles.get(role_key):
-                    crew_roles[role_key] = names
+            crew_roles = _map_tmdb_crew_to_roles(
+                tmdb_crew,
+                director_names,
+            )
+            if not external_locked:
+                _ocr_fallback_crew = cr.get("_ocr_technical_crew") or None
+                if _ocr_fallback_crew is not None:
+                    ocr_roles = _map_crew_to_roles(_ocr_fallback_crew, director_names)
+                else:
+                    ocr_roles = cr.get("_verified_crew_roles") or _map_crew_to_roles(
+                        cr.get("technical_crew") or [], director_names)
+                for role_key, names in ocr_roles.items():
+                    if not crew_roles.get(role_key):
+                        crew_roles[role_key] = names
         elif gemini_roles:
             crew_roles = gemini_roles
+            # MAX_DIRECTORS enforcement — Gemini YÖNETMEN listesini sınırla
+            _g_yonetmen = crew_roles.get("YÖNETMEN") or []
+            if len(_g_yonetmen) > MAX_DIRECTORS:
+                _g_overflow = _g_yonetmen[MAX_DIRECTORS:]
+                crew_roles["YÖNETMEN"] = _g_yonetmen[:MAX_DIRECTORS]
+                _g_yard = crew_roles.get("YÖNETMEN YARDIMCISI") or []
+                crew_roles["YÖNETMEN YARDIMCISI"] = _g_yard + [
+                    n for n in _g_overflow if n not in _g_yard
+                ]
+                self._log(
+                    f"  [MAX_DIRECTORS] Gemini {len(_g_overflow)} fazla yönetmeni "
+                    f"YÖNETMEN YARDIMCISI'na taşıdı: {_g_overflow}"
+                )
         elif cr.get("_verified_crew_roles"):
             crew_roles = cr["_verified_crew_roles"]
         else:
             crew_roles = _map_crew_to_roles(
                 cr.get("technical_crew") or cr.get("crew") or [], director_names)
+
+        crew_roles = _sanitize_output_roles(crew_roles)
+
+        # Pre-export: kişi olmayan girdileri filtrele (FILTERED_NON_PERSON)
+        try:
+            from core.name_verify import is_valid_person_name as _is_valid_person
+            for _role in list(crew_roles.keys()):
+                _kept = []
+                for _name in crew_roles[_role]:
+                    if _is_valid_person(_name):
+                        _kept.append(_name)
+                    else:
+                        self._log(f"  [FILTERED_NON_PERSON] '{_name}' ({_role})")
+                crew_roles[_role] = _kept
+        except ImportError:
+            pass
+
+        # Post-validation: çıktı tutarlılık kontrolü
+        _pv_warnings = post_validate_export(crew_roles, cr.get("cast") or [])
+        for _w in _pv_warnings:
+            self._log(f"  [PostValidate] {_w}")
 
         # Özel isimler: Türkçe olmayan adlar ASCII/İngilizce karakterle korunur.
         protected_words = _collect_protected_words(
@@ -1743,7 +2091,6 @@ class ExportEngine:
 
         role_col = 20  # rol sütunu genişliği
 
-        # FIX: 7 rol her zaman gösterilir, veri yoksa "VERİ YOK" yazılır
         for output_role in _OUTPUT_ROLES:
             names = crew_roles.get(output_role) or []
             if names:
@@ -1751,7 +2098,25 @@ class ExportEngine:
                     role_label = output_role if i == 0 else ""
                     L.append(f"  {role_label:<{role_col}}{name}")
             else:
-                L.append(f"  {output_role:<{role_col}}VERİ YOK")
+                if not should_mark_veri_yok(output_role, crew_roles, ocr_lines or []):
+                    self._log(
+                        f"  [VeriYok] '{output_role}' boş ama OCR'da iz var — "
+                        f"sınıflandırma hatası olabilir"
+                    )
+                known = {
+                    r: v for r, v in crew_roles.items()
+                    if v and r != output_role
+                }
+                llm_answer = _search_crew_with_gemini(
+                    output_role, year, film_name_tr, known, episode_no
+                )
+                if llm_answer:
+                    self._log(
+                        f"  [GeminiSearch] '{output_role}' → '{llm_answer}'"
+                    )
+                    L.append(f"  {output_role:<{role_col}}{llm_answer}")
+                else:
+                    L.append(f"  {output_role:<{role_col}}VERİ YOK")
 
         L.append(sep)
         L.append(f"  OLUŞTURULMA: {r['generated_at']}")

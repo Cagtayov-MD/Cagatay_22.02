@@ -219,6 +219,7 @@ _BLACKLIST_PATTERNS = [
     re.compile(r"color\s+by", re.IGNORECASE),       # color by
     re.compile(r"recorded\s+in", re.IGNORECASE),    # recorded in
     re.compile(r"filmed\s+(at|in)", re.IGNORECASE),  # filmed at/in
+    re.compile(r"\b\d{2,}\b"),                        # Fix-B: 2+ haneli rakam içeriyor → sertifika no, teknik kod (MPAA # 45977)
 ]
 
 
@@ -299,26 +300,55 @@ def _blacklist_check(name: str) -> tuple[bool, str]:
     return False, "ok"
 
 
+def is_valid_person_name(name: str) -> bool:
+    """Bir metnin gerçek kişi ismi olup olmadığını kontrol et.
+
+    Kontroller (öncelik sırasıyla):
+      1. CJK / CJK-benzeri karakterler → reddet
+      2. Blacklist (teknik terimler, departman adları, şirketler)
+      3. Yapısal kontrol (çok kısa, Latin olmayan, aşırı noktalama vb.)
+      4. Tek-kelimelik isim → şüpheli (soyadı yok)
+      5. 12+ karakter büyük harfli tek token → OCR birleştirme çöpü (VIDEOTAPEMUSIC vb.)
+
+    Returns:
+        bool — True ise geçerli kişi ismi.
+    """
+    t = name.strip()
+
+    # 1. CJK ve benzeri Unicode blokları
+    for ch in t:
+        cp = ord(ch)
+        if (0x4E00 <= cp <= 0x9FFF    # CJK Unified
+                or 0x3040 <= cp <= 0x30FF   # Hiragana / Katakana
+                or 0xAC00 <= cp <= 0xD7AF   # Hangul
+                or 0x0600 <= cp <= 0x06FF): # Arapça
+            return False
+
+    # 2. Blacklist
+    is_bl, _ = _blacklist_check(t)
+    if is_bl:
+        return False
+
+    # 3. Yapısal kontrol
+    passed, _ = _structural_check(t)
+    if not passed:
+        return False
+
+    # 4. Tek-kelimelik isim (soyadı eksik — OCR çöpü veya kısaltma: "CHARLES")
+    words = t.split()
+    if len(words) < 2:
+        return False
+
+    # 5. 12+ karakter büyük harfli tek token → birleşik OCR çöpü (VIDEOTAPEMUSIC = 14)
+    if any(len(w) > 12 and w.isupper() and w.isalpha() for w in words):
+        return False
+
+    return True
+
+
 # ═══════════════════════════════════════════════════════════════════
 # KATMAN 3 — TMDB Person Search (kişi merkezli doğrulama)
 # ═══════════════════════════════════════════════════════════════════
-
-# TMDB department → VİTOS rol eşleştirmesi
-_TMDB_DEPT_TO_ROLE = {
-    "directing": "YÖNETMEN",
-    "writing": "SENARYO",
-    "camera": "GÖRÜNTÜ YÖNETMENİ",
-    "editing": "KURGU",
-    "production": "YAPIMCI",
-    "acting": "OYUNCU",
-    "sound": None,      # 7 yıldızlı rolde yok
-    "art": None,
-    "costume & make-up": None,
-    "visual effects": None,
-    "lighting": None,
-    "crew": None,
-}
-
 
 def _tmdb_person_verify(name: str, expected_role: str, tmdb_client, log_cb=None) -> dict:
     """TMDB person search ile isim doğrulama.
@@ -328,7 +358,7 @@ def _tmdb_person_verify(name: str, expected_role: str, tmdb_client, log_cb=None)
 
     Args:
         name: Doğrulanacak isim
-        expected_role: Beklenen rol (YÖNETMEN, OYUNCU, vs.)
+        expected_role: Geriye dönük uyumluluk için korunur; rol türetmede kullanılmaz.
         tmdb_client: TMDBClient instance (search_person metodu olan)
         log_cb: Log callback
 
@@ -355,21 +385,11 @@ def _tmdb_person_verify(name: str, expected_role: str, tmdb_client, log_cb=None)
     tmdb_dept = (best.get("known_for_department") or "").lower()
     tmdb_id = best.get("id")
 
-    # Meslek eşleşmesi bonus bilgi
-    expected_dept = None
-    for dept, role in _TMDB_DEPT_TO_ROLE.items():
-        if role == expected_role:
-            expected_dept = dept
-            break
-
-    role_match = (expected_dept == tmdb_dept) if expected_dept else None
-
     return {
         "verified": True,
         "tmdb_name": tmdb_name,
         "tmdb_department": tmdb_dept,
         "tmdb_id": tmdb_id,
-        "role_match": role_match,
         "reason": "found",
     }
 
@@ -533,7 +553,6 @@ class NameVerifier:
                                            "tmdb_name": tmdb_result.get("tmdb_name"),
                                            "tmdb_department": tmdb_result.get("tmdb_department"),
                                            "tmdb_id": tmdb_result.get("tmdb_id"),
-                                           "role_match": tmdb_result.get("role_match"),
                                        })
                         self._log(f"    [TMDB] ✓ {search_name} "
                                   f"[{tmdb_result.get('tmdb_department','')}]")
@@ -785,15 +804,17 @@ class NameVerifier:
     # VERIFY AS SERIES — Dizi bazlı TMDB doğrulama
     # ─────────────────────────────────────────────────────
 
-    def verify_as_series(self, title: str, director_names: list) -> dict | None:
-        """Dizi adı + yönetmen kombinasyonu ile TMDB'de doğrulama yapar.
+    def verify_as_series(self, title: str, director_names: list,
+                         top_actors: list = None) -> dict | None:
+        """Dizi adı + yönetmen (+ oyuncu) kombinasyonu ile TMDB'de doğrulama yapar.
 
-        Tek tek isim aramak yerine dizi adıyla arama yapar ve yönetmen
-        eşleşmesini kontrol eder. Eşleşme bulunursa dizi cast/crew bilgisini döner.
+        Strateji A: başlık + yönetmen + ≥1 oyuncu eşleşmesi (güçlü eşleşme)
+        Strateji B: başlık + yönetmen (yönetmen bilgisi yoksa başlık yeterli)
 
         Args:
             title: Dizi adı (dosya adından çıkarılmış).
             director_names: Yönetmen adları listesi (OCR/credits_parse çıktısından).
+            top_actors: En yüksek skorlu 1-2 oyuncu (Strateji A için).
 
         Returns:
             dict with {tmdb_entry, credits, matched_via, tmdb_id, tmdb_title, media_type}
@@ -804,7 +825,10 @@ class NameVerifier:
             return None
 
         self._log(f"\n  ── NAME VERIFY: DİZİ MODU ──")
-        self._log(f"  [NAME_VERIFY/Dizi] Aranan: '{title}' | Yönetmenler: {director_names}")
+        self._log(
+            f"  [NAME_VERIFY/Dizi] Aranan: '{title}' | "
+            f"Yönetmenler: {director_names} | Oyuncular: {top_actors or []}"
+        )
 
         try:
             results = self._tmdb_client.search_multi(title)
@@ -830,12 +854,41 @@ class NameVerifier:
             if not credits:
                 continue
 
+            tmdb_cast_names = [
+                item.get("name", "") for item in (credits.get("cast") or [])
+                if item.get("name")
+            ]
             tmdb_crew_names = [
                 item.get("name", "") for item in (credits.get("crew") or [])
                 if item.get("name")
             ]
 
-            # Yönetmen eşleşmesi — hiç yönetmen bilgisi yoksa başlık eşleşmesi yeterli
+            # ── Strateji A: yönetmen + en az 1 oyuncu (güçlü eşleşme) ──
+            if director_names and top_actors:
+                _dir_match_a = any(
+                    _fuzzy_name_match(d, tmdb_crew_names) for d in director_names if d
+                )
+                _actor_matches = sum(
+                    1 for a in top_actors if a and _fuzzy_name_match(a, tmdb_cast_names)
+                )
+                if _dir_match_a and _actor_matches >= 1:
+                    self._log(
+                        f"  [NAME_VERIFY/Dizi] '{tmdb_title}' (id:{tmdb_id}) — "
+                        f"Strateji A: yönetmen ✓ | {_actor_matches}/{len(top_actors)} oyuncu ✓"
+                    )
+                    self._add_log(
+                        "TMDB_SERIES", "DİZİ", title, tmdb_title, "kept",
+                        "series_strat_a_director_cast",
+                        {"tmdb_id": tmdb_id, "media_type": "tv",
+                         "actor_matches": _actor_matches},
+                    )
+                    return {
+                        "tmdb_entry": r, "credits": credits,
+                        "matched_via": "series_strat_a_director_cast",
+                        "tmdb_id": tmdb_id, "tmdb_title": tmdb_title, "media_type": "tv",
+                    }
+
+            # ── Strateji B: yönetmen eşleşmesi — hiç yönetmen bilgisi yoksa başlık yeterli ──
             if director_names:
                 director_match = any(
                     _fuzzy_name_match(d, tmdb_crew_names) for d in director_names if d
@@ -894,13 +947,13 @@ class NameVerifier:
                 )
 
             self._add_log(
-                "TMDB_SERIES", "DİZİ", title, tmdb_title, "kept", "series_title_director",
+                "TMDB_SERIES", "DİZİ", title, tmdb_title, "kept", "series_strat_b_director",
                 {"tmdb_id": tmdb_id, "media_type": "tv"},
             )
             return {
                 "tmdb_entry": r,
                 "credits": credits,
-                "matched_via": "series_title_director",
+                "matched_via": "series_strat_b_director",
                 "tmdb_id": tmdb_id,
                 "tmdb_title": tmdb_title,
                 "media_type": "tv",

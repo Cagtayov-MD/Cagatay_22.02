@@ -141,6 +141,7 @@ class AudioPipeline:
             extract_result = extract.run(
                 video_path, audio_dir,
                 selected_channel=selected_channel,
+                max_duration_sec=options.get("audio_max_sec"),
             )
             result["stages"]["extract"] = {
                 "duration_sec": extract_result["stage_time_sec"],
@@ -232,6 +233,8 @@ class AudioPipeline:
                     "compute_type": options.get("compute_type", "float16"),
                     "beam_size": options.get("beam_size", 1),
                     "tmdb_cast": self.config.get("tmdb_cast", []),
+                    "live_transcript_path": options.get("live_transcript_path"),
+                    "initial_prompt": options.get("initial_prompt", ""),
                 },
             )
             result["stages"]["transcribe"] = {

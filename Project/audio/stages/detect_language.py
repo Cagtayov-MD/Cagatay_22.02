@@ -249,7 +249,7 @@ class LanguageDetectionStage:
                 self._log(
                     f"  [DİL TESPİTİ] Çelişki ({tag}): "
                     f"{s0['language']} vs {s1['language']} "
-                    f"→ {winner['language'].upper()} seçildi (yüksek conf)"
+                    f"-> {winner['language'].upper()} seçildi (yüksek conf)"
                 )
                 return (winner["language"], winner["confidence"],
                         samples, "conflicting_use_higher")

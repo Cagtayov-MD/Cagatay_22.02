@@ -127,7 +127,7 @@ def test_decide_namedb_high_ratio_skips_qwen():
     mock_oneocr.estimate_font_type.return_value = "decorative"
 
     mock_namedb = MagicMock()
-    mock_namedb.find.return_value = ("Nisa Serezli", 0.95)
+    mock_namedb.is_name.return_value = True  # find() yerine is_name() kullanılıyor
 
     router = object.__new__(HybridOCRRouter)
     router.cfg = {}

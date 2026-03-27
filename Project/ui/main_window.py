@@ -149,11 +149,16 @@ class MainWindow(QMainWindow):
         self.signals.stage_update.connect(self._update_stage)
         self.signals.pipeline_done.connect(self._on_done)
         self.signals.pipeline_error.connect(self._on_error)
+        self.signals.queue_running.connect(self._on_queue_running_changed)
 
         self.config = self._load_config()
         self._build_ui()
         self.setStyleSheet(DARK_STYLE)
         self._resolve_and_show_paths()
+
+        # NameDB ön yükleme — arka planda başlat, RAM'de hazır beklesin
+        from core.turkish_name_db import start_preload as _namedb_preload
+        threading.Thread(target=_namedb_preload, daemon=True, name="NameDB-UI-Preload").start()
 
     # ═══════════════════════════════════════════════════════════════
     # UI İNŞASI
@@ -245,6 +250,21 @@ class MainWindow(QMainWindow):
         lay.addLayout(scope_row)
         lay.addWidget(self._sep())
 
+        # Video seçimi
+        r1 = QHBoxLayout()
+        lbl1 = QLabel("Video:")
+        lbl1.setMinimumWidth(110)
+        self.video_edit = QLineEdit()
+        self.video_edit.setReadOnly(True)
+        self.video_edit.setPlaceholderText("İşlenecek video dosyasını seçin")
+        self.video_edit.textChanged.connect(self._on_video_path_changed)
+        self.pick_video_btn = QPushButton("...")
+        self.pick_video_btn.setMaximumWidth(36)
+        self.pick_video_btn.clicked.connect(self._pick_video)
+        r1.addWidget(lbl1); r1.addWidget(self.video_edit); r1.addWidget(self.pick_video_btn)
+        lay.addLayout(r1)
+        lay.addWidget(self._sep())
+
         # Çıktı Dizini
         r2 = QHBoxLayout()
         lbl2 = QLabel("Cikti Dizini:")
@@ -257,6 +277,12 @@ class MainWindow(QMainWindow):
         btn2.clicked.connect(self._pick_output)
         r2.addWidget(lbl2); r2.addWidget(self.output_edit); r2.addWidget(btn2)
         lay.addLayout(r2)
+
+        self.start_single_btn = QPushButton("▶ Seçili Videoyu Başlat")
+        self.start_single_btn.setObjectName("startBtn")
+        self.start_single_btn.setEnabled(False)
+        self.start_single_btn.clicked.connect(self._on_start)
+        lay.addWidget(self.start_single_btn)
 
         return grp
 
@@ -455,7 +481,35 @@ class MainWindow(QMainWindow):
             self.dag_widget.set_profile(profile_name)
 
     def _on_start(self):
+        if self._queue_running:
+            return
+
+        video_path = (self.video_path or "").strip()
+        if video_path and os.path.isfile(video_path):
+            self.queue_tab.ensure_videos([video_path])
         self._on_queue_start()
+
+    def _on_video_path_changed(self, path: str):
+        self.video_path = path.strip()
+        if hasattr(self, "start_single_btn"):
+            self.start_single_btn.setEnabled(bool(self.video_path) and not self._queue_running)
+
+    def load_startup_video(self, path: str, autostart: bool = False):
+        path = str(path or "").strip()
+        if not path or not os.path.isfile(path):
+            return
+
+        self.video_path = path
+        if hasattr(self, "video_edit"):
+            self.video_edit.setText(path)
+        if hasattr(self, "stat_video"):
+            self.stat_video.setText(Path(path).name)
+        if not self.output_dir and hasattr(self, "output_edit"):
+            self.output_edit.setText(os.path.dirname(path))
+
+        self.queue_tab.ensure_videos([path])
+        if autostart:
+            QTimer.singleShot(0, self._on_start)
 
     def _on_queue_start(self):
         """Kuyruk Başlat butonuna basıldığında."""
@@ -469,6 +523,7 @@ class MainWindow(QMainWindow):
         self._queue_skip_requested = False
         self._queue_profile_name = self.content_combo.currentText()
         self.queue_tab.set_running(True)
+        self._set_control_panel_enabled(False)
 
         self._queue_thread = threading.Thread(
             target=self._run_queue, daemon=True)
@@ -489,6 +544,10 @@ class MainWindow(QMainWindow):
         self._queue_stop_requested = True
         self._queue_skip_requested = True
         self.signals.log_message.emit("[KUYRUK] ⛔ Zorla durdurma isteği alındı...")
+
+    def _on_queue_running_changed(self, running: bool):
+        self._queue_running = running
+        self._set_control_panel_enabled(not running)
 
     def _run_queue(self):
         """Kuyruktaki videoları sırayla işle (arka plan thread)."""
@@ -673,6 +732,8 @@ class MainWindow(QMainWindow):
 
     def _reset_ui(self):
         self.running = False
+        self._queue_running = False
+        self._set_control_panel_enabled(True)
         if hasattr(self, "_timer"):
             self._timer.stop()
 
@@ -699,12 +760,23 @@ class MainWindow(QMainWindow):
             # Çıktı dizini yoksa videoyla aynı dizini öner
             if not self.output_dir:
                 self.output_edit.setText(os.path.dirname(path))
+            self.queue_tab.ensure_videos([path])
 
     def _pick_output(self):
         path = QFileDialog.getExistingDirectory(self, "Cikti Dizini Sec")
         if path:
             self.output_edit.setText(path)
             self.output_dir = path
+
+    def _set_control_panel_enabled(self, enabled: bool):
+        if hasattr(self, "content_combo"):
+            self.content_combo.setEnabled(enabled)
+        if hasattr(self, "scope_combo"):
+            self.scope_combo.setEnabled(enabled)
+        if hasattr(self, "pick_video_btn"):
+            self.pick_video_btn.setEnabled(enabled)
+        if hasattr(self, "start_single_btn"):
+            self.start_single_btn.setEnabled(enabled and bool((self.video_path or "").strip()))
 
     # ═══════════════════════════════════════════════════════════════
     # LOG + STAGE

@@ -64,8 +64,26 @@ class DenoiseStage:
                 self._log(f"  [DF3] Resample: {sr}Hz → {target_sr}Hz")
                 audio = torchaudio.functional.resample(audio, sr, target_sr)
 
-            self._log("  [DF3] Gürültü azaltma başlıyor...")
-            enhanced = enhance(model, df_state, audio)
+            # Uzun dosyalarda CUDA 32-bit index taşması önlemek için parçalı işleme
+            CHUNK_SEC = 600  # 10 dakika
+            chunk_samples = CHUNK_SEC * target_sr
+            total_samples = audio.shape[-1]
+
+            if total_samples > chunk_samples:
+                n_chunks = (total_samples + chunk_samples - 1) // chunk_samples
+                self._log(f"  [DF3] Gürültü azaltma başlıyor ({n_chunks} parça × {CHUNK_SEC//60}dk)...")
+                chunks = []
+                for i in range(n_chunks):
+                    start = i * chunk_samples
+                    end = min(start + chunk_samples, total_samples)
+                    chunk = audio[:, start:end]
+                    self._log(f"  [DF3] Parça {i+1}/{n_chunks} işleniyor...")
+                    chunks.append(enhance(model, df_state, chunk))
+                import torch
+                enhanced = torch.cat(chunks, dim=-1)
+            else:
+                self._log("  [DF3] Gürültü azaltma başlıyor...")
+                enhanced = enhance(model, df_state, audio)
 
             # Kaydet
             # BUG-K6 FIX: DF3 enhance() 2D tensor dönebilir, unsqueeze sadece 1D için

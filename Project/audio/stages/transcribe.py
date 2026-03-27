@@ -67,10 +67,14 @@ class TranscribeStage:
 
     def _build_initial_prompt(self, opts: dict) -> str:
         """
-        TMDB cast listesinden Whisper initial_prompt oluştur.
-        Yabancı isimlerin fonetik bozulmasını önlemek için kullanılır.
-        Örnek: "Bu filmde şu isimler geçmektedir: Michael, Jessica, Robert."
+        initial_prompt oluştur.
+        Öncelik: opts["initial_prompt"] (direkt) → tmdb_cast listesi
         """
+        # Direkt prompt varsa kullan
+        direct = (opts.get("initial_prompt") or "").strip()
+        if direct:
+            return direct
+
         cast = opts.get("tmdb_cast") or []
         if not cast:
             return ""
@@ -198,6 +202,18 @@ class TranscribeStage:
                         "confidence": avg_conf,
                         "words": words,
                     })
+
+                    # Canlı transcript yazımı
+                    live_path = opts.get("live_transcript_path")
+                    if live_path and seg.text.strip():
+                        try:
+                            m = int(seg.start) // 60
+                            s = seg.start % 60
+                            label = f"[{m:02d}:{s:05.2f}]"
+                            with open(live_path, "a", encoding="utf-8") as _lf:
+                                _lf.write(f"{label} {seg.text.strip()}\n")
+                        except Exception:
+                            pass
             except Exception as gen_err:
                 self._log(f"  [Whisper] Generator hatası ({seg_count} segment sonra): {gen_err}")
                 self._log(f"  [Whisper] word_timestamps=False ile yeniden deneniyor...")

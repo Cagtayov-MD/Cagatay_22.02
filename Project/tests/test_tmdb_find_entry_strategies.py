@@ -67,9 +67,12 @@ def test_strat_a01_title_actor_director_match_accepted():
     assert via in ("title", "original_title")
 
 
-def test_strat_a01_title_two_actors_match_accepted():
+def test_strat_a01_title_actor_director_required():
     """
-    STRAT-A01: Film adı + 2 oyuncu eşleşmesi (yönetmen gerekmez) → kabul.
+    STRAT-A01: Film adı + oyuncu eşleşmesi ama yönetmen yok → Strateji A reddeder.
+
+    Strateji A, başlık + yönetmen zorunlu (cast-only devre dışı).
+    Yönetmen olmadan Strateji B de atlanır → C/D person search boş → None.
     """
     verifier = _make_verifier()
 
@@ -85,7 +88,11 @@ def test_strat_a01_title_two_actors_match_accepted():
             "crew": [],
         }
 
+    def fake_search_person(name):
+        return []
+
     with patch.object(verifier.client, "search_multi", side_effect=fake_search_multi), \
+         patch.object(verifier.client, "search_person", side_effect=fake_search_person), \
          patch.object(verifier, "_fetch_credits", side_effect=fake_fetch_credits), \
          patch.object(verifier, "_load_cache", return_value=None), \
          patch.object(verifier, "_save_cache"):
@@ -96,8 +103,7 @@ def test_strat_a01_title_two_actors_match_accepted():
             director_names=[],
         )
 
-    assert entry is not None, "Strateji A: başlık + 2 oyuncu kabul edilmeli"
-    assert entry["id"] == MOVIE_ID
+    assert entry is None, "Strateji A: yönetmen olmadan kabul edilmemeli"
 
 
 def test_strat_a02_no_actor_match_falls_to_b():

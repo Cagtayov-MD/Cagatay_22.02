@@ -1,0 +1,53 @@
+{
+    // Olası öznitelikler hakkında bilgi edinmek için IntelliSense kullanın.
+    // Mevcut özniteliklerin açıklamalarını görüntülemek için üzerine gelin.
+    // Daha fazla bilgi için şu adresi ziyaret edin: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: main.py (UI)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/Project/main.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/Project",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: main.py (UI + Video)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/Project/main.py",
+            "args": [
+                "${input:videoPath}"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/Project",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: main.py (Headless)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/Project/main.py",
+            "args": [
+                "--headless",
+                "${input:videoPath}"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}/Project",
+            "justMyCode": true,
+            "env": {
+                "SCOPE": "video+audio"
+            }
+        }
+    ],
+    "inputs": [
+        {
+            "id": "videoPath",
+            "type": "promptString",
+            "description": "Video dosya yolu",
+            "default": "D:\\test.mp4"
+        }
+    ]
+}
