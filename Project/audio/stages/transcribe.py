@@ -4,6 +4,7 @@
 
 import time
 from audio.utils.vram_manager import VRAMManager
+from core.whisper_model import normalize_whisper_model_name
 
 # Modul seviyesi model cache.
 # UYARI: Bu dict thread-safe degildir. Cok-thread ortaminda race condition
@@ -102,7 +103,12 @@ class TranscribeStage:
     def _transcribe(self, audio_path: str, opts: dict, diarization=None) -> dict:
         t0 = time.time()
 
-        model_name = opts.get("whisper_model", "large-v3")
+        raw_model_name = opts.get("whisper_model", "large-v3")
+        model_name = normalize_whisper_model_name(raw_model_name)
+        if raw_model_name not in (None, "") and raw_model_name != model_name:
+            self._log(
+                f"  [Whisper] Model normalize edildi: {raw_model_name} -> {model_name}"
+            )
         language = opts.get("whisper_language", "tr")
         # beam_size is a decoding parameter; batch_size kept as legacy fallback only
         try:

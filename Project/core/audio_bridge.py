@@ -19,6 +19,8 @@ import threading
 import time
 from pathlib import Path
 
+from core.whisper_model import normalize_whisper_model_name
+
 
 class AudioBridge:
     """
@@ -104,6 +106,29 @@ class AudioBridge:
             "work_dir": str(work_dir),
             **config,
         }
+        options = full_config.get("options")
+        if isinstance(options, dict):
+            options = dict(options)
+            raw_model = options.get("whisper_model")
+            normalized_model = normalize_whisper_model_name(raw_model)
+            if raw_model not in (None, "") and raw_model != normalized_model:
+                self._log(
+                    f"  [AudioBridge] Whisper model normalize edildi: "
+                    f"{raw_model} -> {normalized_model}"
+                )
+            options["whisper_model"] = normalized_model
+            full_config["options"] = options
+
+        if "asr_model" in full_config:
+            raw_asr_model = full_config.get("asr_model")
+            normalized_asr_model = normalize_whisper_model_name(raw_asr_model)
+            if raw_asr_model not in (None, "") and raw_asr_model != normalized_asr_model:
+                self._log(
+                    f"  [AudioBridge] ASR model normalize edildi: "
+                    f"{raw_asr_model} -> {normalized_asr_model}"
+                )
+            full_config["asr_model"] = normalized_asr_model
+
         config_path = str(Path(work_dir) / "audio_config.json")
         result_path = str(Path(work_dir) / "audio_result.json")
 

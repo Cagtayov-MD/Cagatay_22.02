@@ -10,6 +10,7 @@ except ImportError:
     # Fallback: eger audio paketi erisilemiyorsa, eski implementasyonu kullan
     import time
     from core.vram_manager import VRAMManager
+    from core.whisper_model import normalize_whisper_model_name
 
     class TranscribeStage:
         def __init__(self, log_cb=None):
@@ -19,7 +20,10 @@ except ImportError:
             t0 = time.time()
 
             opts = (config.get('options') or {})
-            model_name = opts.get('whisper_model', 'large-v3')
+            raw_model_name = opts.get('whisper_model', 'large-v3')
+            model_name = normalize_whisper_model_name(raw_model_name)
+            if raw_model_name not in (None, '') and raw_model_name != model_name:
+                self._log(f"  [Whisper] Model normalize edildi: {raw_model_name} -> {model_name}")
             language = opts.get('whisper_language', 'tr')
             # beam_size is a decoding parameter; batch_size kept as legacy fallback only
             try:

@@ -28,6 +28,7 @@ from audio.stages.diarize import DiarizeStage
 from audio.stages.transcribe import TranscribeStage
 from audio.stages.post_process import PostProcessStage
 from audio.stages.detect_language import LanguageDetectionStage
+from core.whisper_model import normalize_whisper_model_name
 
 
 class AudioPipeline:
@@ -53,11 +54,19 @@ class AudioPipeline:
         t0 = time.time()
         video_path = self.config.get("video_path", "")
         work_dir = self.config.get("work_dir", "")
-        options = self.config.get("options", {})
+        options = dict(self.config.get("options", {}))
         stages_to_run = self.config.get(
             "stages",
             ["extract", "detect_language", "denoise", "diarize", "transcribe", "post_process"]
         )
+        raw_whisper_model = options.get("whisper_model")
+        whisper_model = normalize_whisper_model_name(raw_whisper_model)
+        if raw_whisper_model not in (None, "") and raw_whisper_model != whisper_model:
+            self._log(
+                f"  [AudioPipeline] Whisper model normalize edildi: "
+                f"{raw_whisper_model} -> {whisper_model}"
+            )
+        options["whisper_model"] = whisper_model
 
         audio_dir = str(Path(work_dir) / "audio_work")
         os.makedirs(audio_dir, exist_ok=True)
@@ -70,7 +79,7 @@ class AudioPipeline:
             "duration_sec": 0.0,
             "processing_time_sec": 0.0,
             "asr_engine": "faster-whisper",
-            "whisper_model": options.get("whisper_model", "large-v3"),
+            "whisper_model": whisper_model,
             "speakers": {},
             "transcript": [],
             "summary_tr": "",
@@ -228,7 +237,7 @@ class AudioPipeline:
                 clean_wav,
                 diarization=diarize_result.get("segments", []),
                 options={
-                    "whisper_model": options.get("whisper_model", "large-v3"),
+                    "whisper_model": whisper_model,
                     "whisper_language": _whisper_lang,
                     "compute_type": options.get("compute_type", "float16"),
                     "beam_size": options.get("beam_size", 1),

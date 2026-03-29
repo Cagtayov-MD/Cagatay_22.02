@@ -20,6 +20,8 @@ import subprocess
 from datetime import datetime
 from typing import Dict, Any
 
+from core.whisper_model import normalize_whisper_model_name
+
 logger = logging.getLogger("VITOS.pipeline_runner")
 
 
@@ -448,7 +450,8 @@ def _run_whisper_detailed(audio_path: str, config: Dict, _log=None) -> dict:
             _log(msg)
 
     venv_audio_python = os.environ.get("VENV_AUDIO_PYTHON", r"F:\Root\venv_audio\Scripts\python.exe")
-    model_name = config.get("asr_model", "large-v3")
+    raw_model_name = config.get("asr_model", "large-v3")
+    model_name = normalize_whisper_model_name(raw_model_name)
     language = config.get("asr_language", "tr")
     asr_device = config.get("asr_device", "cuda")
     device = asr_device if (asr_device == "cuda") else "cpu"
@@ -459,6 +462,9 @@ def _run_whisper_detailed(audio_path: str, config: Dict, _log=None) -> dict:
     beam_size = int(config.get("beam_size", config.get("asr_beam_size", 1)) or 1)
     initial_prompt = config.get("asr_initial_prompt", "Türkçe futbol maçı spiker yorumu.")
     audio_duration = _get_audio_duration(audio_path, config)
+
+    if raw_model_name not in (None, "") and raw_model_name != model_name:
+        log(f"  [Whisper] Model normalize edildi: {raw_model_name} -> {model_name}")
 
     log(
         f"  [Whisper] faster-whisper hazırlanıyor: {model_name} "

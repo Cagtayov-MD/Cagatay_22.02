@@ -137,9 +137,19 @@ _TR_CHARS = set("çÇğĞıİöÖşŞüÜ")
 
 
 def _is_turkish_text(text: str) -> bool:
-    """Metnin Türkçe olup olmadığını kontrol et."""
-    if not text:
+    """Metnin Türkçe olup olmadığını kontrol et.
+
+    Arapça/Kiril gibi Latin-dışı metinler (ör. yanlış dil tespiti sonucu gelen özetler)
+    Latin karakter oranı kontrolüyle reddedilir.
+    """
+    if not text or len(text) < 20:
         return False
+    alpha_count = sum(1 for c in text if c.isalpha())
+    if alpha_count == 0:
+        return False
+    latin_count = sum(1 for c in text if c.isalpha() and ord(c) < 0x0250)
+    if latin_count / alpha_count < 0.7:
+        return False  # Latin oranı %70 altında → Türkçe değil (Arapça, Kiril vb.)
     return any(c in _TR_CHARS for c in text)
 
 

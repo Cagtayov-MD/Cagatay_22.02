@@ -1,6 +1,6 @@
 """test_search_crew_prompt.py
 
-_search_crew_with_gemini — "veri yok" satırları için Gemini 2.0 Flash
+_search_crew_with_gemini — "veri yok" satırları için Gemini 2.5 Flash
 arama prompt'u ve min_domain eşiğini doğrular.
 
 Tablo (export_engine.py:959–983):
@@ -19,6 +19,7 @@ Testler:
   SP-06: min_domains karşılanırsa isim döner
   SP-07: rol_sorusu tanımsızsa None döner (erken çıkış)
   SP-08: Anchor seçimi — known_fields'daki ilk dolu rol kullanılır
+  SP-09: GeminiClient, gemini-2.5-flash modeliyle kurulur
 """
 
 import os
@@ -216,6 +217,27 @@ class TestSearchCrewPrompt(unittest.TestCase):
         )
         self.assertIn("İlk Yönetmen olan", prompt)
         self.assertNotIn("Yapımcı Adı", prompt)
+
+    def test_sp09_uses_gemini_25_flash_model(self):
+        """GeminiSearch, GeminiClient'i 2.5 Flash ile kurmalı."""
+        mock_client = MagicMock()
+        mock_client.generate_with_search.return_value = (
+            "Kameramanın Adı", ["site1.com", "site2.com", "site3.com"]
+        )
+
+        with patch("core.gemini_client.GeminiClient", return_value=mock_client) as mock_ctor, \
+             patch("config.runtime_paths.get_gemini_api_key", return_value="fake-key"):
+            from core.export_engine import _search_crew_with_gemini
+            result = _search_crew_with_gemini(
+                target_role="KAMERA",
+                year="1991",
+                film_title="FELANCA FİLM",
+                known_fields={},
+                episode_no="YOK",
+            )
+
+        self.assertEqual(result, "Kameramanın Adı")
+        mock_ctor.assert_called_once_with(model="gemini-2.5-flash", api_key="fake-key")
 
 
 if __name__ == "__main__":

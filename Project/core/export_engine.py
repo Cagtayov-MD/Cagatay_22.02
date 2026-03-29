@@ -101,6 +101,26 @@ def _extract_episode_from_id(film_id: str) -> str:
     return 'YOK'
 
 
+# Bölüm etiketi tespiti — dizi kayıtlarında film_title bölüm başlığı olabilir
+# Örnek: "Avsnitt 8", "Episode 12", "Bölüm 5", "S01E03"
+_EPISODE_LABEL_RE = re.compile(
+    r'^(?:'
+    r'(?:avsnitt|episode|ep\.?|episod[eio]?|folge|aflevering|bölüm|bolum|capitulo|chapitre)'
+    r'\s*#?\s*\d+(?:\.\d+)?'
+    r'|'
+    r'\d+\s*\.?\s*(?:avsnitt|episode|bölüm|bolum)'
+    r'|'
+    r'S\d{1,2}E\d{1,3}'
+    r')$',
+    re.IGNORECASE,
+)
+
+
+def _is_episode_label(text: str) -> bool:
+    """Metin bir bölüm etiketi mi? (ör. 'Avsnitt 8', 'Episode 12', 'S01E03')"""
+    return bool(_EPISODE_LABEL_RE.match((text or "").strip()))
+
+
 # Türkçe'ye özgü karakterler (Latince'de bulunmayan)
 _TR_ONLY_CHARS = set('çğıöşüÇĞİÖŞÜ')
 
@@ -474,6 +494,18 @@ def _wrap_max_words(text: str, max_words: int = 20, indent: str = "  ") -> str:
 # ═══════════════════════════════════════════════════════════════════
 MAX_DIRECTORS = 2  # Bir filmde en fazla 2 yönetmen kabul edilir
 
+# TXT çıktısında rol başına maksimum isim sayısı.
+# report.json tam veri taşımaya devam eder; bu limit yalnızca görüntülemede uygulanır.
+_TXT_ROLE_LIMITS: dict[str, int] = {
+    "YAPIMCI": 4,
+    "YÖNETMEN YARDIMCISI": 3,
+    "KAMERA": 2,
+    "KURGU": 2,
+}
+
+# TXT çıktısında gösterilecek maksimum oyuncu sayısı (report.json tam listeyi taşır).
+_TXT_CAST_LIMIT = 20
+
 _OUTPUT_ROLES = [
     "YAPIMCI",
     "YÖNETMEN",
@@ -496,265 +528,233 @@ _ROLE_QUESTIONS = {
     "KURGU":               "kurgusu (editörü)",
 }
 
-# Rol adlarını (küçük harf) → çıktı rolü adına map eden sözlük
+
+def _normalize_role_label(text: str) -> str:
+    """Rol etiketini exact eşleştirme için normalize et."""
+    value = (text or "").strip().lower()
+    value = re.sub(r"\s+", " ", value)
+    return value.strip(" \t\r\n:;,.!?")
+
+
+_DIRECTOR_ROLE_ALIASES_RAW = (
+    "director",
+    "directed by",
+    "film director",
+    "movie director",
+    "television director",
+    "tv director",
+    "episode director",
+    "directed and written by",
+    "a film by",
+    "an episode directed by",
+    "series directed by",
+    "yönetmen",
+    "film yönetmeni",
+    "sinema yönetmeni",
+    "dizi yönetmeni",
+    "bölüm yönetmeni",
+    "yöneten",
+    "yöneteni",
+    "yönetmen:",
+    "bir film",
+    "bir dizi",
+    "yönetmenliğinde",
+    "regie",
+    "regisseur",
+    "regisseurin",
+    "filmregisseur",
+    "filmregisseurin",
+    "regie von",
+    "ein film von",
+    "inszeniert von",
+    "réalisateur",
+    "réalisatrice",
+    "réalisé par",
+    "réalisation",
+    "un film de",
+    "film de",
+    "directora",
+    "director de cine",
+    "directora de cine",
+    "dirección",
+    "dirigido por",
+    "dirigida por",
+    "una película de",
+    "película de",
+    "regista",
+    "regia di",
+    "diretto da",
+    "diretta da",
+    "un film di",
+    "σκηνοθέτης",
+    "σκηνοθεσία",
+    "σκηνοθεσία:",
+    "σε σκηνοθεσία",
+    "μια ταινία του",
+    "مخرج",
+    "مخرجة",
+    "إخراج",
+    "إخراج:",
+    "فيلم من إخراج",
+    "مسلسل من إخراج",
+    "أخرج",
+    "أخرجها",
+    "निर्देशक",
+    "निर्देशिका",
+    "निर्देशन",
+    "निर्देशन:",
+    "द्वारा निर्देशित",
+    "एपिसोड निर्देशक",
+)
+
+_STRICT_ROLE_ALIASES_RAW: dict[str, tuple[str, ...]] = {
+    "YAPIMCI": (
+        "yapımcı",
+        "yapimci",
+        "producer",
+        "produced by",
+        "produzent",
+        "producteur",
+        "productrice",
+        "produttore",
+        "produttrice",
+        "productor",
+        "productora",
+        "продюсер",
+        "hergestellt von",
+    ),
+    "YÖNETMEN": _DIRECTOR_ROLE_ALIASES_RAW,
+    "YÖNETMEN YARDIMCISI": (
+        "yönetmen yardımcısı",
+        "yonetmen yardimcisi",
+        "yardımcı yönetmen",
+        "yardimci yonetmen",
+        "assistant director",
+        "first assistant director",
+        "second assistant director",
+        "third assistant director",
+        "second second assistant director",
+        "1st ad",
+        "2nd ad",
+        "regiassistent",
+        "assistenzregisseur",
+        "reji asistani",
+        "assistant réalisateur",
+        "assistant realisateur",
+        "assistante réalisatrice",
+        "2eme assistant réalisateur",
+        "2eme assistant realisateur",
+        "22me assistant realisateur",
+        "2ème assistant réalisateur",
+        "ayudante de dirección",
+        "asistente de dirección",
+        "regieassistenz",
+        "aiuto regista",
+        "assistente alla regia",
+        "secondo aiuto regista",
+        "terzo aiuto regista",
+        "musaid al mukhraj",
+        "musaid mukhraj",
+        "sahayak nirdeshak",
+    ),
+    "GÖRÜNTÜ YÖNETMENİ": (
+        "görüntü yönetmeni",
+        "goruntu yonetmeni",
+        "cinematographer",
+        "director of photography",
+        "dop",
+        "dp",
+        "directeur de la photographie",
+        "director de fotografía",
+        "director de fotografia",
+        "direttore della fotografia",
+        "direttore fotografia",
+        "chef opérateur",
+        "chef operateur",
+        "fotografia di",
+    ),
+    "SENARYO": (
+        "senaryo",
+        "senarist",
+        "screenwriter",
+        "screenplay",
+        "writer",
+        "written by",
+        "scénariste",
+        "scenariste",
+        "scénario",
+        "scenario",
+        "guión",
+        "guion",
+        "drehbuchautor",
+        "drehbuch von",
+        "sceneggiatore",
+        "sceneggiatura",
+        "guionista",
+        "сценарист",
+        "patakatha",
+        "patkatha",
+        "sinaryu",
+    ),
+    "KAMERA": (
+        "kameraman",
+        "kamera",
+        "camera",
+        "camera operator",
+        "operatör",
+        "operatoru",
+        "cadreur",
+        "opérateur",
+        "operateur",
+        "opérateur de prise de vue",
+        "operateur de prise de vue",
+        "operador de cámara",
+        "operador de camara",
+        "kameraoperateur",
+        "operatore di ripresa",
+        "operatore alla macchina",
+        "musawwir",
+        "kaimraaman",
+        "kamraman",
+    ),
+    "KURGU": (
+        "kurgu",
+        "montaj",
+        "editor",
+        "film editor",
+        "edited by",
+        "editing",
+        "monteur",
+        "monteuse",
+        "cutter",
+        "schnitt",
+        "montaggio",
+        "montage",
+        "montaje",
+        "edición",
+        "editor de montaje",
+        "montatore",
+        "montatrice",
+        "montatura",
+        "montaaj",
+        "sampadak",
+        "sampadan",
+        "sampaadak",
+    ),
+}
+
+_STRICT_ROLE_ALIASES: dict[str, frozenset[str]] = {
+    output_role: frozenset(
+        _normalize_role_label(alias) for alias in aliases if alias
+    )
+    for output_role, aliases in _STRICT_ROLE_ALIASES_RAW.items()
+}
+
+# Rol adlarını (küçük harf) → çıktı rolü adına map eden exact sözlük
 _ROLE_TO_OUTPUT: dict[str, str] = {
-    # Yapımcı
-    "yapımcı": "YAPIMCI", "yapimci": "YAPIMCI",
-    "yapım yönetmeni": "YAPIMCI",
-    "producer": "YAPIMCI", "produced by": "YAPIMCI",
-    "executive producer": "YAPIMCI",
-    "line producer": "YAPIMCI",
-    "associate producer": "YAPIMCI",
-    "co-producer": "YAPIMCI", "coproducer": "YAPIMCI",
-    "produzent": "YAPIMCI", "producteur": "YAPIMCI",
-    "productrice": "YAPIMCI", "produttore": "YAPIMCI",
-    "productor": "YAPIMCI", "продюсер": "YAPIMCI",
-    "yürütücü yapımcı": "YAPIMCI", "yurtucu yapimci": "YAPIMCI",
-    # Yönetmen
-    "yönetmen": "YÖNETMEN", "yonetmen": "YÖNETMEN",
-    "yöneten": "YÖNETMEN", "yoneten": "YÖNETMEN",
-    "director": "YÖNETMEN", "directed by": "YÖNETMEN",
-    "co-director": "YÖNETMEN", "codirector": "YÖNETMEN",
-    "réalisateur": "YÖNETMEN", "réalisatrice": "YÖNETMEN",
-    "realisateur": "YÖNETMEN", "réalisation": "YÖNETMEN",
-    "regisseur": "YÖNETMEN", "regie": "YÖNETMEN",
-    "regia": "YÖNETMEN", "reżyser": "YÖNETMEN",
-    "rendező": "YÖNETMEN", "режиссёр": "YÖNETMEN",
-    "ein film von": "YÖNETMEN", "a film by": "YÖNETMEN",
-    "film by": "YÖNETMEN",
-    # Yönetmen Yardımcısı
-    "yönetmen yardımcısı": "YÖNETMEN YARDIMCISI",
-    "yonetmen yardimcisi": "YÖNETMEN YARDIMCISI",
-    "yardımcı yönetmen": "YÖNETMEN YARDIMCISI",
-    "yardimci yonetmen": "YÖNETMEN YARDIMCISI",
-    "assistant director": "YÖNETMEN YARDIMCISI",
-    "first assistant director": "YÖNETMEN YARDIMCISI",
-    "second assistant director": "YÖNETMEN YARDIMCISI",
-    "third assistant director": "YÖNETMEN YARDIMCISI",
-    "second second assistant director": "YÖNETMEN YARDIMCISI",
-    "1st ad": "YÖNETMEN YARDIMCISI", "2nd ad": "YÖNETMEN YARDIMCISI",
-    "regiassistent": "YÖNETMEN YARDIMCISI",
-    "assistenzregisseur": "YÖNETMEN YARDIMCISI",
-    "reji asistani": "YÖNETMEN YARDIMCISI",
-    # Görüntü Yönetmeni (Director of Photography / Cinematographer)
-    "görüntü yönetmeni": "GÖRÜNTÜ YÖNETMENİ",
-    "goruntu yonetmeni": "GÖRÜNTÜ YÖNETMENİ",
-    "görüntü": "GÖRÜNTÜ YÖNETMENİ", "goruntu": "GÖRÜNTÜ YÖNETMENİ",
-    "cinematographer": "GÖRÜNTÜ YÖNETMENİ",
-    "director of photography": "GÖRÜNTÜ YÖNETMENİ",
-    "dop": "GÖRÜNTÜ YÖNETMENİ", "dp": "GÖRÜNTÜ YÖNETMENİ",
-    "directeur de la photographie": "GÖRÜNTÜ YÖNETMENİ",
-    "direttore della fotografia": "GÖRÜNTÜ YÖNETMENİ",
-    # Senaryo
-    "senaryo": "SENARYO", "senarist": "SENARYO",
-    "screenwriter": "SENARYO", "screenplay": "SENARYO",
-    "writer": "SENARYO", "written by": "SENARYO",
-    "scénariste": "SENARYO", "scenariste": "SENARYO",
-    "drehbuchautor": "SENARYO",
-    "sceneggiatore": "SENARYO", "guionista": "SENARYO",
-    "сценарист": "SENARYO", "script": "SENARYO",
-    "story by": "SENARYO", "story": "SENARYO",
-    "screen story": "SENARYO", "original story": "SENARYO",
-    "dialogue": "SENARYO", "dialogues": "SENARYO",
-    "adaptation": "SENARYO",
-    # Kamera (Camera Operator / Kameraman)
-    "kameraman": "KAMERA", "kamera": "KAMERA",
-    "camera": "KAMERA", "camera operator": "KAMERA",
-    "steadicam operator": "KAMERA", "steadicam": "KAMERA",
-    "kameramann": "KAMERA",
-    "operatör": "KAMERA", "operatoru": "KAMERA",
-    # Kurgu
-    "kurgu": "KURGU", "montaj": "KURGU",
-    "editor": "KURGU", "film editor": "KURGU",
-    "supervising editor": "KURGU", "picture editor": "KURGU",
-    "edited by": "KURGU", "editing": "KURGU",
-    "monteur": "KURGU", "monteuse": "KURGU",
-    "cutter": "KURGU", "schnitt": "KURGU",
-    "montaggio": "KURGU", "montage": "KURGU",
-    # ─── YAPIMCI ───────────────────────────────────────────────────────────
-    # Fransızca
-    "producteur délégué": "YAPIMCI", "producteur delegue": "YAPIMCI",
-    "producteur exécutif": "YAPIMCI", "producteur executif": "YAPIMCI",
-    "production exécutive": "YAPIMCI", "production executive": "YAPIMCI",
-    "produetion exécutive": "YAPIMCI",  # OCR varyantı
-    "production déléguée": "YAPIMCI", "production deleguee": "YAPIMCI",
-    "directeur de production": "YAPIMCI",
-    "coproduction": "YAPIMCI", "une coproduction": "YAPIMCI",
-    # İspanyolca
-    "producción": "YAPIMCI", "produccion": "YAPIMCI",
-    "productora": "YAPIMCI",
-    # Almanca
-    "hergestellt von": "YAPIMCI", "hersteller": "YAPIMCI",
-    # İtalyanca
-    "produttrice": "YAPIMCI",          # kadın yapımcı
-    "produttore esecutivo": "YAPIMCI",
-    "coproduttore": "YAPIMCI", "coproduzione": "YAPIMCI",
-    # Arapça (Latin transkripsiyon)
-    "muntij": "YAPIMCI", "muntig": "YAPIMCI",
-    "muntij munaffidh": "YAPIMCI",     # executive producer
-    # Hintçe (transkripsiyon)
-    "nirmaata": "YAPIMCI", "nirmata": "YAPIMCI",
-    "nirmit": "YAPIMCI",               # "produced" — jenerik form
-    # ─── YÖNETMEN ──────────────────────────────────────────────────────────
-    # Fransızca
-    "réalisation": "YÖNETMEN", "realisation": "YÖNETMEN",
-    "réalisateur": "YÖNETMEN", "realisateur": "YÖNETMEN",
-    "reallsation": "YÖNETMEN",  # OCR varyantı
-    "réalisé par": "YÖNETMEN", "realise par": "YÖNETMEN",
-    "un film de": "YÖNETMEN",
-    # İspanyolca
-    "dirección": "YÖNETMEN", "direccion": "YÖNETMEN",
-    "director de": "YÖNETMEN",
-    # Almanca
-    "regie führte": "YÖNETMEN",
-    # İtalyanca
-    "regista": "YÖNETMEN",             # İtalyancada yönetmen kişi
-    "diretto da": "YÖNETMEN", "diretta da": "YÖNETMEN",
-    "un film di": "YÖNETMEN",
-    # Arapça transkripsiyon
-    "ikhraa": "YÖNETMEN", "iqraj": "YÖNETMEN",
-    "mukhraj": "YÖNETMEN",             # makhraj/mukhraj — director
-    # Hintçe transkripsiyon
-    "nirdeshak": "YÖNETMEN", "nirdeshika": "YÖNETMEN",
-    "nirdeshit": "YÖNETMEN",           # "directed" — jenerik form
-    # ─── YÖNETMEN YARDIMCISI ──────────────────────────────────────────────
-    # Fransızca
-    "assistant réalisateur": "YÖNETMEN YARDIMCISI",
-    "assistant realisateur": "YÖNETMEN YARDIMCISI",
-    "assistante réalisatrice": "YÖNETMEN YARDIMCISI",
-    "2eme assistant réalisateur": "YÖNETMEN YARDIMCISI",
-    "2eme assistant realisateur": "YÖNETMEN YARDIMCISI",
-    "22me assistant realisateur": "YÖNETMEN YARDIMCISI",  # OCR varyantı
-    "2ème assistant réalisateur": "YÖNETMEN YARDIMCISI",
-    # İspanyolca
-    "ayudante de dirección": "YÖNETMEN YARDIMCISI",
-    "asistente de dirección": "YÖNETMEN YARDIMCISI",
-    # Almanca
-    "regieassistenz": "YÖNETMEN YARDIMCISI",
-    # İtalyanca
-    "aiuto regista": "YÖNETMEN YARDIMCISI",     # ana İtalyan terimi
-    "assistente alla regia": "YÖNETMEN YARDIMCISI",
-    "secondo aiuto regista": "YÖNETMEN YARDIMCISI",
-    "terzo aiuto regista": "YÖNETMEN YARDIMCISI",
-    # Arapça transkripsiyon
-    "musaid al mukhraj": "YÖNETMEN YARDIMCISI",
-    "musaid mukhraj": "YÖNETMEN YARDIMCISI",
-    # Hintçe transkripsiyon
-    "sahayak nirdeshak": "YÖNETMEN YARDIMCISI",
-    # ─── GÖRÜNTÜ YÖNETMENİ ────────────────────────────────────────────────
-    # Fransızca
-    "directeur de la photographie": "GÖRÜNTÜ YÖNETMENİ",
-    "chef opérateur": "GÖRÜNTÜ YÖNETMENİ",
-    "chef operateur": "GÖRÜNTÜ YÖNETMENİ",
-    # İspanyolca
-    "director de fotografía": "GÖRÜNTÜ YÖNETMENİ",
-    "director de fotografia": "GÖRÜNTÜ YÖNETMENİ",
-    # Almanca
-    "kameraführung": "GÖRÜNTÜ YÖNETMENİ",
-    "bildgestaltung": "GÖRÜNTÜ YÖNETMENİ",
-    # İtalyanca
-    "direttore fotografia": "GÖRÜNTÜ YÖNETMENİ",    # kısa form
-    "fotografia di": "GÖRÜNTÜ YÖNETMENİ",           # kredi satırı formu
-    # Arapça transkripsiyon
-    "mudeer taswiir": "GÖRÜNTÜ YÖNETMENİ",
-    "mudirut taswir": "GÖRÜNTÜ YÖNETMENİ",
-    # Hintçe transkripsiyon
-    "chitragrahi": "GÖRÜNTÜ YÖNETMENİ",
-    "chayankaar": "GÖRÜNTÜ YÖNETMENİ",              # Bollywood kredi formu
-    # ─── SENARYO ──────────────────────────────────────────────────────────
-    # Fransızca
-    "scénario": "SENARYO", "scenario": "SENARYO",
-    "adaptation et dialogues de": "SENARYO",
-    "adaptation": "SENARYO",
-    "d'après son roman": "SENARYO",
-    # İspanyolca
-    "guión": "SENARYO", "guion": "SENARYO",
-    # Almanca
-    "drehbuch von": "SENARYO",
-    # İtalyanca
-    "sceneggiatura": "SENARYO",                     # senaryo metni (sceneggiatore=senaryo yazarı)
-    "soggetto": "SENARYO",                          # hikaye/story by
-    "soggetto e sceneggiatura": "SENARYO",
-    "dialoghi": "SENARYO",                          # diyalog yazarı
-    # Arapça transkripsiyon
-    "sinaryu": "SENARYO", "nass": "SENARYO",
-    "qissa": "SENARYO",                             # story
-    # Hintçe transkripsiyon
-    "patakatha": "SENARYO", "patkatha": "SENARYO",
-    "kahani": "SENARYO",                            # story/hikaye
-    # ─── KAMERA ───────────────────────────────────────────────────────────
-    # Fransızca
-    "cadreur": "KAMERA",
-    "opérateur": "KAMERA", "operateur": "KAMERA",
-    "opérateur de prise de vue": "KAMERA",
-    "operateur de prise de vue": "KAMERA",
-    "assistant opérateur": "KAMERA", "assistant operateur": "KAMERA",
-    "camera assistant": "KAMERA",
-    "assistant camera": "KAMERA",
-    "first assistant camera": "KAMERA",
-    "second assistant camera": "KAMERA",
-    "focus puller": "KAMERA",
-    # İspanyolca
-    "operador de cámara": "KAMERA", "operador de camara": "KAMERA",
-    # Almanca
-    "kameraoperateur": "KAMERA", "kamerabedienung": "KAMERA",
-    # İtalyanca
-    "operatore di ripresa": "KAMERA",
-    "operatore alla macchina": "KAMERA",
-    # Arapça transkripsiyon
-    "musawwir": "KAMERA",
-    # Hintçe transkripsiyon
-    "kaimraaman": "KAMERA", "kamraman": "KAMERA",
-    "chitrakaar": "KAMERA",                         # camera/cameraman
-    # ─── KURGU ────────────────────────────────────────────────────────────
-    # Fransızca
-    "assistant monteur": "EXCLUDED",
-    # İspanyolca
-    "montaje": "KURGU", "edición": "KURGU",
-    "editor de montaje": "KURGU",
-    # Almanca
-    "schnittführung": "KURGU",
-    # İtalyanca
-    "montatore": "KURGU",              # erkek kurgu editörü
-    "montatrice": "KURGU",             # kadın kurgu editörü
-    "montatura": "KURGU",              # kurgu/montaj süreci
-    # Arapça transkripsiyon
-    "montaaj": "KURGU",
-    "murikaaj": "KURGU",               # montaj (Mısır transkripsiyon varyantı)
-    # Hintçe transkripsiyon
-    "sampadak": "KURGU", "sampadan": "KURGU",
-    "sampaadak": "KURGU",              # uzun ünlü varyantı
-    # ─── EXCLUDED — kategoride yok, çıktıya yazılmaz ─────────────────────
-    # Script supervisor / dekor rolleri (senaryo yazarlığı değil)
-    "scripte": "EXCLUDED", "chef décorateur": "EXCLUDED", "chef decorateur": "EXCLUDED",
-    # Müzik / Besteci
-    "musique": "EXCLUDED", "musique de": "EXCLUDED",
-    "music by": "EXCLUDED", "original music": "EXCLUDED",
-    "composer": "EXCLUDED",
-    # Ses
-    "son": "EXCLUDED", "sound": "EXCLUDED",
-    # Fix-G: Ses/Müzik/VFX editörler fuzzy ile KURGU'ya düşmesin
-    "sound editor": "EXCLUDED", "supervising sound editor": "EXCLUDED",
-    "music editor": "EXCLUDED", "music supervisor": "EXCLUDED",
-    "music director": "EXCLUDED",
-    "adr editor": "EXCLUDED", "adr": "EXCLUDED",
-    "dialogue editor": "EXCLUDED",
-    "vfx editor": "EXCLUDED", "visual effects editor": "EXCLUDED",
-    "foley": "EXCLUDED", "foley artist": "EXCLUDED", "foley editor": "EXCLUDED",
-    "re-recording mixer": "EXCLUDED", "sound mixer": "EXCLUDED",
-    "negative cutter": "EXCLUDED",
-    "assistant editor": "EXCLUDED",
-    "first assistant editor": "EXCLUDED",
-    "script supervisor": "EXCLUDED",
-    "color timer": "EXCLUDED",
-    "casting": "EXCLUDED",
-    "casting director": "EXCLUDED",
-    "art direction": "EXCLUDED",
-    "assistant art director": "EXCLUDED",
-    "set decoration": "EXCLUDED",
-    # Makyaj / Kostüm vb.
-    "maquillage": "EXCLUDED", "makeup": "EXCLUDED",
-    "costumes": "EXCLUDED",
+    alias: output_role
+    for output_role, aliases in _STRICT_ROLE_ALIASES.items()
+    for alias in aliases
 }
 
 _EXCLUDED_ROLE_HINTS = frozenset({
@@ -779,18 +779,9 @@ _EXCLUDED_ROLE_HINTS = frozenset({
     "stunt",
 })
 
-_FUZZY_ROLE_CHOICES = [
-    role_name for role_name, output_role in _ROLE_TO_OUTPUT.items()
-    if output_role in _OUTPUT_ROLE_SET
-]
-
-def _contains_any(texts: list[str], terms: frozenset[str]) -> bool:
-    return any(term in text for text in texts for term in terms)
-
-
 def _classify_output_role(role_raw: str) -> str | None:
-    """Ham rol metnini 7'li çıktı rolüne indir; uymuyorsa dışarıda bırak."""
-    role_lower = (role_raw or "").strip().lower()
+    """Ham rol metnini 7'li çıktı rolüne exact eşleştir; uymuyorsa dışarıda bırak."""
+    role_lower = _normalize_role_label(role_raw)
     if not role_lower:
         return None
 
@@ -801,30 +792,33 @@ def _classify_output_role(role_raw: str) -> str | None:
     if any(term in role_lower for term in _EXCLUDED_ROLE_HINTS):
         return "EXCLUDED"
 
-    if _HAS_RAPIDFUZZ:
-        match = _rf_process.extractOne(
-            role_lower,
-            _FUZZY_ROLE_CHOICES,
-            scorer=_fuzz.WRatio,
-            score_cutoff=82,
-        )
-        if match:
-            return _ROLE_TO_OUTPUT.get(match[0])
-
     return None
 
 
 def _sanitize_output_roles(crew_roles: dict | None) -> dict[str, list[str]]:
-    """Çıktıyı yalnızca 7 rol ile sınırla ve duplike isimleri temizle."""
+    """Çıktıyı yalnızca 7 rol ile sınırla ve duplike isimleri temizle.
+
+    Aynı rol içinde aksan/case farklarını normalize ederek tekilleştirir;
+    çakışmada daha zengin varyant (_best_variant) korunur. Roller arası merge yapılmaz.
+    """
     sanitized: dict[str, list[str]] = {role: [] for role in _OUTPUT_ROLES}
 
     for role_name, names in (crew_roles or {}).items():
         output_role = role_name if role_name in _OUTPUT_ROLE_SET else _classify_output_role(role_name)
         if output_role not in _OUTPUT_ROLE_SET:
             continue
+        seen_keys: dict[str, int] = {}  # norm_key → sanitized[output_role] indeksi
         for name in (names or []):
             clean_name = (name or "").strip()
-            if clean_name and clean_name not in sanitized[output_role]:
+            if not clean_name:
+                continue
+            nk = _norm_key(clean_name)
+            if nk in seen_keys:
+                idx = seen_keys[nk]
+                existing = sanitized[output_role][idx]
+                sanitized[output_role][idx] = _best_variant([existing, clean_name])
+            else:
+                seen_keys[nk] = len(sanitized[output_role])
                 sanitized[output_role].append(clean_name)
 
     return sanitized
@@ -914,6 +908,7 @@ def _search_crew_with_gemini(
     film_title: str,
     known_fields: dict,
     episode_no: str = "YOK",
+    log_cb=None,
 ) -> str | None:
     """Eksik crew alanını Gemini Google Search grounding ile bulmaya çalış.
 
@@ -927,15 +922,28 @@ def _search_crew_with_gemini(
     Returns:
         Bulunan isim(ler) string olarak, ya da None (bulunamazsa / güvenilir değilse)
     """
+    def _log(msg: str) -> None:
+        if log_cb:
+            log_cb(msg)
+
     rol_sorusu = _ROLE_QUESTIONS.get(target_role)
     if not rol_sorusu or not year or not film_title:
+        _log(
+            f"  [GeminiSearch] '{target_role}' atlandı — "
+            "rol/yıl/başlık bilgisi eksik"
+        )
         return None
 
     try:
         from core.gemini_client import GeminiClient
         from config.runtime_paths import get_gemini_api_key
         api_key = get_gemini_api_key()
-    except Exception:
+    except Exception as exc:
+        _log(f"  [GeminiSearch] '{target_role}' hazırlık hatası: {exc}")
+        return None
+
+    if not api_key:
+        _log(f"  [GeminiSearch] '{target_role}' atlandı — GEMINI_API_KEY yok")
         return None
 
     is_series = episode_no not in ("YOK", "0000", "0", "")
@@ -976,15 +984,31 @@ def _search_crew_with_gemini(
         )
         min_domains = 3
 
-    client = GeminiClient(model="gemini-2.0-flash", api_key=api_key)
+    model = "gemini-2.5-flash"
+    client = GeminiClient(model=model, api_key=api_key)
+    _log(
+        f"  [GeminiSearch] '{target_role}' sorgulanıyor "
+        f"(model={model}, min_domain={min_domains})"
+    )
     answer, domains = client.generate_with_search(prompt)
 
-    if not answer or len(domains) < min_domains:
+    if not answer:
+        _log(f"  [GeminiSearch] '{target_role}' boş yanıt döndü")
+        return None
+
+    if len(domains) < min_domains:
+        _log(
+            f"  [GeminiSearch] '{target_role}' yetersiz domain: "
+            f"{len(domains)}/{min_domains}"
+        )
         return None
 
     # Cevabı tek satıra indir, fazla metin varsa ilk satırı al
     first_line = answer.splitlines()[0].strip()
-    return first_line if first_line else None
+    if not first_line:
+        _log(f"  [GeminiSearch] '{target_role}' ilk satır boş")
+        return None
+    return first_line
 
 
 def post_validate_export(crew_roles: dict[str, list], cast: list) -> list[str]:
@@ -1874,12 +1898,19 @@ class ExportEngine:
             ""
         ).strip()
 
+        # Dizi mi? film_id'den türet (block[2] == '0' → dizi)
+        _is_series = (
+            film_id and _extract_episode_from_id(film_id) not in ('YOK', '')
+        )
+
         # Eğer orijinal başlık hâlâ boşsa ve film_title farklıysa → film_title'ı kullan
         # (film_title ile film_name_tr aynıysa Türkçe demektir, gösterme)
+        # Dizi kaydında film_title bölüm etiketi (ör. "Avsnitt 8") ise kullanma
         if not original_title:
             ft = (cr.get("film_title") or "").strip()
             if ft and (not film_name_tr or ft.lower() != film_name_tr.lower()):
-                original_title = ft
+                if not (_is_series and _is_episode_label(ft)):
+                    original_title = ft
             if not original_title:
                 original_title = "VERİ YOK"
 
@@ -1923,6 +1954,12 @@ class ExportEngine:
 
         cast_list = cr.get("cast") or []
         external_locked = cr.get("verification_status") in ("imdb_verified", "tmdb_verified")
+        # ocr_only_mode: verified source yok + gemini doğrulaması yok → muhafazakar mod
+        ocr_only_mode = (
+            not external_locked
+            and not cr.get("_gemini_crew_roles")
+            and cr.get("verification_status") in ("ocr_parsed", "unverified", None)
+        )
         if external_locked:
             external_cast = [
                 c for c in cast_list
@@ -1945,8 +1982,15 @@ class ExportEngine:
         tmdb_crew = [c for c in (cr.get("crew") or []) if c.get("raw") in ("tmdb", "imdb")]
         gemini_roles = cr.get("_gemini_crew_roles")
         if tmdb_crew:
+            # external_locked ise technical_crew öncelikli kaynak; temiz veri içerir
+            if external_locked:
+                _tech = cr.get("technical_crew") or []
+                _tech_tmdb = [c for c in _tech if c.get("raw") in ("tmdb", "imdb")]
+                primary_crew = _tech_tmdb if _tech_tmdb else tmdb_crew
+            else:
+                primary_crew = tmdb_crew
             crew_roles = _map_tmdb_crew_to_roles(
-                tmdb_crew,
+                primary_crew,
                 director_names,
             )
             if not external_locked:
@@ -1959,6 +2003,15 @@ class ExportEngine:
                 for role_key, names in ocr_roles.items():
                     if not crew_roles.get(role_key):
                         crew_roles[role_key] = names
+            else:
+                # external_locked: sadece technical_crew'dan backfill — sadece BOŞ roller için
+                # _verified_crew_roles kullanılmaz; OCR verisi external lock'u geçemez
+                _tech_backfill = cr.get("technical_crew") or []
+                if _tech_backfill:
+                    _tech_roles = _map_crew_to_roles(_tech_backfill, director_names)
+                    for role_key, names in _tech_roles.items():
+                        if role_key in _OUTPUT_ROLE_SET and not crew_roles.get(role_key):
+                            crew_roles[role_key] = names
         elif gemini_roles:
             crew_roles = gemini_roles
             # MAX_DIRECTORS enforcement — Gemini YÖNETMEN listesini sınırla
@@ -1977,8 +2030,20 @@ class ExportEngine:
         elif cr.get("_verified_crew_roles"):
             crew_roles = cr["_verified_crew_roles"]
         else:
-            crew_roles = _map_crew_to_roles(
-                cr.get("technical_crew") or cr.get("crew") or [], director_names)
+            if ocr_only_mode:
+                # Muhafazakar mod: ham crew yerine güvenilir kaynak seç
+                # _verified_crew_roles yok (yoksa üstteki elif çalışırdı);
+                # _ocr_technical_crew veya technical_crew kullan
+                _trusted_src = (
+                    cr.get("_ocr_technical_crew")
+                    or cr.get("technical_crew")
+                    or []
+                )
+                crew_roles = _map_crew_to_roles(_trusted_src, director_names)
+                self._log("  [ConservativeMode] ocr_only_mode: güvenilir kaynak seçildi")
+            else:
+                crew_roles = _map_crew_to_roles(
+                    cr.get("technical_crew") or cr.get("crew") or [], director_names)
 
         crew_roles = _sanitize_output_roles(crew_roles)
 
@@ -2008,7 +2073,14 @@ class ExportEngine:
             [name for names in crew_roles.values() for name in names],
         )
         # Original title'daki kelimeleri de koru (yalnızca Türkçe olmayan kelimeler)
-        if original_title:
+        # Orijinal başlık Türkçe adla norm_key bazında eşleşiyorsa Türkçe demektir →
+        # protected_words'e ekleme; aksi hâlde yabancı başlık olarak aksanları sıyrılır.
+        _orig_is_tr = (
+            original_title and original_title != "VERİ YOK"
+            and film_name_tr
+            and _norm_key(original_title) == _norm_key(film_name_tr)
+        )
+        if original_title and not _orig_is_tr:
             for token in original_title.split():
                 t = token.strip("''`\".,;:!?()[]{}")
                 if t and not _is_turkish_word(t) and not _is_known_name(t):
@@ -2083,10 +2155,13 @@ class ExportEngine:
         L.append(sep)
 
         if cast_list:
-            for c in cast_list:
+            display_cast = cast_list[:_TXT_CAST_LIMIT]
+            for c in display_cast:
                 actor = (c.get("actor_name") or "").strip()
                 if actor:
                     L.append(f"  {actor}")
+            if len(cast_list) > _TXT_CAST_LIMIT:
+                L.append(f"  ... ve {len(cast_list) - _TXT_CAST_LIMIT} oyuncu daha")
         else:
             L.append("  YOK")
 
@@ -2099,8 +2174,10 @@ class ExportEngine:
 
         for output_role in _OUTPUT_ROLES:
             names = crew_roles.get(output_role) or []
-            if names:
-                for i, name in enumerate(names):
+            limit = _TXT_ROLE_LIMITS.get(output_role)
+            display_names = names[:limit] if limit else names
+            if display_names:
+                for i, name in enumerate(display_names):
                     role_label = output_role if i == 0 else ""
                     L.append(f"  {role_label:<{role_col}}{name}")
             else:
@@ -2114,7 +2191,8 @@ class ExportEngine:
                     if v and r != output_role
                 }
                 llm_answer = _search_crew_with_gemini(
-                    output_role, year, film_name_tr, known, episode_no
+                    output_role, year, film_name_tr, known, episode_no,
+                    log_cb=self._log,
                 )
                 if llm_answer:
                     self._log(

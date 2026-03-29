@@ -263,8 +263,16 @@ def _structural_check(name: str) -> tuple[bool, str]:
     if not _is_latin(t):
         return False, "non_latin"
 
+    # Diyalog satırı — tire/uzun tire ile başlıyor
+    if t[0] in ('-', '—', '–'):
+        return False, "dialogue_marker"
+
+    # Soru veya ünlem işareti → cümle, isim değil
+    if '?' in t or '!' in t:
+        return False, "sentence_punctuation"
+
     # Noktalama yoğunluğu
-    punct_count = sum(1 for c in t if c in "!?;…[]{}()")
+    punct_count = sum(1 for c in t if c in ";…[]{}()")
     if punct_count >= 2:
         return False, "excessive_punctuation"
 
