@@ -124,6 +124,10 @@ def _is_episode_label(text: str) -> bool:
 # Türkçe'ye özgü karakterler (Latince'de bulunmayan)
 _TR_ONLY_CHARS = set('çğıöşüÇĞİÖŞÜ')
 
+# Yalnızca Türkçe'ye özgü karakterler — ç/ö/ü/ş Fransızca/Almanca/vb.'de de var,
+# bu yüzden protected_words filtrelemesinde bu daha dar set kullanılır.
+_TR_EXCLUSIVE_CHARS = frozenset('ğıĞ')
+
 # Saf ASCII olup asla özel isim olmayan yaygın Türkçe fonksiyonel kelimeler.
 # Bu kelimeler "saf ASCII + DB'de yok → yabancı" heuristic'inden muaftır.
 # NOT: Türkçe'ye özgü karakter içeren kelimeler (için, güzel, öyle vb.)
@@ -258,7 +262,10 @@ def _collect_protected_words(*name_groups: list[str]) -> set[str]:
                 if not t:
                     continue
                 # Türkçe isim/veri gibi görünenleri koruma listesine alma.
-                if _is_turkish_word(t) or _is_known_name(t):
+                # _TR_EXCLUSIVE_CHARS: yalnızca ğ/ı gibi kesinlikle Türkçe'ye özgü
+                # karakterler. ç/ö/ü Fransızca/Almanca'da da bulunur; bunları içeren
+                # ama ğ/ı içermeyen kelimeler (ör. "François") yabancı kabul edilir.
+                if any(c in _TR_EXCLUSIVE_CHARS for c in t) or _is_known_name(t):
                     continue
                 protected.add(t.casefold())
     return protected
