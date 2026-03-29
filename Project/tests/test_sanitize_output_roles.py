@@ -67,3 +67,28 @@ def test_empty_names_ignored():
         "YAPIMCI": ["", None, "  ", "Real Name"],
     })
     assert result["YAPIMCI"] == ["Real Name"]
+
+
+def test_cyrillic_names_filtered_by_is_non_person():
+    """Kiril karakter içeren isimler _is_non_person tarafından reddedilmeli."""
+    from core.export_engine import _is_non_person
+    assert _is_non_person("Илья Миньковецкий") is True
+    assert _is_non_person("ТОФИГ ТАГЫЗАДА") is True
+    assert _is_non_person("М. Дабашов") is True
+
+
+def test_cyrillic_latin_duplicate_map_crew_filters_cyrillic():
+    """Aynı kişinin Kiril ve Latin hali varsa, _map_crew_to_roles Kiril olanı atar."""
+    from core.export_engine import _map_crew_to_roles
+    crew = [
+        {"name": "Ilya Minkovetsky", "job": "cinematographer"},
+        {"name": "Илья Миньковецкий", "job": "Director of Photography"},
+    ]
+    result = _map_crew_to_roles(crew, directors=[])
+    dop_names = result.get("GÖRÜNTÜ YÖNETMENİ", [])
+    assert "Ilya Minkovetsky" in dop_names
+    # Kiril karakter içeren isim filtrelenmeli
+    assert all(
+        not any(0x0400 <= ord(c) <= 0x04FF for c in name)
+        for name in dop_names
+    )

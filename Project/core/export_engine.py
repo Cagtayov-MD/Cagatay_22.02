@@ -855,12 +855,13 @@ def _is_non_person(name: str) -> bool:
     """
     if len(name) < 3:
         return True
-    # Fix-C: CJK / Japonca / Korece karakter içeriyorsa kişi ismi değil
+    # Fix-C: CJK / Japonca / Korece / Kiril karakter içeriyorsa kişi ismi değil
     for ch in name:
         cp = ord(ch)
         if (0x4E00 <= cp <= 0x9FFF    # CJK Unified
                 or 0x3040 <= cp <= 0x30FF   # Hiragana / Katakana
-                or 0xAC00 <= cp <= 0xD7AF): # Hangul
+                or 0xAC00 <= cp <= 0xD7AF   # Hangul
+                or 0x0400 <= cp <= 0x04FF): # Kiril (translitere edilmemiş)
             return True
     # Fix-D: boşluk içermeyen tek kelime → soyadı eksik / OCR çöpü (FIRSTLOOVER)
     if " " not in name.strip():

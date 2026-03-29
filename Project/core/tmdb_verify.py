@@ -1105,7 +1105,17 @@ class TMDBVerify:
                             if ratio < 80:
                                 name_words = [_norm(w) for w in person_name.split()]
                                 surname_match = len(_norm(actor)) >= 4 and _norm(actor) in name_words
-                                if not surname_match:
+                                # Prefix match: OCR adı TMDB adının öneki
+                                # (e.g. "Anne Pernod" → "Anne Pernod-Sawada")
+                                ocr_lc = actor.lower().strip()
+                                tmdb_lc = person_name.lower().strip()
+                                prefix_match = (
+                                    len(ocr_lc) >= 8
+                                    and tmdb_lc.startswith(ocr_lc)
+                                    and (len(tmdb_lc) == len(ocr_lc)
+                                         or tmdb_lc[len(ocr_lc)] in (' ', '-'))
+                                )
+                                if not surname_match and not prefix_match:
                                     self._log(
                                         f"  [TMDB] Strateji D: '{person_name}' OCR ismiyle "
                                         f"('{actor}') eşleşmiyor ({ratio:.0f}%) — atlanıyor"
