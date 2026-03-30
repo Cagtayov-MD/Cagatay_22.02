@@ -678,31 +678,11 @@ class TMDBVerify:
         _forward_hits    = self._count_matches(cast_names, _tmdb_cast_names)
         _forward_misses  = len(cast_names) - _forward_hits
 
-        # ── OCR yılı kaynakları (öncelik sırasıyla) ──
-        _ocr_year = 0
-        _raw_year = cdata.get("year") or cdata.get("_ocr_year")
-        if _raw_year:
-            try:
-                _ocr_year = int(str(_raw_year)[:4])
-            except (ValueError, TypeError):
-                pass
-        if not _ocr_year:
-            # Dosya adından parse: ilk 4 haneli sayı 1900-2030 arasında
-            import re as _re
-            _fname = str(cdata.get("filename") or cdata.get("_source_file") or "")
-            _m = _re.search(r'\b(1[9][0-9]{2}|20[0-2][0-9])\b', _fname)
-            if _m:
-                try:
-                    _ocr_year = int(_m.group(1))
-                except ValueError:
-                    pass
-
         # ── Ters doğrulama HER ZAMAN çalışacak ──
         _rv_accepted, _rv_score, _rv_breakdown = self._reverse_validate(
             ocr_title=film_title,
             ocr_cast_names=cast_names,
             ocr_director_names=director_names,
-            ocr_year=_ocr_year,
             tmdb_entry=tmdb_entry,
             credits_data=credits_data,
             forward_hits=_forward_hits,
@@ -1320,7 +1300,6 @@ class TMDBVerify:
         ocr_title: str,
         ocr_cast_names: List[str],
         ocr_director_names: List[str],
-        ocr_year: int,
         tmdb_entry: dict,
         credits_data: dict,
         forward_hits: int,
@@ -1533,53 +1512,10 @@ class TMDBVerify:
             f"+{cast_pos} / {cast_neg}"
         )
 
-        # ── 4. Yıl uyumu (max +2.0 / max -3.0) ───────────────────────
-        year_pos = 0.0
-        year_neg = 0.0
-
-        if ocr_year and tmdb_year:
-            year_diff = abs(ocr_year - tmdb_year)
-
-            # Pozitif
-            if year_diff <= 2:
-                year_pos = 2.0
-            elif year_diff <= 5:
-                year_pos = 1.0
-            elif year_diff <= 10:
-                year_pos = 0.5
-
-            # Negatif
-            if year_diff > 20:
-                year_neg = -3.0
-            elif year_diff > 10:
-                year_neg = -2.0
-            elif year_diff > 5:
-                year_neg = -1.0
-
-            self._log(
-                f"  [TMDB]   Yıl: {ocr_year} vs {tmdb_year} = {year_diff} yıl fark → "
-                f"+{year_pos} / {year_neg}"
-            )
-        else:
-            year_diff = None
-            self._log("  [TMDB]   Yıl: bilinmiyor → +0.0 / 0.0")
-
-        year_net = year_pos + year_neg
-        score += year_net
-        breakdown["year"] = {
-            "ocr": ocr_year,
-            "tmdb": tmdb_year,
-            "diff": year_diff,
-            "pos": year_pos,
-            "neg": year_neg,
-            "net": year_net,
-        }
-
         # ── Dinamik eşik: aktif kategorilerin max pozitif puan toplamı × %40 ──
-        _MAX_TITLE   = 2.5
+        _MAX_TITLE    = 2.5
         _MAX_DIRECTOR = 2.5
-        _MAX_CAST    = 6.0
-        _MAX_YEAR    = 2.0
+        _MAX_CAST     = 6.0
 
         max_pos = 0.0
         if title_active:
@@ -1588,8 +1524,6 @@ class TMDBVerify:
             max_pos += _MAX_DIRECTOR
         if cast_active:
             max_pos += _MAX_CAST
-        if ocr_year and tmdb_year:
-            max_pos += _MAX_YEAR
 
         _THRESHOLD = max(1.0, round(max_pos * 0.40, 2))
 

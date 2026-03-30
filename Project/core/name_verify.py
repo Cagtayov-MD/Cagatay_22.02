@@ -232,7 +232,7 @@ def _is_latin(text: str) -> bool:
         return False
     latin_count = sum(1 for c in alpha_chars
                       if unicodedata.category(c).startswith("L")
-                      and ord(c) < 0x0600)  # Arap alfabesi öncesi
+                      and ord(c) < 0x0400)  # Kiril/Ermeni/Arap dışı Latin
     return latin_count / len(alpha_chars) > 0.5
 
 
@@ -270,6 +270,18 @@ def _structural_check(name: str) -> tuple[bool, str]:
     # Soru veya ünlem işareti → cümle, isim değil
     if '?' in t or '!' in t:
         return False, "sentence_punctuation"
+
+    # Virgül içeriyor → cümle parçası, isim değil
+    if ',' in t:
+        return False, "sentence_fragment"
+
+    # Slash içeriyor → alıntı veya referans, isim değil
+    if '/' in t:
+        return False, "slash_reference"
+
+    # Nokta ile biten + 3+ kelime → cümle, isim değil
+    if t.endswith('.') and len(words) >= 3:
+        return False, "sentence_ending"
 
     # Noktalama yoğunluğu
     punct_count = sum(1 for c in t if c in ";…[]{}()")
@@ -329,6 +341,7 @@ def is_valid_person_name(name: str) -> bool:
         if (0x4E00 <= cp <= 0x9FFF    # CJK Unified
                 or 0x3040 <= cp <= 0x30FF   # Hiragana / Katakana
                 or 0xAC00 <= cp <= 0xD7AF   # Hangul
+                or 0x0400 <= cp <= 0x04FF   # Kiril
                 or 0x0600 <= cp <= 0x06FF): # Arapça
             return False
 
