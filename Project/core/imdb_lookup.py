@@ -13,9 +13,14 @@ Tablo yapısı:
 
 from __future__ import annotations
 
+import concurrent.futures
 import os
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional
+
+# IMDb DuckDB aramasının tümü için üst sınır (saniye).
+# STRAT-C/D leading-wildcard LIKE sorguları büyük tablolarda yavaş olabilir.
+_IMDB_LOOKUP_TIMEOUT_SEC = 120
 
 # ---------------------------------------------------------------------------
 # Fuzzy eşleştirme — rapidfuzz varsa kullan, yoksa basit karşılaştırma
@@ -187,11 +192,11 @@ class IMDBLookup:
 
         ocr_year = int(cdata.get("year") or 0)
 
-        try:
+        def _run_lookup():
             import duckdb
             con = duckdb.connect(self._db_path, read_only=True)
             try:
-                result = self._run_strategies(
+                return self._run_strategies(
                     con=con,
                     film_title=film_title,
                     ocr_cast_names=ocr_cast_names,
@@ -201,7 +206,19 @@ class IMDBLookup:
                 )
             finally:
                 con.close()
-            return result
+
+        try:
+            _exe = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            _future = _exe.submit(_run_lookup)
+            try:
+                return _future.result(timeout=_IMDB_LOOKUP_TIMEOUT_SEC)
+            except concurrent.futures.TimeoutError:
+                self._log(
+                    f"  [IMDb] Zaman aşımı ({_IMDB_LOOKUP_TIMEOUT_SEC}s) — arama durduruldu"
+                )
+                return IMDBLookupResult(matched=False, reason="timeout")
+            finally:
+                _exe.shutdown(wait=False)  # Timeout'ta bloklama, thread arka planda biter
         except Exception as e:
             self._log(f"  [IMDb] DuckDB hatası: {e}")
             return IMDBLookupResult(matched=False, reason=f"duckdb error: {e}")
