@@ -47,10 +47,9 @@ def test_kulube_scenario_rejected():
     """
     REVVAL-01: 'KULÜBE' (OCR) vs 'Dövüş Kulübü' (1999, David Fincher)
 
-    - Başlık fuzzy skoru düşük → negatif puan
+    - Başlık fuzzy skoru düşük → puan yok
     - Yönetmen Fritz Lang vs David Fincher → eşleşme yok → negatif puan
     - Cast oranı 3/96 = %3.1 → negatif puan
-    - Yıl 1952 vs 1999 = 47 yıl → negatif puan
     → Toplam çok negatif → REJECT bekleniyor
     """
     verifier, logs = _make_verifier()
@@ -79,7 +78,6 @@ def test_kulube_scenario_rejected():
         ocr_title="KULÜBE",
         ocr_cast_names=ocr_cast_names,
         ocr_director_names=["FRITZ LANG"],
-        ocr_year=1952,
         tmdb_entry=fight_club_entry,
         credits_data=fight_club_credits,
         forward_hits=3,
@@ -90,8 +88,6 @@ def test_kulube_scenario_rejected():
         f"Kulübe senaryosu REJECT edilmeliydi ama ACCEPT döndü. Puan: {score:.1f}"
     )
     assert score < breakdown["threshold"], f"Puan eşiğin altında olmalı: {score:.1f}"
-    # Yıl farkı 47 → maksimum negatif yıl puanı
-    assert breakdown["year"]["neg"] == -3.0
     # Cast hits=3 ≥ 3 → negatif cast cezası verilmez
     assert breakdown["cast"]["neg"] == 0.0
     # Yönetmen eşleşmedi → yönetmen cezası
@@ -111,8 +107,7 @@ def test_fight_club_correct_accepted():
     - Başlık exact/çok yüksek fuzzy → maksimum pozitif puan
     - Yönetmen David Fincher eşleşiyor → maksimum pozitif puan
     - Cast oranı 12/15 = %80 → maksimum pozitif puan
-    - Yıl 1999 vs 1999 = 0 fark → maksimum pozitif puan
-    → Toplam 10.0 → ACCEPT bekleniyor
+    → Toplam yüksek → ACCEPT bekleniyor
     """
     verifier, logs = _make_verifier()
 
@@ -145,7 +140,6 @@ def test_fight_club_correct_accepted():
             "George Maguire", "Eugenie Bondurant", "Christina Cabot", "Rachel Singer",
         ],
         ocr_director_names=["DAVID FINCHER"],
-        ocr_year=1999,
         tmdb_entry=fight_club_entry,
         credits_data=fight_club_credits,
         forward_hits=12,
@@ -156,9 +150,6 @@ def test_fight_club_correct_accepted():
         f"Doğru film senaryosu ACCEPT edilmeliydi ama REJECT döndü. Puan: {score:.1f}"
     )
     assert score >= breakdown["threshold"], f"Puan eşiğin üzerinde olmalı: {score:.1f}"
-    # Yıl farkı 0 → maksimum pozitif yıl puanı
-    assert breakdown["year"]["pos"] == 2.0
-    assert breakdown["year"]["neg"] == 0.0
     # Cast oranı %80 + 12 hits ≥ 8 → oran puanı 3.0 + bonus 3.0 = 6.0
     assert breakdown["cast"]["pos"] == 6.0
     # hits ≥ 3 → negatif cast cezası yok
@@ -188,7 +179,6 @@ def test_no_director_info_no_penalty():
         ocr_title="Test Film",
         ocr_cast_names=["Actor A", "Actor B", "Actor C"],
         ocr_director_names=[],
-        ocr_year=2000,
         tmdb_entry=entry,
         credits_data=credits,
         forward_hits=3,
@@ -198,16 +188,16 @@ def test_no_director_info_no_penalty():
     assert breakdown["director"]["net"] == 0.0, (
         f"Yönetmen bilgisi yoksa puan 0.0 olmalı, şu an: {breakdown['director']}"
     )
-    # Kabul edilmeli: başlık tam, cast %100, yıl tam
+    # Kabul edilmeli: başlık tam, cast %100
     assert accepted
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# REVVAL-04: OCR yılı bilinmiyorsa yıl puanı sıfır
+# REVVAL-04: Yıl puanlaması kaldırıldı — breakdown'da "year" anahtarı yok
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_unknown_ocr_year_no_year_score():
-    """REVVAL-04: ocr_year=0 ise yıl puanı (pozitif ve negatif) sıfır olmalı."""
+def test_no_year_key_in_breakdown():
+    """REVVAL-04: Yıl puanlaması kaldırıldı — breakdown dict'te 'year' anahtarı bulunmamalı."""
     verifier, _ = _make_verifier()
 
     entry = {
@@ -223,16 +213,15 @@ def test_unknown_ocr_year_no_year_score():
         ocr_title="Test Film",
         ocr_cast_names=["Actor A", "Actor B"],
         ocr_director_names=[],
-        ocr_year=0,   # bilinmiyor
         tmdb_entry=entry,
         credits_data=credits,
         forward_hits=2,
         forward_misses=0,
     )
 
-    assert breakdown["year"]["pos"] == 0.0
-    assert breakdown["year"]["neg"] == 0.0
-    assert breakdown["year"]["net"] == 0.0
+    assert "year" not in breakdown, (
+        f"Yıl puanlaması kaldırıldı — 'year' anahtarı olmamalı: {list(breakdown.keys())}"
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -253,7 +242,6 @@ def test_exact_title_match_max_score():
         ocr_title="Rancho Notorious",
         ocr_cast_names=[],
         ocr_director_names=[],
-        ocr_year=0,
         tmdb_entry=entry,
         credits_data=credits,
         forward_hits=0,
@@ -422,8 +410,9 @@ def test_verify_credits_correct_film_accepted():
 
 def test_ocr_year_parsed_from_filename():
     """
-    REVVAL-08: cdata["filename"]'de '1952' geçiyorsa _ocr_year=1952 olarak algılanmalı.
-    Yıl büyük farkıyla ters doğrulama REJECT etmeli.
+    REVVAL-08: Yıl artık puanlama yapmıyor — KULÜBE vs Fight Club,
+    yönetmen uyumsuzluğu (Fritz Lang vs David Fincher) nedeniyle REJECT edilmeli.
+    Dosya adında yıl bulunsa bile breakdown'da 'year' anahtarı olmamalı.
     """
     verifier, _ = _make_verifier()
 
@@ -456,15 +445,13 @@ def test_ocr_year_parsed_from_filename():
 
         result = verifier.verify_credits(cdata)
 
-    # Dosya adından 1952 parse edildi; 1952 vs 1999 = 47 yıl → REJECT bekleniyor
+    # Yönetmen uyumsuzluğu (Fritz Lang vs David Fincher) → REJECT bekleniyor
     assert result.rejected is True, (
-        "Dosya adındaki yıl (1952) parse edilip yıl uyumsuzluğuyla REJECT edilmeliydi"
+        "Yönetmen uyumsuzluğuyla REJECT edilmeliydi"
     )
-    assert result.reverse_breakdown.get("year", {}).get("ocr") == 1952, (
-        "Dosya adından 1952 parse edilmeliydi"
-    )
-    assert result.reverse_breakdown.get("year", {}).get("neg") == -3.0, (
-        "47 yıl fark → -3.0 yıl cezası bekleniyor"
+    # Yıl puanlaması kaldırıldı — breakdown'da "year" anahtarı olmamalı
+    assert "year" not in result.reverse_breakdown, (
+        f"'year' anahtarı artık breakdown'da olmamalı: {list(result.reverse_breakdown.keys())}"
     )
 
 
@@ -492,7 +479,6 @@ def test_title_different_language_skipped():
         ocr_title="Gün Batısı",
         ocr_cast_names=[],
         ocr_director_names=[],
-        ocr_year=0,
         tmdb_entry=entry,
         credits_data=credits,
         forward_hits=0,
@@ -535,7 +521,6 @@ def test_title_same_language_mismatch_heavy_penalty():
         ocr_title="Yalının Kuşları",
         ocr_cast_names=[],
         ocr_director_names=[],
-        ocr_year=0,
         tmdb_entry=entry,
         credits_data=credits,
         forward_hits=0,
@@ -572,7 +557,7 @@ def test_cast_bonus_levels():
     # ≥8 hits → bonus +3.0; ratio=1.0 → cast_pos_ratio=3.0; total=6.0
     _, _, bd = verifier._reverse_validate(
         ocr_title="", ocr_cast_names=[], ocr_director_names=[],
-        ocr_year=0, tmdb_entry=base_entry, credits_data=credits,
+        tmdb_entry=base_entry, credits_data=credits,
         forward_hits=8, forward_misses=0,
     )
     assert bd["cast"]["pos"] == 6.0, f"8 hits → 3.0+3.0=6.0 bekleniyor: {bd['cast']}"
@@ -580,7 +565,7 @@ def test_cast_bonus_levels():
     # ≥5 hits → bonus +2.0; ratio=1.0 → cast_pos_ratio=3.0; total=5.0
     _, _, bd = verifier._reverse_validate(
         ocr_title="", ocr_cast_names=[], ocr_director_names=[],
-        ocr_year=0, tmdb_entry=base_entry, credits_data=credits,
+        tmdb_entry=base_entry, credits_data=credits,
         forward_hits=5, forward_misses=0,
     )
     assert bd["cast"]["pos"] == 5.0, f"5 hits → 3.0+2.0=5.0 bekleniyor: {bd['cast']}"
@@ -588,7 +573,7 @@ def test_cast_bonus_levels():
     # ≥3 hits → bonus +1.0; ratio=1.0 → cast_pos_ratio=3.0; total=4.0
     _, _, bd = verifier._reverse_validate(
         ocr_title="", ocr_cast_names=[], ocr_director_names=[],
-        ocr_year=0, tmdb_entry=base_entry, credits_data=credits,
+        tmdb_entry=base_entry, credits_data=credits,
         forward_hits=3, forward_misses=0,
     )
     assert bd["cast"]["pos"] == 4.0, f"3 hits → 3.0+1.0=4.0 bekleniyor: {bd['cast']}"
@@ -596,7 +581,7 @@ def test_cast_bonus_levels():
     # 2 hits → bonus 0; ratio=1.0 → cast_pos_ratio=3.0; total=3.0
     _, _, bd = verifier._reverse_validate(
         ocr_title="", ocr_cast_names=[], ocr_director_names=[],
-        ocr_year=0, tmdb_entry=base_entry, credits_data=credits,
+        tmdb_entry=base_entry, credits_data=credits,
         forward_hits=2, forward_misses=0,
     )
     assert bd["cast"]["pos"] == 3.0, f"2 hits → 3.0+0=3.0 bekleniyor: {bd['cast']}"
@@ -609,37 +594,20 @@ def test_cast_bonus_levels():
 def test_dynamic_threshold_active_categories():
     """
     REVVAL-12: Dinamik eşik = aktif kategorilerin max toplamı × 0.40.
-    - 4 kategori aktif → max=13.0 → eşik=5.2
-    - Yıl bilinmiyor → max=11.0 → eşik=4.4
-    - Başlık atlandı (farklı dil) + yıl bilinmiyor → max=8.5 → eşik=3.4
+    - 3 kategori aktif: başlık(TR) + yönetmen + cast → max=11.0 → eşik=4.4
+    - Yönetmen bilgisi yok → max=8.5 → eşik=3.4
+    - Başlık atlandı (farklı dil) + yönetmen yok → max=6.0 → eşik=2.4
     """
     verifier, _ = _make_verifier()
 
     base_credits = {"cast": [], "crew": [{"name": "Some Director", "job": "Director"}]}
+    no_crew_credits = {"cast": [], "crew": []}
 
-    # 4 kategori aktif: başlık(TR) + yönetmen + cast + yıl → max=13.0 → eşik=5.2
+    # 3 kategori aktif: başlık(TR) + yönetmen + cast → max=11.0 → eşik=4.4
     _, _, bd = verifier._reverse_validate(
         ocr_title="Dövüş Kulübü",  # Türkçe
         ocr_cast_names=[],
         ocr_director_names=["Some Director"],
-        ocr_year=1999,
-        tmdb_entry={
-            "id": 1, "title": "Dövüş Kulübü", "original_title": "Fight Club",
-            "release_date": "1999-01-01",
-        },
-        credits_data=base_credits,
-        forward_hits=10, forward_misses=0,
-    )
-    assert bd["threshold"] == 5.2, (
-        f"4 aktif kategori → eşik=5.2 bekleniyor: {bd['threshold']}"
-    )
-
-    # Yıl bilinmiyor → max=11.0 → eşik=4.4
-    _, _, bd = verifier._reverse_validate(
-        ocr_title="Dövüş Kulübü",
-        ocr_cast_names=[],
-        ocr_director_names=["Some Director"],
-        ocr_year=0,  # bilinmiyor
         tmdb_entry={
             "id": 1, "title": "Dövüş Kulübü", "original_title": "Fight Club",
             "release_date": "1999-01-01",
@@ -648,24 +616,39 @@ def test_dynamic_threshold_active_categories():
         forward_hits=10, forward_misses=0,
     )
     assert bd["threshold"] == 4.4, (
-        f"Yıl bilinmiyor → eşik=4.4 bekleniyor: {bd['threshold']}"
+        f"3 aktif kategori → eşik=4.4 bekleniyor: {bd['threshold']}"
     )
 
-    # Başlık farklı dil (atlanır) + yıl bilinmiyor → max=8.5 → eşik=3.4
+    # Yönetmen bilgisi yok → max=8.5 → eşik=3.4
     _, _, bd = verifier._reverse_validate(
-        ocr_title="Gün Batısı",       # Türkçe, TMDB başlığı İngilizce → atlanır
+        ocr_title="Dövüş Kulübü",
         ocr_cast_names=[],
-        ocr_director_names=["Some Director"],
-        ocr_year=0,
+        ocr_director_names=[],
         tmdb_entry={
-            "id": 1, "title": "The Sundowners", "original_title": "The Sundowners",
-            "release_date": "1960-01-01",
+            "id": 1, "title": "Dövüş Kulübü", "original_title": "Fight Club",
+            "release_date": "1999-01-01",
         },
         credits_data=base_credits,
         forward_hits=10, forward_misses=0,
     )
     assert bd["threshold"] == 3.4, (
-        f"Başlık atlandı + yıl bilinmiyor → eşik=3.4 bekleniyor: {bd['threshold']}"
+        f"Yönetmen yok → eşik=3.4 bekleniyor: {bd['threshold']}"
+    )
+
+    # Başlık farklı dil (atlanır) + yönetmen yok → max=6.0 → eşik=2.4
+    _, _, bd = verifier._reverse_validate(
+        ocr_title="Gün Batısı",       # Türkçe, TMDB başlığı İngilizce → atlanır
+        ocr_cast_names=[],
+        ocr_director_names=[],
+        tmdb_entry={
+            "id": 1, "title": "The Sundowners", "original_title": "The Sundowners",
+            "release_date": "1960-01-01",
+        },
+        credits_data=no_crew_credits,
+        forward_hits=10, forward_misses=0,
+    )
+    assert bd["threshold"] == 2.4, (
+        f"Başlık atlandı + yönetmen yok → eşik=2.4 bekleniyor: {bd['threshold']}"
     )
 
 
@@ -691,7 +674,6 @@ def test_cast_neg_suppressed_when_hits_ge_3():
         ocr_title="Test Film",
         ocr_cast_names=[],
         ocr_director_names=[],
-        ocr_year=0,
         tmdb_entry=entry,
         credits_data=credits,
         forward_hits=11,
@@ -707,7 +689,6 @@ def test_cast_neg_suppressed_when_hits_ge_3():
         ocr_title="Test Film",
         ocr_cast_names=[],
         ocr_director_names=[],
-        ocr_year=0,
         tmdb_entry=entry,
         credits_data=credits,
         forward_hits=2,
@@ -743,7 +724,6 @@ def test_title_penalty_removed():
         ocr_title="New York'taki Jandarma",
         ocr_cast_names=[],
         ocr_director_names=[],
-        ocr_year=0,
         tmdb_entry=entry,
         credits_data=credits,
         forward_hits=0,
