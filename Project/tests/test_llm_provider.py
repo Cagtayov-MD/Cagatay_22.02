@@ -191,6 +191,7 @@ def test_gemini_no_api_key_returns_none(monkeypatch):
 def test_gemini_http_error_returns_none(monkeypatch):
     """PROV-08: _gemini_generate returns None on HTTP error."""
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(_llm, "_GEMINI_MODEL_COOLDOWNS", {})
 
     def raise_http_error(req, timeout=None):
         raise urllib.error.HTTPError(
@@ -200,6 +201,50 @@ def test_gemini_http_error_returns_none(monkeypatch):
 
     monkeypatch.setattr("urllib.request.urlopen", raise_http_error)
     result = _llm._gemini_generate("hello", model="gemini-2.5-flash")
+    assert result is None
+
+
+def test_gemini_high_demand_sets_model_cooldown(monkeypatch):
+    """PROV-08b: 503 high demand sonrası model cooldown'a alınır."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(_llm, "_GEMINI_MODEL_COOLDOWNS", {})
+    monkeypatch.setattr(_llm.time, "sleep", lambda _sec: None)
+
+    attempts = {"count": 0}
+
+    def raise_http_error(req, timeout=None):
+        attempts["count"] += 1
+        raise urllib.error.HTTPError(
+            url="http://x",
+            code=503,
+            msg="Service Unavailable",
+            hdrs=None,
+            fp=BytesIO(
+                b'{"error":{"code":503,"message":"This model is currently experiencing high demand.","status":"UNAVAILABLE"}}'
+            ),
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", raise_http_error)
+    result = _llm._gemini_generate("hello", model="gemini-2.5-pro")
+
+    assert result is None
+    assert attempts["count"] == _llm._GEMINI_MAX_RETRIES
+    assert _llm._get_gemini_cooldown_remaining("gemini-2.5-pro") >= 590
+
+
+def test_gemini_skips_request_while_model_is_in_cooldown(monkeypatch):
+    """PROV-08c: cooldown aktifken yeni HTTP isteği atılmaz."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(_llm, "_GEMINI_MODEL_COOLDOWNS", {})
+    _llm._set_gemini_model_cooldown("gemini-2.5-pro", 120, now_ts=1000.0)
+    monkeypatch.setattr(_llm.time, "time", lambda: 1001.0)
+
+    def fail_if_called(req, timeout=None):
+        raise AssertionError("Cooldown varken ağ çağrısı yapılmamalı")
+
+    monkeypatch.setattr("urllib.request.urlopen", fail_if_called)
+    result = _llm._gemini_generate("hello", model="gemini-2.5-pro")
+
     assert result is None
 
 

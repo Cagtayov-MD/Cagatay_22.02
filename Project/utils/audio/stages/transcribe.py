@@ -3,7 +3,7 @@
 # 2) run(audio_path: str, ..., diarization=..., **kwargs)
 
 import time
-from audio.utils.vram_manager import VRAMManager
+from core.vram_manager import VRAMManager
 from core.whisper_model import normalize_whisper_model_name
 
 # Modul seviyesi model cache.

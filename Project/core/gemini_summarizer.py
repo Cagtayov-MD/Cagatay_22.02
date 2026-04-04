@@ -1,16 +1,29 @@
 """
-gemini_summarizer.py — Transcript'ten Türkçe özet çıkarma.
+gemini_summarizer.py — Transcript'ten son kullanıcı için Türkçe özet çıkarma.
 
 Model Stratejisi: Gemini 2.5 Pro (birincil) → Flash (fallback)
 
-Dil Stratejisi (v2):
-  • Türkçe transcript → Pro ile doğrudan Türkçe özet (tek adım, mevcut davranış)
-  • Yabancı transcript → Pro ile orijinal dilde özet → Flash ile Türkçeye çevir
-    + TMDB cast varsa isimleri doğrula + Türkçe karakter kuralları uygula
+Dil Stratejisi:
+  • Türkçe transcript → doğrudan Türkçe özet (tek adım)
+  • `tr` dışındaki tüm transcript dilleri → orijinal dilde ara özet → Türkçeye çeviri
 
-summarize_transcript(transcript_text, api_key, log_cb, detected_language, tmdb_cast) -> dict | None
-  → {"en": "...", "model_used": "gemini-2.5-pro"|"gemini-2.5-flash"}
+Final çıktı sözleşmesi:
+  • Son kullanıcı özeti her zaman Türkçe olmalı
+  • Tek paragraf, kısa ve spoiler içeren anlatım olmalı
+  • Yabancı özel isimler Latin alfabede kalmalı
+  • Latin dışı script (Arapça, Yunanca, Kiril, Devanagari vb.) son kullanıcı özetine sızmamalı
+
+summarize_transcript(...) -> dict | None
+  → {
+        "text": "<final Türkçe özet>",
+        "language": "tr",
+        "model_used": "gemini-2.5-pro"|"gemini-2.5-flash",
+        "flow": "single_step"|"two_step",
+     }
 """
+
+import re
+import unicodedata
 
 import core.llm_provider as _llm
 
@@ -55,15 +68,25 @@ _SYSTEM_PROMPT_TR = (
     "SPOILER (ENDING) IS MANDATORY: You MUST include the film's final outcome and "
     "each main character's ultimate fate as explicitly as possible. "
     "(e.g., 'X quits her job, Y dies, Z leaves the city.')\n\n"
-    "FORMAT: No bullet points. Write a single, flowing paragraph.\n\n"
+    "FORMAT: No bullet points. Write one or two short paragraphs. "
+    "Use two paragraphs only if it clearly improves readability and meaning.\n\n"
+    "SENTENCE STYLE: Do NOT keep chaining clauses with commas just to force flow. "
+    "Avoid long, comma-heavy sentences that stretch the meaning or make the summary feel bloated. "
+    "Prefer shorter, well-formed sentences. Each sentence should carry one clear idea. "
+    "If the opening sentence contains too many details, split it into two or more shorter sentences.\n\n"
     "FOCUS: Focus only on the main character's key turning point and their final decision. "
     "Completely ignore subplots and secondary characters.\n\n"
     "NO CHARACTER INTRODUCTIONS: Do NOT introduce or describe characters by name/age/job "
     "at the start. Just tell the story — who they are will emerge from the events.\n\n"
-    "Output language: Turkish. No title. Start directly with the story.\n\n"
+    "FINAL OUTPUT CONTRACT: Output language must be Turkish. No title. Start directly "
+    "with the story. The final answer may be one paragraph or two short paragraphs, "
+    "but every sentence must be clear, meaningful, and natural.\n\n"
+    "TURKISH ORTHOGRAPHY: Except for foreign proper names, everything in the summary "
+    "must use correct Turkish spelling and Turkish characters.\n\n"
     "FOREIGN NAMES: Write all foreign proper names (character names, place names, "
-    "person names) using their original Latin spelling. NEVER use Turkish-specific "
-    "characters (ç, ğ, ı, ö, ş, ü, İ) in foreign names. "
+    "person names) using their original Latin spelling in plain ASCII form only. "
+    "NEVER use Turkish-specific characters (ç, ğ, ı, ö, ş, ü, İ) in foreign names. "
+    "NEVER write foreign names in Cyrillic, Greek, Arabic, or any other non-Latin script. "
     "Example: Write 'Vichita' not 'Viçita', 'Tom' not 'Töm'.\n\n"
     "FOREIGN NAME TAGGING: Wrap EVERY foreign proper name with double square brackets. "
     "Turkish words and common Turkish names (Mehmet, Ayşe, Fatma, Ali, Hasan, etc.) "
@@ -89,7 +112,9 @@ _SYSTEM_PROMPT_FOREIGN = (
     "LENGTH: Target 80 words, maximum 100 words.\n\n"
     "ZERO SUSPENSE: Do NOT use teaser/marketing language.\n\n"
     "SPOILER (ENDING) IS MANDATORY: Include the final outcome.\n\n"
-    "FORMAT: No bullet points. Write a single, flowing paragraph.\n\n"
+    "FORMAT: No bullet points. Write one or two short paragraphs.\n\n"
+    "SENTENCE STYLE: Avoid long, comma-heavy sentences. Prefer shorter, meaningful sentences. "
+    "Each sentence should carry one clear idea. If a sentence feels overloaded, split it.\n\n"
     "FOCUS: Main character's key turning point and final decision only.\n\n"
     "NO CHARACTER INTRODUCTIONS: Just tell the story.\n\n"
     "No title. Start directly with the story."
@@ -104,15 +129,37 @@ _SYSTEM_PROMPT_TRANSLATE = (
     "Your task: Translate the given summary to Turkish.\n\n"
     "RULES:\n"
     "1. Translate accurately and naturally to Turkish.\n"
-    "2. FOREIGN NAMES: Keep all foreign proper names (character names, person names, "
-    "   place names) in their ORIGINAL spelling. Do NOT turkify them.\n"
+    "2. Except for foreign proper names, everything must use correct Turkish spelling "
+    "   and Turkish characters.\n"
+    "3. Prefer shorter, meaningful sentences. Do NOT keep chaining clauses with commas "
+    "   just to preserve a flowing rhythm. If needed, split long sentences into two or more "
+    "   shorter Turkish sentences while preserving meaning.\n"
+    "4. The final output may be one paragraph or two short paragraphs, but every sentence "
+    "   must be clear, meaningful, and natural.\n"
+    "5. FOREIGN NAMES: Keep all foreign proper names (character names, person names, "
+    "   place names) in their ORIGINAL spelling, but in plain ASCII form only. Do NOT turkify them.\n"
     "   Example: 'Jack Sparrow' stays 'Jack Sparrow', NOT 'Cek Sparov'.\n"
-    "3. TURKISH NAME RULES: In Turkish text, 'i' uppercases to 'İ' and 'I' lowercases "
+    "6. TURKISH NAME RULES: In Turkish text, 'i' uppercases to 'İ' and 'I' lowercases "
     "   to 'ı'. But this rule applies ONLY to Turkish words, NOT to foreign names.\n"
-    "4. FOREIGN NAME TAGGING: Wrap EVERY foreign proper name with double square brackets. "
+    "7. FOREIGN NAME TAGGING: Wrap EVERY foreign proper name with double square brackets. "
     "   Turkish words and Turkish names must NOT be wrapped.\n"
     "   Example: [[Jack Sparrow]] gemiden kaçtı. [[Elizabeth]] onu takip etti.\n"
-    "5. Output ONLY the Turkish translation. No explanations, no notes.\n"
+    "8. FINAL OUTPUT MUST BE TURKISH.\n"
+    "9. FOREIGN PROPER NAMES MUST REMAIN IN THE LATIN ALPHABET AND IN ASCII ONLY. "
+    "   Never output Turkish-specific characters, Arabic, Greek, Cyrillic, Devanagari, "
+    "   or any other non-Latin script for foreign names.\n"
+    "10. If a foreign name appears in a non-Latin script, transliterate it to standard ASCII Latin "
+    "    spelling, or use the exact ASCII-compatible spelling from the cast reference list if provided.\n"
+    "11. Output ONLY the Turkish translation. No explanations, no notes.\n"
+    "12. No bullet points.\n"
+)
+
+_SYSTEM_PROMPT_TRANSLATE_RETRY = (
+    _SYSTEM_PROMPT_TRANSLATE
+    + "\nRETRY OVERRIDE:\n"
+    + "Your previous answer was rejected. The new answer must be valid Turkish and must not "
+      "contain any non-Latin foreign names. If needed, rewrite the whole summary so that the "
+      "final output satisfies the rules exactly.\n"
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -134,6 +181,51 @@ _FEW_SHOT = (
 
 # Türkçe'ye özgü karakterler (kontrol için)
 _TR_CHARS = set("çÇğĞıİöÖşŞüÜ")
+_TURKISH_MARKER_WORDS = frozenset({
+    "ve", "bir", "bu", "ile", "icin", "için", "gibi", "daha", "sonra", "ancak",
+    "kadar", "degil", "değil", "film", "hikaye", "karar", "olur", "eder", "olan",
+    "olarak", "kendi", "ona", "onu", "onun", "bunu", "böyle", "yine", "artik", "artık",
+})
+_ENGLISH_MARKER_WORDS = frozenset({
+    "the", "and", "with", "from", "that", "this", "into", "after", "before",
+    "while", "when", "their", "they", "his", "her", "ultimately", "chooses",
+    "teacher", "soldier", "exchange", "relationship", "secret",
+})
+_TURKISH_SUFFIX_HINTS = ("iyor", "iyorlar", "erek", "arak", "madan", "meden", "ince", "unca", "ip")
+_TR_APOSTROPHE_SUFFIX_RE = re.compile(
+    r"['’](?:i|ı|u|ü|in|ın|un|ün|e|a|de|da|den|dan|ye|ya|nin|nın|nun|nün)\b",
+    re.IGNORECASE,
+)
+
+
+def _normalize_summary_text(text: str) -> str:
+    """LLM çıktısındaki boşlukları düzenle, paragraf kırılımlarını koru."""
+    raw = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not raw:
+        return ""
+
+    paragraphs = []
+    for chunk in re.split(r"\n\s*\n+", raw):
+        paragraph = re.sub(r"[ \t\f\v]+", " ", chunk)
+        paragraph = re.sub(r"\s*\n\s*", " ", paragraph).strip()
+        if paragraph:
+            paragraphs.append(paragraph)
+    return "\n\n".join(paragraphs)
+
+
+def normalize_final_summary_text(text: str) -> str:
+    """Final özet metnini kullanıcıya uygun biçimde normalize et."""
+    return _normalize_summary_text(text)
+
+
+def _contains_non_latin_script(text: str) -> bool:
+    """Latin dışı alfabetik karakter var mı? Türkçe harfler Latin kabul edilir."""
+    for ch in text or "":
+        if not ch.isalpha():
+            continue
+        if "LATIN" not in unicodedata.name(ch, ""):
+            return True
+    return False
 
 
 def _is_turkish_text(text: str) -> bool:
@@ -142,15 +234,45 @@ def _is_turkish_text(text: str) -> bool:
     Arapça/Kiril gibi Latin-dışı metinler (ör. yanlış dil tespiti sonucu gelen özetler)
     Latin karakter oranı kontrolüyle reddedilir.
     """
+    text = _normalize_summary_text(text)
     if not text or len(text) < 20:
         return False
-    alpha_count = sum(1 for c in text if c.isalpha())
-    if alpha_count == 0:
+    alpha_chars = [c for c in text if c.isalpha()]
+    if not alpha_chars:
         return False
-    latin_count = sum(1 for c in text if c.isalpha() and ord(c) < 0x0250)
-    if latin_count / alpha_count < 0.7:
+    latin_count = sum(
+        1 for c in alpha_chars
+        if "LATIN" in unicodedata.name(c, "")
+    )
+    if latin_count / len(alpha_chars) < 0.7:
         return False  # Latin oranı %70 altında → Türkçe değil (Arapça, Kiril vb.)
-    return any(c in _TR_CHARS for c in text)
+    if any(c in _TR_CHARS for c in text):
+        return True
+    if _TR_APOSTROPHE_SUFFIX_RE.search(text):
+        return True
+
+    words = [w.casefold() for w in re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿÇĞİÖŞÜçğıöşü']+", text)]
+    tr_hits = sum(1 for w in words if w in _TURKISH_MARKER_WORDS)
+    en_hits = sum(1 for w in words if w in _ENGLISH_MARKER_WORDS)
+    morph_hits = sum(1 for w in words if any(w.endswith(s) for s in _TURKISH_SUFFIX_HINTS))
+    return (tr_hits >= 2 and tr_hits > en_hits) or (morph_hits >= 1 and en_hits == 0)
+
+
+def _validate_final_summary(text: str) -> tuple[bool, str]:
+    """Final kullanıcı özeti sözleşmesini doğrula."""
+    normalized = _normalize_summary_text(text)
+    if not normalized:
+        return False, "empty"
+    if not _is_turkish_text(normalized):
+        return False, "not_turkish"
+    if _contains_non_latin_script(normalized):
+        return False, "non_latin_script"
+    return True, ""
+
+
+def is_valid_final_summary(text: str) -> bool:
+    """Son kullanıcıya gösterilecek özet geçerli mi?"""
+    return _validate_final_summary(text)[0]
 
 
 def _try_summarize(prompt: str, system: str, model: str,
@@ -202,49 +324,94 @@ def _build_cast_reference(tmdb_cast: list) -> str:
     )
 
 
+def _build_translate_prompt(
+    foreign_summary: str,
+    detected_language: str,
+    cast_ref: str,
+    retry_reason: str = "",
+) -> str:
+    """Çeviri çağrısı için kullanıcı prompt'unu oluştur."""
+    lang_label = get_language_label(detected_language)
+    prompt = (
+        f"Source language: {detected_language.upper()} ({lang_label})\n\n"
+        f"Summary to translate:\n{foreign_summary}"
+        f"{cast_ref}"
+    )
+    if retry_reason:
+        prompt += (
+            "\n\nSTRICT RETRY REQUIREMENT:\n"
+            f"The previous output was rejected because: {retry_reason}.\n"
+            "Rewrite the summary so the final output is Turkish and all foreign proper names "
+            "stay in Latin alphabet only.\n"
+        )
+    return prompt
+
+
 def _translate_and_verify(
     foreign_summary: str,
     api_key: str,
     tmdb_cast: list | None,
     detected_language: str,
     log_cb,
-) -> str:
+) -> str | None:
     """
     Flash ile yabancı dildeki özeti Türkçeye çevir.
     TMDB cast varsa isimleri doğrula.
     """
     cast_ref = _build_cast_reference(tmdb_cast or [])
-    lang_label = get_language_label(detected_language)
+    attempts = [
+        (_SYSTEM_PROMPT_TRANSLATE, ""),
+        (
+            _SYSTEM_PROMPT_TRANSLATE_RETRY,
+            "final summary was not valid Turkish or contained non-Latin script leakage",
+        ),
+    ]
 
-    prompt = (
-        f"Source language: {detected_language.upper()} ({lang_label})\n\n"
-        f"Summary to translate:\n{foreign_summary}"
-        f"{cast_ref}"
-    )
-
-    try:
-        result = _llm._gemini_generate(
-            prompt,
-            system=_SYSTEM_PROMPT_TRANSLATE,
-            api_key=api_key or None,
-            model="gemini-2.5-flash",
-            timeout=60,
-            log_cb=log_cb,
+    for idx, (system_prompt, retry_reason) in enumerate(attempts, start=1):
+        prompt = _build_translate_prompt(
+            foreign_summary,
+            detected_language,
+            cast_ref,
+            retry_reason=retry_reason,
         )
-        if result and result.strip():
+
+        try:
+            result = _llm._gemini_generate(
+                prompt,
+                system=system_prompt,
+                api_key=api_key or None,
+                model="gemini-2.5-flash",
+                timeout=60,
+                log_cb=log_cb,
+            )
+        except Exception as e:
+            if log_cb:
+                log_cb(f"  [Summarizer] Flash çeviri hatası: {e}")
+            result = None
+
+        normalized = _normalize_summary_text(result)
+        if not normalized:
+            if log_cb:
+                log_cb(f"  [Summarizer] Flash çeviri boş döndü (deneme {idx}/2)")
+            continue
+
+        is_valid, reason = _validate_final_summary(normalized)
+        if is_valid:
             if log_cb:
                 has_cast = "evet" if cast_ref else "hayır"
                 log_cb(
-                    f"  [Summarizer] Flash çeviri tamamlandı "
-                    f"({len(result)} kar, cast_ref={has_cast})"
+                    f"  [Summarizer] Flash çeviri kabul edildi "
+                    f"({len(normalized)} kar, cast_ref={has_cast}, deneme={idx})"
                 )
-            return result.strip()
-    except Exception as e:
-        if log_cb:
-            log_cb(f"  [Summarizer] Flash çeviri hatası: {e}")
+            return normalized
 
-    # Fallback: çeviri başarısızsa orijinali döndür
-    return foreign_summary
+        if log_cb:
+            log_cb(
+                f"  [Summarizer] Flash çeviri reddedildi "
+                f"(neden={reason}, deneme={idx}/2)"
+            )
+
+    return None
 
 
 def summarize_transcript(
@@ -272,7 +439,12 @@ def summarize_transcript(
         tmdb_cast:        TMDB cast listesi (opsiyonel, yabancı dil çevirisinde kullanılır)
 
     Returns:
-        {"en": "<Türkçe özet>", "model_used": "gemini-2.5-pro"|"gemini-2.5-flash"}
+        {
+            "text": "<Türkçe özet>",
+            "language": "tr",
+            "model_used": "gemini-2.5-pro"|"gemini-2.5-flash",
+            "flow": "single_step"|"two_step",
+        }
         Hata durumunda None.
     """
     if not transcript_text or not transcript_text.strip():
@@ -281,11 +453,10 @@ def summarize_transcript(
     snippet = transcript_text.strip()[:_MAX_CHARS]
     is_turkish = (detected_language == "tr" or not detected_language)
 
-    results = {}
-
     if variant in ("en", "both"):
-        summary_text = None
+        final_summary_tr = None
         model_used = ""
+        flow = "single_step" if is_turkish else "two_step"
 
         if is_turkish:
             # ══════════════════════════════════════════════════════
@@ -301,22 +472,28 @@ def summarize_transcript(
             for m in models_to_try:
                 if log_cb:
                     log_cb(f"  [Summarizer] Türkçe özet oluşturuluyor ({m})...")
-                summary_text = _try_summarize(prompt, system, m, api_key, log_cb)
-                if summary_text:
+                final_summary_tr = _try_summarize(prompt, system, m, api_key, log_cb)
+                if final_summary_tr:
                     model_used = m
                     if log_cb:
-                        log_cb(f"  [Summarizer] Türkçe özet alındı ({len(summary_text)} kar, {m})")
+                        log_cb(
+                            f"  [Summarizer] Türkçe özet alındı "
+                            f"({len(final_summary_tr)} kar, {m})"
+                        )
                     break
                 else:
                     if log_cb:
                         log_cb(f"  [Summarizer] {m} başarısız — sonraki modele geçiliyor")
 
             # Güvenlik: Türkçe demiştik ama özet Türkçe gelmezse Flash ile çevir
-            if summary_text and not _is_turkish_text(summary_text):
+            if final_summary_tr and not is_valid_final_summary(final_summary_tr):
                 if log_cb:
-                    log_cb("  [Summarizer] Özet Türkçe değil — Flash ile çeviri yapılıyor")
-                summary_text = _translate_and_verify(
-                    summary_text, api_key, tmdb_cast, detected_language, log_cb
+                    log_cb(
+                        "  [Summarizer] Tek adım özeti final sözleşmesini geçmedi "
+                        "— Flash ile Türkçeye yeniden kuruluyor"
+                    )
+                final_summary_tr = _translate_and_verify(
+                    final_summary_tr, api_key, tmdb_cast, detected_language, log_cb
                 )
 
         else:
@@ -372,20 +549,32 @@ def summarize_transcript(
                     f"(cast_ref={cast_count} kişi)..."
                 )
 
-            summary_text = _translate_and_verify(
+            final_summary_tr = _translate_and_verify(
                 foreign_summary, api_key, tmdb_cast, detected_language, log_cb
             )
 
-            if log_cb:
-                log_cb(f"  [Summarizer] Adım 2 tamamlandı: Türkçe özet ({len(summary_text)} kar)")
+            if final_summary_tr:
+                if log_cb:
+                    log_cb(
+                        f"  [Summarizer] Adım 2 tamamlandı: Türkçe özet "
+                        f"({len(final_summary_tr)} kar)"
+                    )
+            elif log_cb:
+                log_cb(
+                    "  [Summarizer] Adım 2 başarısız: final özet Türkçe/Latin sözleşmesini geçmedi"
+                )
 
         # Sonuç
-        if not summary_text:
+        if not final_summary_tr:
             if log_cb:
                 log_cb("  [Summarizer] Hiçbir modelden özet alınamadı")
             return None
 
-        results["en"] = summary_text
-        results["model_used"] = model_used
+        return {
+            "text": _normalize_summary_text(final_summary_tr),
+            "language": "tr",
+            "model_used": model_used,
+            "flow": flow,
+        }
 
-    return results if results else None
+    return None

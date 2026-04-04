@@ -14,8 +14,10 @@ Public API:
 """
 
 import json
+import math
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -33,6 +35,48 @@ _DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
 _DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 _DEFAULT_OPENAI_BASE_URL = "https://api.openai.com"
 _TIMEOUT_SEC = 60
+_GEMINI_RETRY_CODES = {429, 503}
+_GEMINI_MAX_RETRIES = 3
+_GEMINI_RETRY_DELAY_SEC = 12
+_GEMINI_MODEL_COOLDOWNS: dict[str, float] = {}
+
+
+def _clear_expired_gemini_cooldown(model: str, now_ts: float | None = None) -> None:
+    """Süresi dolan cooldown kaydını temizle."""
+    now_ts = now_ts if now_ts is not None else time.time()
+    until = _GEMINI_MODEL_COOLDOWNS.get(model)
+    if until is not None and until <= now_ts:
+        _GEMINI_MODEL_COOLDOWNS.pop(model, None)
+
+
+def _get_gemini_cooldown_remaining(model: str, now_ts: float | None = None) -> int:
+    """Model cooldown'daysa kalan süreyi saniye olarak döndür."""
+    now_ts = now_ts if now_ts is not None else time.time()
+    _clear_expired_gemini_cooldown(model, now_ts=now_ts)
+    until = _GEMINI_MODEL_COOLDOWNS.get(model)
+    if until is None or until <= now_ts:
+        return 0
+    return max(0, int(math.ceil(until - now_ts)))
+
+
+def _set_gemini_model_cooldown(model: str, seconds: int, *, now_ts: float | None = None) -> None:
+    """Modeli geçici olarak cooldown'a al."""
+    if not model or seconds <= 0:
+        return
+    now_ts = now_ts if now_ts is not None else time.time()
+    _GEMINI_MODEL_COOLDOWNS[model] = now_ts + seconds
+
+
+def _get_gemini_error_cooldown_sec(code: int, body: str) -> int:
+    """HTTP hata kodu/gövdesine göre uygulanacak cooldown süresi."""
+    body_l = (body or "").lower()
+    if code == 503:
+        if "high demand" in body_l or '"status": "unavailable"' in body_l or '"status":"unavailable"' in body_l:
+            return 600
+        return 180
+    if code == 429:
+        return 180
+    return 0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -73,6 +117,15 @@ def _gemini_generate(
     model = model or _env("GEMINI_MODEL", _DEFAULT_GEMINI_MODEL)
     base_url = (base_url or _env("GEMINI_BASE_URL", _DEFAULT_GEMINI_BASE_URL)).rstrip("/")
 
+    cooldown_remaining = _get_gemini_cooldown_remaining(model)
+    if cooldown_remaining:
+        if log_cb:
+            log_cb(
+                f"  [LLM/Gemini] model={model} geçici cooldown'da "
+                f"({cooldown_remaining}s kaldı) — istek atlandı"
+            )
+        return None
+
     # Build contents list
     contents = []
     if system:
@@ -95,11 +148,7 @@ def _gemini_generate(
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    import time as _time
-    _RETRY_CODES = {429, 503}
-    _MAX_RETRIES = 3
-    _RETRY_DELAY = 12  # saniye — 503/429 geçici yük artışı için
-    for _attempt in range(_MAX_RETRIES):
+    for _attempt in range(_GEMINI_MAX_RETRIES):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
@@ -118,14 +167,22 @@ def _gemini_generate(
                 body = e.read().decode("utf-8", errors="replace")[:200]
             except Exception:
                 pass
-            if e.code in _RETRY_CODES and _attempt < _MAX_RETRIES - 1:
+            if e.code in _GEMINI_RETRY_CODES and _attempt < _GEMINI_MAX_RETRIES - 1:
                 if log_cb:
                     log_cb(
                         f"  [LLM/Gemini] HTTP {e.code} — "
-                        f"{_attempt + 1}/{_MAX_RETRIES} deneme, {_RETRY_DELAY}s bekleniyor..."
+                        f"{_attempt + 1}/{_GEMINI_MAX_RETRIES} deneme, {_GEMINI_RETRY_DELAY_SEC}s bekleniyor..."
                     )
-                _time.sleep(_RETRY_DELAY)
+                time.sleep(_GEMINI_RETRY_DELAY_SEC)
                 continue
+            cooldown_sec = _get_gemini_error_cooldown_sec(e.code, body)
+            if cooldown_sec:
+                _set_gemini_model_cooldown(model, cooldown_sec)
+                if log_cb:
+                    log_cb(
+                        f"  [LLM/Gemini] model={model} "
+                        f"{cooldown_sec}s cooldown'a alındı"
+                    )
             if log_cb:
                 log_cb(f"  [LLM/Gemini] HTTP {e.code}: {e.reason} — {body}")
             return None

@@ -90,6 +90,34 @@ def get_gemini_api_key() -> str:
     return str(keys.get("gemini_api_key") or keys.get("google_api_key") or "").strip()
 
 
+def get_gemini_film_credit_api_key() -> str:
+    env_key = (os.environ.get("GEMINI_FILM_CREDIT_API_KEY") or "").strip()
+    if env_key:
+        return env_key
+    return str(load_api_keys().get("gemini_film_credit_api_key", "")).strip()
+
+
+def is_gemini_film_credit_shadow_enabled() -> bool:
+    def _as_bool(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        text = str(value or "").strip().lower()
+        return text in {"1", "true", "yes", "on", "enabled"}
+
+    env_value = os.environ.get("GEMINI_FILM_CREDIT_SHADOW_ENABLED")
+    if env_value is not None:
+        return _as_bool(env_value)
+    return _as_bool(load_api_keys().get("gemini_film_credit_shadow_enabled", False))
+
+
+def get_gemini_film_credit_expo_dir() -> str:
+    env = os.environ.get("GEMINI_FILM_CREDIT_EXPO_DIR", "").strip()
+    if env:
+        return env
+    val = str(load_api_keys().get("gemini_film_credit_expo_dir", "")).strip()
+    return val or r"D:\expoOnay"
+
+
 def get_openai_api_key() -> str:
     env_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
     if env_key:

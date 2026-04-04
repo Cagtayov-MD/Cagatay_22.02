@@ -289,8 +289,10 @@ class PipelineRunner:
             _profile_merge_keys = (
                 "audio_stages", "whisper_model", "whisper_language",
                 "compute_type", "beam_size", "ocr_engine",
+                "asr_sampling_mode", "asr_window_minutes",
                 "tmdb_enabled", "tmdb_person_verify",
                 "gemini_enabled", "llm_cast_filter", "blok2_enabled",
+                "user_report_mirror_dir",
                 "qwen_fallback_on_handwriting", "imdb_enabled",
                 "external_truth_enabled",
                 "local_inferred_enabled", "ocr_grounded_arbitration",
@@ -1270,10 +1272,11 @@ class PipelineRunner:
                                 detected_language=_detected_lang,
                                 tmdb_cast=_tmdb_cast_for_summary,
                             )
-                            if summary:
-                                audio_result["summary"] = summary
+                            if summary and summary.get("language") == "tr":
+                                audio_result["summary"] = summary.get("text", "")
                                 audio_result["summary_model"] = summary.get("model_used", "")
-                                audio_result["summary_language"] = "tr"
+                                audio_result["summary_language"] = summary.get("language", "")
+                                audio_result["summary_flow"] = summary.get("flow", "")
                         except Exception as _sum_e:
                             self._log(f"  [Summarizer] Özet hatası (pipeline etkilenmedi): {_sum_e}")
                     else:
@@ -1328,7 +1331,15 @@ class PipelineRunner:
         t = time.time()
         self.stats.start_stage("EXPORT")
         export_ts = datetime.now().strftime("%d%m%y-%H%M")
-        exp = ExportEngine(work_dir, name_db=None)  # namedb sadece name_verify.py'de aktif
+        mirror_dir = (
+            self.config.get("user_report_mirror_dir")
+            or os.environ.get("USER_REPORT_MIRROR_DIR")
+        )
+        exp = ExportEngine(
+            work_dir,
+            name_db=None,
+            user_report_mirror_dir=mirror_dir,
+        )  # namedb sadece name_verify.py'de aktif
         jp, tp, tr_p, user_tp = exp.generate(
             info, cdata, ocr_lines, self.stage_stats,
             "WORKSTATION", scope, first_min, last_min,
@@ -1437,6 +1448,7 @@ class PipelineRunner:
             "program_type": self.config.get("program_type", "film_dizi"),
             "hf_token":     self.config.get("hf_token", ""),
             "ffmpeg":       self._ffmpeg,
+            "ffprobe":      self._ffprobe,
             "ollama_url":   self.config.get("ollama_url", "http://localhost:11434"),
             "tmdb_cast":    self.config.get("tmdb_cast", []),
             "stages": stages,
@@ -1452,6 +1464,8 @@ class PipelineRunner:
                 "beam_size":        self.config.get("beam_size", 1),
                 "initial_prompt":   self.config.get("initial_prompt", ""),
                 "audio_max_sec":    self.config.get("audio_max_sec"),
+                "asr_sampling_mode": self.config.get("asr_sampling_mode"),
+                "asr_window_minutes": self.config.get("asr_window_minutes"),
             },
         }
 
@@ -2625,6 +2639,31 @@ class PipelineRunner:
         vname = Path(video_info.get("filename", "out")).stem
         ada1_path = _safe_path(db_dir / f"{vname}_ada1.json")
         self._write_ada1(ocr_lines, vname, credits_data, ada1_path)
+
+        # 7. Experimental shadow Gemini film-credit sidecar
+        # Ana pipeline kararlarini hic etkilememesi icin sadece deep-copy uzerinden
+        # calisir ve butun hatalar burada yutulur.
+        try:
+            from config.runtime_paths import is_gemini_film_credit_shadow_enabled
+
+            if is_gemini_film_credit_shadow_enabled():
+                from core.gemini_film_credit_shadow import write_shadow_sidecar
+
+                write_shadow_sidecar(
+                    db_dir=db_dir,
+                    video_info=copy.deepcopy(video_info),
+                    credits_data=copy.deepcopy(credits_data),
+                    credits_raw=copy.deepcopy(
+                        credits_raw if credits_raw is not None else credits_data
+                    ),
+                    xml_path=xml_path,
+                    filename_title=self._extract_film_title_from_filename(stem),
+                    log_cb=self._log,
+                )
+            else:
+                self._log("  [GeminiFilmCredit] Shadow sidecar kapalı")
+        except Exception as exc:
+            self._log(f"  [GeminiFilmCredit] Sidecar yazılamadı: {exc}")
 
         self._log(f"  [DATABASE] Yazıldı: {db_dir}")
 

@@ -129,7 +129,7 @@ def main() -> None:
     try:
         # audio paketi import — bu noktada venv_audio aktif olmalı
         # ImportError ayrıntılı şekilde yakalanır ve kullanıcıya loglanır.
-        from audio.audio_pipeline import AudioPipeline  # type: ignore
+        from utils.audio.audio_pipeline import AudioPipeline  # type: ignore
 
         pipeline = AudioPipeline(config=config, log_cb=log_cb)
         result = pipeline.run()

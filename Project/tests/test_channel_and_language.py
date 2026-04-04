@@ -14,6 +14,7 @@ Testler gerçek API/model çağırmaz — mock kullanır.
 import sys
 import os
 import json
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
@@ -30,7 +31,7 @@ class TestChannelDetection(unittest.TestCase):
     """detect_language.py v2 kanal deneme testleri."""
 
     def setUp(self):
-        from audio.stages.detect_language import LanguageDetectionStage
+        from utils.audio.stages.detect_language import LanguageDetectionStage
         self.stage = LanguageDetectionStage(ffmpeg_path="ffmpeg", log_cb=print)
 
     def test_result_has_new_fields(self):
@@ -173,13 +174,14 @@ class TestExtractChannel(unittest.TestCase):
             result.stderr = ""
             return result
 
+        work_dir = os.path.join(tempfile.gettempdir(), "codex_test_extract")
         with patch('subprocess.run', side_effect=capture_run), \
              patch.object(Path, 'is_file', return_value=True), \
              patch.object(Path, 'stat', return_value=MagicMock(st_size=10000)):
             # _get_duration mock
             with patch.object(self.stage, '_get_duration', return_value=100.0):
                 result = self.stage.run(
-                    "/fake/video.mp4", "/tmp/test_extract",
+                    "/fake/video.mp4", work_dir,
                     selected_channel=1
                 )
 
@@ -202,12 +204,13 @@ class TestExtractChannel(unittest.TestCase):
             result.stderr = ""
             return result
 
+        work_dir = os.path.join(tempfile.gettempdir(), "codex_test_extract")
         with patch('subprocess.run', side_effect=capture_run), \
              patch.object(Path, 'is_file', return_value=True), \
              patch.object(Path, 'stat', return_value=MagicMock(st_size=10000)):
             with patch.object(self.stage, '_get_duration', return_value=100.0):
                 result = self.stage.run(
-                    "/fake/video.mp4", "/tmp/test_extract",
+                    "/fake/video.mp4", work_dir,
                     selected_channel=None
                 )
 
@@ -235,7 +238,9 @@ class TestSummarizerLanguageFlow(unittest.TestCase):
         )
 
         self.assertIsNotNone(result)
-        self.assertIn("en", result)
+        self.assertEqual(result["language"], "tr")
+        self.assertEqual(result["flow"], "single_step")
+        self.assertIn("Ali", result["text"])
         # Tek çağrı yapılmalı (iki adım değil)
         self.assertEqual(mock_gemini.call_count, 1)
 
@@ -257,6 +262,8 @@ class TestSummarizerLanguageFlow(unittest.TestCase):
         )
 
         self.assertIsNotNone(result)
+        self.assertEqual(result["language"], "tr")
+        self.assertEqual(result["flow"], "two_step")
         # İki çağrı: Pro (özet) + Flash (çeviri)
         self.assertEqual(mock_gemini.call_count, 2)
         # İkinci çağrıda system prompt çeviri prompt'u olmalı
@@ -279,6 +286,7 @@ class TestSummarizerLanguageFlow(unittest.TestCase):
         )
 
         self.assertIsNotNone(result)
+        self.assertEqual(result["language"], "tr")
         self.assertEqual(mock_gemini.call_count, 2)
 
     @patch('core.llm_provider._gemini_generate')
@@ -307,13 +315,14 @@ class TestSummarizerLanguageFlow(unittest.TestCase):
         prompt_text = second_call_args.args[0] if second_call_args.args else ""
         self.assertIn("Johnny Depp", prompt_text)
         self.assertIn("Captain Jack Sparrow", prompt_text)
+        self.assertEqual(result["language"], "tr")
 
     @patch('core.llm_provider._gemini_generate')
     def test_no_tmdb_cast_still_works(self, mock_gemini):
         """TMDB cast yoksa da çalışmalı — cast reference boş."""
         mock_gemini.side_effect = [
             "The detective finds the killer...",
-            "Dedektif katili bulur...",
+            "Dedektif katili bulur ve şehirden ayrılır...",
         ]
         from core.gemini_summarizer import summarize_transcript
 
@@ -325,6 +334,7 @@ class TestSummarizerLanguageFlow(unittest.TestCase):
         )
 
         self.assertIsNotNone(result)
+        self.assertEqual(result["language"], "tr")
         # Prompt'ta CAST REFERENCE olmamalı
         second_call_args = mock_gemini.call_args_list[1]
         prompt_text = second_call_args.args[0] if second_call_args.args else ""
@@ -346,6 +356,7 @@ class TestSummarizerLanguageFlow(unittest.TestCase):
         )
 
         self.assertIsNotNone(result)
+        self.assertEqual(result["language"], "tr")
         self.assertEqual(mock_gemini.call_count, 2)
 
     @patch('core.llm_provider._gemini_generate')
@@ -364,7 +375,89 @@ class TestSummarizerLanguageFlow(unittest.TestCase):
         )
 
         self.assertIsNotNone(result)
+        self.assertEqual(result["language"], "tr")
         self.assertEqual(mock_gemini.call_count, 2)
+
+    @patch('core.llm_provider._gemini_generate')
+    def test_supported_foreign_languages_all_end_in_turkish(self, mock_gemini):
+        """Belirtilen yabancı dillerin hepsi finalde Türkçe özet üretmeli."""
+        from core.gemini_summarizer import summarize_transcript
+
+        cases = {
+            "de": (
+                "Hans geht nach Berlin und trifft seine Schwester...",
+                "Hans Berlin'e gider ve kız kardeşiyle hesaplaşır..."
+            ),
+            "it": (
+                "Giulia torna a Roma e affronta suo padre...",
+                "Giulia Roma'ya döner ve babasıyla yüzleşir..."
+            ),
+            "es": (
+                "Carlos regresa a Madrid y pierde su trabajo...",
+                "Carlos Madrid'e döner ve işini kaybeder..."
+            ),
+            "hi": (
+                "अरुण शहर लौटता है और अपने geçmişiyle yüzleşir...",
+                "Arun şehre döner ve geçmişiyle yüzleşir..."
+            ),
+            "el": (
+                "Ο Νίκος επιστρέφει στην πόλη και βρίσκει την αλήθεια...",
+                "Nikos şehre döner ve gerçeği bulur..."
+            ),
+        }
+
+        for lang_code, (foreign_summary, final_tr) in cases.items():
+            with self.subTest(lang_code=lang_code):
+                mock_gemini.reset_mock()
+                mock_gemini.side_effect = [foreign_summary, final_tr]
+                result = summarize_transcript(
+                    "placeholder transcript text for language flow tests",
+                    api_key="fake_key",
+                    detected_language=lang_code,
+                )
+                self.assertIsNotNone(result)
+                self.assertEqual(result["language"], "tr")
+                self.assertEqual(result["flow"], "two_step")
+                self.assertEqual(mock_gemini.call_count, 2)
+
+    @patch('core.llm_provider._gemini_generate')
+    def test_invalid_translation_retries_and_can_recover(self, mock_gemini):
+        """İlk çeviri yanlış dilde kalırsa retry ile toparlanmalı."""
+        mock_gemini.side_effect = [
+            "John returns home and faces his father...",
+            "John returns home and faces his father...",
+            "John eve döner ve babasıyla yüzleşir...",
+        ]
+        from core.gemini_summarizer import summarize_transcript
+
+        result = summarize_transcript(
+            "John returns home...",
+            api_key="fake_key",
+            detected_language="en",
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["language"], "tr")
+        self.assertEqual(mock_gemini.call_count, 3)
+
+    @patch('core.llm_provider._gemini_generate')
+    def test_invalid_translation_never_falls_back_to_foreign_summary(self, mock_gemini):
+        """Çeviri hâlâ kurala uymuyorsa ara yabancı özet geri dönmemeli."""
+        mock_gemini.side_effect = [
+            "John returns home and faces his father...",
+            "John returns home and faces his father...",
+            "Γιάννης επιστρέφει σπίτι και περιμένει...",
+        ]
+        from core.gemini_summarizer import summarize_transcript
+
+        result = summarize_transcript(
+            "John returns home...",
+            api_key="fake_key",
+            detected_language="en",
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(mock_gemini.call_count, 3)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -447,10 +540,10 @@ class TestAudioPipelineStageOrder(unittest.TestCase):
         self.assertIn("selected_channel=selected_channel", source)
 
     def test_version_updated(self):
-        """Pipeline versiyonu 1.2 olmalı."""
+        """Pipeline versiyonu 1.3 olmalı."""
         source_path = PROJECT_ROOT / "core" / "audio_pipeline.py"
         source = source_path.read_text(encoding="utf-8")
-        self.assertIn('VERSION = "1.2"', source)
+        self.assertIn('VERSION = "1.3"', source)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -472,7 +565,8 @@ class TestLanguageScenarios(unittest.TestCase):
         # Tek çağrı
         self.assertEqual(mock_gemini.call_count, 1)
         # Sonuçta Türkçe karakter var
-        self.assertIn("ü", result["en"])
+        self.assertIn("ü", result["text"])
+        self.assertEqual(result["language"], "tr")
 
     @patch('core.llm_provider._gemini_generate')
     def test_scenario_english_film_with_cast(self, mock_gemini):
@@ -489,7 +583,8 @@ class TestLanguageScenarios(unittest.TestCase):
             tmdb_cast=[{"actor_name": "Johnny Depp", "character_name": "Jack Sparrow"}],
         )
         self.assertEqual(mock_gemini.call_count, 2)
-        self.assertIn("Jack Sparrow", result["en"])
+        self.assertIn("Jack Sparrow", result["text"])
+        self.assertEqual(result["language"], "tr")
 
     @patch('core.llm_provider._gemini_generate')
     def test_scenario_arabic_film_no_cast(self, mock_gemini):
@@ -506,6 +601,7 @@ class TestLanguageScenarios(unittest.TestCase):
         )
         self.assertEqual(mock_gemini.call_count, 2)
         self.assertIsNotNone(result)
+        self.assertEqual(result["language"], "tr")
 
     @patch('core.llm_provider._gemini_generate')
     def test_scenario_pro_fails_flash_fallback(self, mock_gemini):
@@ -524,6 +620,7 @@ class TestLanguageScenarios(unittest.TestCase):
         self.assertIsNotNone(result)
         # Pro fail + Flash özet + Flash çeviri = 3 çağrı
         self.assertEqual(mock_gemini.call_count, 3)
+        self.assertEqual(result["language"], "tr")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -746,8 +843,8 @@ class TestAudioPipelineUnknownLanguage(unittest.TestCase):
 
         pipeline = AudioPipeline(
             config={
-                "video_path": "/tmp/fake_video.mp4",
-                "work_dir": "/tmp/audio_pipeline_lang",
+                "video_path": os.path.join(tempfile.gettempdir(), "fake_video.mp4"),
+                "work_dir": os.path.join(tempfile.gettempdir(), "audio_pipeline_lang"),
                 "options": {"whisper_language": "tr"},
                 "stages": ["detect_language", "extract", "transcribe"],
             },

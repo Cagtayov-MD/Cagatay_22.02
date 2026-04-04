@@ -26,7 +26,10 @@ class ExtractStage:
 
     def run(self, video_path: str, work_dir: str,
             selected_channel: int | None = None,
-            max_duration_sec: int | None = None, **opts) -> dict:
+            max_duration_sec: float | None = None,
+            start_offset_sec: float = 0.0,
+            output_prefix: str = "audio_raw",
+            **opts) -> dict:
         """
         Video → WAV çıkarma.
 
@@ -36,6 +39,8 @@ class ExtractStage:
             selected_channel: None → karışık mono (-ac 1, eski davranış)
                               0    → sol kanal  (-af "pan=mono|c0=c0")
                               1    → sağ kanal  (-af "pan=mono|c0=c1")
+            start_offset_sec: Ses çıkarma başlangıcı (saniye)
+            output_prefix:    Çıktı WAV dosyaları için önek
 
         Returns:
             {
@@ -44,7 +49,8 @@ class ExtractStage:
                 "wav_48k": "path/audio_raw_48k.wav",
                 "duration_sec": 5400.0,
                 "stage_time_sec": 5.2,
-                "selected_channel": None | 0 | 1
+                "selected_channel": None | 0 | 1,
+                "start_offset_sec": 0.0,
             }
         """
         t0 = time.time()
@@ -59,21 +65,28 @@ class ExtractStage:
                 "duration_sec": 0.0,
                 "stage_time_sec": round(time.time() - t0, 2),
                 "selected_channel": selected_channel,
+                "start_offset_sec": start_offset_sec,
                 "error": f"Video dosyası bulunamadı: {video_path}",
             }
 
         os.makedirs(work_dir, exist_ok=True)
 
-        wav_16k = str(Path(work_dir) / "audio_raw_16k.wav")
-        wav_48k = str(Path(work_dir) / "audio_raw_48k.wav")
+        prefix = (output_prefix or "audio_raw").strip() or "audio_raw"
+        wav_16k = str(Path(work_dir) / f"{prefix}_16k.wav")
+        wav_48k = str(Path(work_dir) / f"{prefix}_48k.wav")
 
         if selected_channel is not None:
             self._log(f"  [Extract] Kanal seçimi aktif: kanal {selected_channel}")
         else:
             self._log(f"  [Extract] Karışık mono (tüm kanallar)")
 
+        if start_offset_sec:
+            self._log(f"  [Extract] Başlangıç ofseti: {start_offset_sec:.1f}s")
         if max_duration_sec:
-            self._log(f"  [Extract] Süre sınırı: {max_duration_sec}s ({max_duration_sec//60}dk)")
+            self._log(
+                f"  [Extract] Süre sınırı: {max_duration_sec:.1f}s "
+                f"({int(max_duration_sec) // 60}dk)"
+            )
 
         try:
             # ── 48kHz mono WAV (DF3 için) — ana çıkarma ──
@@ -82,6 +95,7 @@ class ExtractStage:
                 video_path, wav_48k,
                 sample_rate=48000,
                 selected_channel=selected_channel,
+                start_offset_sec=start_offset_sec,
                 max_duration_sec=max_duration_sec,
             )
 
@@ -99,6 +113,7 @@ class ExtractStage:
                 "duration_sec": 0.0,
                 "stage_time_sec": round(time.time() - t0, 2),
                 "selected_channel": selected_channel,
+                "start_offset_sec": start_offset_sec,
                 "error": str(e),
             }
 
@@ -119,15 +134,21 @@ class ExtractStage:
             "duration_sec": duration,
             "stage_time_sec": elapsed,
             "selected_channel": selected_channel,
+            "start_offset_sec": start_offset_sec,
         }
 
     def _ffmpeg_extract(self, video_path: str, out_path: str,
                         sample_rate: int = 16000,
                         selected_channel: int | None = None,
+                        start_offset_sec: float = 0.0,
                         max_duration_sec: int | None = None):
         """FFmpeg subprocess çalıştır + hata kontrolü."""
         cmd = [
             self._ffmpeg, '-y',
+        ]
+        if start_offset_sec:
+            cmd += ['-ss', str(start_offset_sec)]
+        cmd += [
             '-i', video_path,
             '-vn',
             '-acodec', 'pcm_s16le',

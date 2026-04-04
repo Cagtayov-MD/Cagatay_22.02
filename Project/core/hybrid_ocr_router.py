@@ -132,6 +132,7 @@ class HybridOCRRouter:
         cb("  [Hybrid] Phase 1: oneocr tüm frame'leri okuyor...")
         oneocr_lines, layout_pairs = self._oneocr.process_frames(
             candidate_frames, log_callback=cb)
+        frame_meta = dict(getattr(self._oneocr, "_last_frame_meta", {}) or {})
 
         phase1_time = time.time() - t0
         cb(f"  [Hybrid] Phase 1 tamamlandı: {len(oneocr_lines)} satır ({phase1_time:.1f}s)")
@@ -143,7 +144,7 @@ class HybridOCRRouter:
         # ══ Phase 2: Karar mekanizması ════════════════════════════════════
         cb("  [Hybrid] Phase 2: handwriting frame analizi...")
         handwriting_frames = self._decide_qwen_frames(
-            candidate_frames, oneocr_lines, cb)
+            candidate_frames, oneocr_lines, frame_meta, cb)
 
         if not handwriting_frames:
             cb("  [Hybrid] Tüm frame'ler standart font — Qwen atlanıyor")
@@ -188,6 +189,7 @@ class HybridOCRRouter:
     def _decide_qwen_frames(self,
                             candidate_frames: list,
                             oneocr_lines: list,
+                            frame_meta: dict,
                             cb) -> list:
         """
         3 katmanlı karar: hangi frame'ler Qwen'e gidecek?
@@ -199,43 +201,48 @@ class HybridOCRRouter:
         if not candidate_frames:
             return []
 
-        # ── Katman 1 + 2: Per-frame analiz ───────────────────────────────
-        frame_avg_conf = self._compute_frame_confidences(oneocr_lines)
         handwriting_frames = []
+        total = len(candidate_frames)
 
-        for frame_info in candidate_frames:
+        for idx, frame_info in enumerate(candidate_frames, start=1):
             frame_path = frame_info.get("path") or frame_info.get("frame_path", "")
             if not frame_path or not Path(frame_path).exists():
                 continue
 
-            avg_conf = frame_avg_conf.get(frame_path, None)
+            meta = frame_meta.get(frame_path)
+            if meta is not None:
+                avg_conf = self._meta_value(meta, "avg_confidence", 0.0)
+                has_text = bool(self._meta_value(meta, "has_text", False))
+                font_type = self._meta_value(meta, "font_type", "unknown")
 
-            # Frame'de OCR sonucu yok → font analizi ile karar ver
-            if avg_conf is None:
+                # Frame'de usable OCR sonucu yok → sadece handwriting ise aday yap
+                if not has_text:
+                    if font_type == "handwriting":
+                        handwriting_frames.append(frame_info)
+                else:
+                    # Katman 1: Yüksek confidence → Qwen gerek yok
+                    if avg_conf >= CONF_HIGH:
+                        pass
+                    # Katman 1: Çok düşük confidence → Qwen gerek
+                    elif avg_conf < CONF_LOW:
+                        handwriting_frames.append(frame_info)
+                    else:
+                        # Katman 2: Orta confidence → font tipini kontrol et
+                        if font_type == "standard":
+                            pass
+                        elif font_type == "handwriting":
+                            handwriting_frames.append(frame_info)
+                        else:
+                            # decorative/unknown → Katman 3'e bak (toplu karar)
+                            handwriting_frames.append(frame_info)
+            else:
+                # Güvenlik fallback'i: metadata yoksa eski font tahmin yolunu kullan.
                 font_type = self._estimate_font_type(frame_path)
                 if font_type == "handwriting":
                     handwriting_frames.append(frame_info)
-                continue
 
-            # Katman 1: Yüksek confidence → Qwen gerek yok
-            if avg_conf >= CONF_HIGH:
-                continue
-
-            # Katman 1: Çok düşük confidence → Qwen gerek
-            if avg_conf < CONF_LOW:
-                handwriting_frames.append(frame_info)
-                continue
-
-            # Katman 2: Orta confidence → font tipini kontrol et
-            font_type = self._estimate_font_type(frame_path)
-            if font_type == "standard":
-                continue
-            if font_type == "handwriting":
-                handwriting_frames.append(frame_info)
-                continue
-            # decorative → Katman 3'e bak (toplu karar)
-            # şimdilik handwriting listesine ekle; Katman 3 temizler
-            handwriting_frames.append(frame_info)
+            if idx % 50 == 0 or idx == total:
+                cb(f"  [Hybrid] Phase 2 ilerleme: {idx}/{total} | aday:{len(handwriting_frames)}")
 
         if not handwriting_frames:
             return []
@@ -250,25 +257,14 @@ class HybridOCRRouter:
 
         return handwriting_frames
 
-    def _compute_frame_confidences(self, oneocr_lines: list) -> dict:
-        """
-        Her frame_path için ortalama OCR confidence hesapla.
-        Döndürür: {frame_path: avg_confidence}
-        """
-        frame_confs: dict[str, list[float]] = {}
-        for line in oneocr_lines:
-            fp = getattr(line, "frame_path", None)
-            if not fp:
-                continue
-            conf = getattr(line, "avg_confidence", None) or getattr(line, "confidence", 0.0)
-            if fp not in frame_confs:
-                frame_confs[fp] = []
-            frame_confs[fp].append(float(conf))
-
-        return {
-            fp: (sum(confs) / len(confs)) if confs else 0.0
-            for fp, confs in frame_confs.items()
-        }
+    @staticmethod
+    def _meta_value(meta, field_name: str, default=None):
+        """FrameMeta dataclass veya dict üzerinde güvenli alan okuma."""
+        if meta is None:
+            return default
+        if isinstance(meta, dict):
+            return meta.get(field_name, default)
+        return getattr(meta, field_name, default)
 
     def _estimate_font_type(self, frame_path: str) -> str:
         """

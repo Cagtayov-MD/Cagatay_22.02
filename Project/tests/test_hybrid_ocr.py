@@ -51,6 +51,15 @@ def _make_frame(path="/tmp/f.png"):
     return {"path": path, "timecode_sec": 1.0}
 
 
+def _make_meta(has_text=True, line_count=1, avg_confidence=0.95, font_type="standard"):
+    return {
+        "has_text": has_text,
+        "line_count": line_count,
+        "avg_confidence": avg_confidence,
+        "font_type": font_type,
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # HYBRID-01: Import
 # ─────────────────────────────────────────────────────────────────────────────
@@ -77,14 +86,18 @@ def test_decide_high_confidence_skips_qwen():
     router._qwen_fallback = True
     router._oneocr = mock_oneocr
     router._qwen = mock_qwen
+    router._font_cache = {}
 
     frames = [_make_frame("/tmp/a.png"), _make_frame("/tmp/b.png")]
-    high_conf_lines = [
-        _make_line(conf=CONF_HIGH + 0.01, frame_path="/tmp/a.png"),
-        _make_line(conf=CONF_HIGH + 0.02, frame_path="/tmp/b.png"),
-    ]
+    frame_meta = {
+        "/tmp/a.png": _make_meta(avg_confidence=CONF_HIGH + 0.01, font_type="handwriting"),
+        "/tmp/b.png": _make_meta(avg_confidence=CONF_HIGH + 0.02, font_type="handwriting"),
+    }
 
-    result = router._decide_qwen_frames(frames, high_conf_lines, lambda m: None)
+    with patch("pathlib.Path.exists", return_value=True):
+        result = router._decide_qwen_frames(frames, [], frame_meta, lambda m: None)
+
+    mock_oneocr.estimate_font_type.assert_not_called()
     assert result == [], f"Yüksek confidence → Qwen boş olmalı, ama {result!r} döndü"
 
 
@@ -104,16 +117,17 @@ def test_decide_low_confidence_needs_qwen():
     router._qwen_fallback = True
     router._oneocr = mock_oneocr
     router._qwen = MagicMock()
+    router._font_cache = {}
 
     frames = [_make_frame("/tmp/hw.png")]
-    low_conf_lines = [
-        _make_line(conf=CONF_LOW - 0.05, frame_path="/tmp/hw.png"),
-    ]
+    frame_meta = {
+        "/tmp/hw.png": _make_meta(avg_confidence=CONF_LOW - 0.05, font_type="standard"),
+    }
 
-    with patch("os.path.exists", return_value=True), \
-         patch("pathlib.Path.exists", return_value=True):
-        result = router._decide_qwen_frames(frames, low_conf_lines, lambda m: None)
+    with patch("pathlib.Path.exists", return_value=True):
+        result = router._decide_qwen_frames(frames, [], frame_meta, lambda m: None)
 
+    mock_oneocr.estimate_font_type.assert_not_called()
     assert len(result) == 1, f"Düşük confidence → 1 frame Qwen'e gitmeli, {result!r}"
 
 
@@ -136,18 +150,23 @@ def test_decide_namedb_high_ratio_skips_qwen():
     router._qwen_fallback = True
     router._oneocr = mock_oneocr
     router._qwen = MagicMock()
+    router._font_cache = {}
 
     # Orta confidence → Katman 2 (decorative) → Katman 3
+    mid_conf = (CONF_HIGH + CONF_LOW) / 2.0
     lines = [
-        _make_line("Nisa Serezli", conf=0.75, frame_path="/tmp/c.png"),
-        _make_line("Selma Türkdoğan", conf=0.75, frame_path="/tmp/c.png"),
+        _make_line("Nisa Serezli", conf=mid_conf, frame_path="/tmp/c.png"),
+        _make_line("Selma Türkdoğan", conf=mid_conf, frame_path="/tmp/c.png"),
     ]
     frames = [_make_frame("/tmp/c.png")]
+    frame_meta = {
+        "/tmp/c.png": _make_meta(avg_confidence=mid_conf, font_type="decorative"),
+    }
 
-    with patch("os.path.exists", return_value=True), \
-         patch("pathlib.Path.exists", return_value=True):
-        result = router._decide_qwen_frames(frames, lines, lambda m: None)
+    with patch("pathlib.Path.exists", return_value=True):
+        result = router._decide_qwen_frames(frames, lines, frame_meta, lambda m: None)
 
+    mock_oneocr.estimate_font_type.assert_not_called()
     # NameDB oranı yüksek → Qwen listesi boş
     assert result == [], f"NameDB oranı yüksek → Qwen boş olmalı, {result!r}"
 
@@ -170,6 +189,8 @@ def test_process_frames_returns_tuple():
     router._qwen_fallback = True
     router._oneocr = mock_oneocr
     router._qwen = MagicMock()
+    router._font_cache = {}
+    mock_oneocr._last_frame_meta = {"/tmp/f.png": _make_meta(avg_confidence=CONF_HIGH + 0.05)}
 
     # _decide_qwen_frames'i mock ile bypass et
     router._decide_qwen_frames = MagicMock(return_value=[])
@@ -249,6 +270,7 @@ def test_merge_qwen_primary_oneocr_supplement():
     router._qwen_fallback = True
     router._oneocr = MagicMock()
     router._qwen = MagicMock()
+    router._font_cache = {}
 
     qwen_lines = [_make_line("Nisa Serezli", conf=0.92, frame_path="/tmp/q.png")]
     # oneocr'da farklı bir satır var (Qwen'de yok)
@@ -283,6 +305,7 @@ def test_merge_empty_qwen_preserves_oneocr():
     router._qwen_fallback = True
     router._oneocr = MagicMock()
     router._qwen = MagicMock()
+    router._font_cache = {}
 
     oneocr_lines = [
         _make_line("KATHLEEN HERBERT", conf=0.97),
@@ -296,3 +319,56 @@ def test_merge_empty_qwen_preserves_oneocr():
     )
 
     assert merged == oneocr_lines, "Qwen boş → oneocr sonucu değişmeden dönmeli"
+
+
+def test_decide_fallbacks_to_estimate_when_frame_meta_missing():
+    """Metadata yoksa güvenlik fallback'i olan estimate_font_type çalışmalı."""
+    mock_oneocr = MagicMock()
+    mock_oneocr.estimate_font_type.return_value = "handwriting"
+
+    router = object.__new__(HybridOCRRouter)
+    router.cfg = {}
+    router._log = lambda m: None
+    router._name_db = None
+    router._qwen_fallback = True
+    router._oneocr = mock_oneocr
+    router._qwen = MagicMock()
+    router._font_cache = {}
+
+    frames = [_make_frame("/tmp/missing-meta.png")]
+    with patch("pathlib.Path.exists", return_value=True):
+        result = router._decide_qwen_frames(frames, [], {}, lambda m: None)
+
+    mock_oneocr.estimate_font_type.assert_called_once_with("/tmp/missing-meta.png")
+    assert len(result) == 1
+
+
+def test_phase2_progress_logging_emits_updates():
+    """50 frame üstünde Phase 2 ilerleme logları görünür olmalı."""
+    mock_oneocr = MagicMock()
+
+    router = object.__new__(HybridOCRRouter)
+    router.cfg = {}
+    router._log = lambda m: None
+    router._name_db = None
+    router._qwen_fallback = True
+    router._oneocr = mock_oneocr
+    router._qwen = MagicMock()
+    router._font_cache = {}
+
+    frames = [_make_frame(f"/tmp/frame_{i}.png") for i in range(51)]
+    frame_meta = {
+        frame["path"]: _make_meta(
+            avg_confidence=(CONF_LOW - 0.01) if i == 0 else (CONF_HIGH + 0.05),
+            font_type="standard",
+        )
+        for i, frame in enumerate(frames)
+    }
+    logs = []
+
+    with patch("pathlib.Path.exists", return_value=True):
+        result = router._decide_qwen_frames(frames, [], frame_meta, logs.append)
+
+    assert len(result) == 1
+    assert any("Phase 2 ilerleme: 50/51" in msg for msg in logs)
+    assert any("Phase 2 ilerleme: 51/51" in msg for msg in logs)

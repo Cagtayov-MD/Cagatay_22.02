@@ -1,9 +1,13 @@
 """export_engine.py — Report schema uyumlu JSON + okunabilir TXT çıktı."""
-import json, os, re, unicodedata
+import json, os, re, shutil, unicodedata
 from datetime import datetime
 from pathlib import Path
 
-from core.gemini_summarizer import get_language_label
+from core.gemini_summarizer import (
+    get_language_label,
+    is_valid_final_summary,
+    normalize_final_summary_text,
+)
 from utils.time_utils import fmt_hms as _fmt_hms_shared
 
 
@@ -207,38 +211,54 @@ def _to_ascii_upper(word: str) -> str:
 
 
 def _upper_word_foreign(word: str) -> str:
-    """Yabancı isim büyütme: i→I (noktalı İ değil), aksanlı karakterler → ASCII."""
-    upper = word.upper()
-    cleaned = []
-    for ch in upper:
-        if ch.isascii() or not ch.isalpha():
-            cleaned.append(ch)
-        else:
-            decomposed = unicodedata.normalize('NFD', ch)
-            base = ''.join(c for c in decomposed if unicodedata.category(c) != 'Mn')
-            cleaned.append(base if base else ch)
-    return ''.join(cleaned)
+    """Yabancı özel adı büyüt; apostroflu Türkçe eki varsa suffix'i Türkçe koru."""
+    match = re.match(r"^(.*?)(['’])(.*)$", word)
+    if not match:
+        return _upper_word_english(word)
+
+    stem, apostrophe, suffix = match.groups()
+    first_alpha = _first_alpha_char(suffix)
+
+    # Chris'in -> CHRIS'İN, Washington'a -> WASHINGTON'A
+    if first_alpha and first_alpha.islower():
+        return f"{_upper_word_english(stem)}{apostrophe}{_upper_word_turkish(suffix)}"
+
+    return _upper_word_english(word)
+
+
+def _upper_word_proper_name(word: str) -> str:
+    """Dil tahmini yapmadan özel adı büyüt; stem Unicode upper, ek Türkçe upper."""
+    match = re.match(r"^(.*?)(['’])(.*)$", word)
+    if not match:
+        return word.upper()
+
+    stem, apostrophe, suffix = match.groups()
+    first_alpha = _first_alpha_char(suffix)
+    if first_alpha and first_alpha.islower():
+        return f"{stem.upper()}{apostrophe}{_upper_word_turkish(suffix)}"
+
+    return word.upper()
 
 
 def _upper_word(word: str, protected_words: set[str] | None = None) -> str:
     """Tek kelimeyi büyük harfe çevir.
 
     Karar sırası:
-    1. protected_words'te → yabancı kural (i→I, aksanlar ASCII'ye indirilir)
+    1. protected_words'te → özel isim kuralı (dil tahmini yapmadan güvenli upper)
     2. Aksanlı Latin karakter (é, ñ, ê, Türkçe'ye özgü olmayan) → yabancı kural
     3. Diğer tüm kelimeler → Türkçe kural (varsayılan: i→İ, ç→Ç, ö→Ö, vb.)
 
-    NOT: Yabancı isimler cast/crew'dan _collect_protected_words ile tespit edilip
-    protected_words'e eklendiğinde yabancı büyütülür.
+    NOT: Cast/crew/original-title token'ları _collect_protected_words ile işaretlenir
+    ve bu kelimelere dil bağımsız özel isim upper-case uygulanır.
     Özet kısmında ise _to_upper_tr_ozet akıllı heuristic kullanır.
     """
     raw = (word or "").strip()
     token_for_check = raw.strip("''`\""".,;:!?()[]{}")
     base_for_check = token_for_check.split("'", 1)[0].split("'", 1)[0]
 
-    # 1. protected_words → yabancı kural
+    # 1. protected_words → özel isim kuralı
     if protected_words and base_for_check.casefold() in protected_words:
-        return _upper_word_foreign(raw)
+        return _upper_word_proper_name(raw)
 
     # 2. Aksanlı Latince karakter (é, ñ, ê) → kesinlikle yabancı
     if any(c not in _TR_ONLY_CHARS and not c.isascii() and c.isalpha()
@@ -253,7 +273,7 @@ def _upper_word(word: str, protected_words: set[str] | None = None) -> str:
 
 
 def _collect_protected_words(*name_groups: list[str]) -> set[str]:
-    """Yabancı özel isimlerde ASCII korunacak kelimeleri topla."""
+    """Özel isimlerde güvenli upper uygulanacak kelimeleri topla."""
     protected: set[str] = set()
     for names in name_groups:
         for full_name in names or []:
@@ -261,11 +281,9 @@ def _collect_protected_words(*name_groups: list[str]) -> set[str]:
                 t = token.strip()
                 if not t:
                     continue
-                # Türkçe isim/veri gibi görünenleri koruma listesine alma.
-                # _TR_EXCLUSIVE_CHARS: yalnızca ğ/ı gibi kesinlikle Türkçe'ye özgü
-                # karakterler. ç/ö/ü Fransızca/Almanca'da da bulunur; bunları içeren
-                # ama ğ/ı içermeyen kelimeler (ör. "François") yabancı kabul edilir.
-                if any(c in _TR_EXCLUSIVE_CHARS for c in t) or _is_known_name(t):
+                if len(t) <= 1:
+                    continue
+                if t.casefold() in _TR_SAFEGUARD_ASCII:
                     continue
                 protected.add(t.casefold())
     return protected
@@ -290,7 +308,11 @@ def _extract_foreign_tags(text: str) -> tuple[str, set[str]]:
 
 
 def _collect_summary_name_candidates(summary: str) -> set[str]:
-    """Özetten olası yabancı özel isim token'larını çıkar."""
+    """Özetten olası özel isim token'larını çıkar.
+
+    Burada Türkçe/yabancı ayrımı yapılmaz; sadece özel isim olma ihtimali yüksek
+    token'lar toplanır. Sonraki aşamada bunlara nötr upper-case uygulanır.
+    """
     if not summary:
         return set()
 
@@ -299,7 +321,9 @@ def _collect_summary_name_candidates(summary: str) -> set[str]:
         base = token.split("'", 1)[0].strip()
         if not base:
             continue
-        if _is_turkish_word(base) or _is_known_name(base):
+        if len(base) <= 1:
+            continue
+        if base.casefold() in _TR_SAFEGUARD_ASCII:
             continue
         candidates.add(base.casefold())
     return candidates
@@ -339,6 +363,14 @@ def _upper_word_english(word: str) -> str:
             base = ''.join(c for c in decomposed if unicodedata.category(c) != 'Mn')
             cleaned.append(base if base else ch)
     return ''.join(cleaned)
+
+
+def _first_alpha_char(text: str) -> str:
+    """Metindeki ilk alfabetik karakteri döndür."""
+    for ch in text:
+        if ch.isalpha():
+            return ch
+    return ""
 
 
 def _collect_foreign_nouns(cast_list: list) -> set:
@@ -405,24 +437,27 @@ def _has_turkish_suffix(word: str) -> bool:
     return any(lower.endswith(s) for s in _TR_SUFFIX_PATTERNS)
 
 
-def _to_upper_tr_ozet(text: str, foreign_nouns: set) -> str:
+def _to_upper_tr_ozet(text: str, foreign_nouns: set, proper_names: set[str] | None = None) -> str:
     """Özet metnini büyüt: varsayılan Türkçe kural, yabancı isimler İngilizce kural.
 
     Karar sırası (her kelime için):
-    1. foreign_nouns'ta (cast'tan) → İngilizce kural
-    2. Aksanlı Latin karakter (é, ñ, ê) → kesinlikle yabancı → İngilizce
+    1. foreign_nouns'ta (cast'tan) → İngilizce/ASCII kural
+    2. Aksanlı Latin karakter (é, ñ, ê) → kesinlikle yabancı → İngilizce/ASCII
     3. Türkçe'ye özgü karakter var → Türkçe kural
     4. Türkçe isim DB'sinde var → Türkçe kural
-    5. Safeguard kelimeler → Türkçe kural
-    6. Türkçe ek kalıbı var → Türkçe kural
-    7. Varsayılan → Türkçe kural (özel isimler hariç her şey Türkçe)
+    5. proper_names'te → dil tahmini yapmadan özel isim kuralı
+    6. Safeguard kelimeler → Türkçe kural
+    7. Türkçe ek kalıbı var → Türkçe kural
+    8. Varsayılan → Türkçe kural (özel isimler hariç her şey Türkçe)
 
     Args:
         text:          Özet satırı.
         foreign_nouns: _collect_foreign_nouns() çıktısı (büyük harf set).
+        proper_names:  Dil bağımsız özel isim adayları.
     """
     if not text:
         return text
+    proper_names = proper_names or set()
     words = text.split(' ')
     result = []
     for word in words:
@@ -436,12 +471,12 @@ def _to_upper_tr_ozet(text: str, foreign_nouns: set) -> str:
 
         # 1. foreign_nouns'ta → İngilizce
         if base_ascii in foreign_nouns:
-            result.append(_upper_word_english(word))
+            result.append(_upper_word_foreign(word))
 
         # 2. Aksanlı Latin karakter → kesinlikle yabancı
         elif any(c not in _TR_ONLY_CHARS and not c.isascii() and c.isalpha()
                  for c in base_cleaned):
-            result.append(_upper_word_english(word))
+            result.append(_upper_word_foreign(word))
 
         # 3. Türkçe'ye özgü karakter var → Türkçe kural
         elif _is_turkish_word(word):
@@ -451,18 +486,51 @@ def _to_upper_tr_ozet(text: str, foreign_nouns: set) -> str:
         elif _is_known_name(base_cleaned):
             result.append(_upper_word_turkish(word))
 
-        # 5. Safeguard Türkçe kelimeler → Türkçe kural
+        # 5. Özel isim adayı → dil tahmini yapmadan güvenli upper
+        elif base_cleaned.casefold() in proper_names:
+            result.append(_upper_word_proper_name(word))
+
+        # 6. Safeguard Türkçe kelimeler → Türkçe kural
         elif base_cleaned.lower() in _TR_SAFEGUARD_ASCII:
             result.append(_upper_word_turkish(word))
 
-        # 6. Türkçe ek kalıbı var → Türkçe kural (dizisinin, hayatini vb.)
+        # 7. Türkçe ek kalıbı var → Türkçe kural (dizisinin, hayatini vb.)
         elif _has_turkish_suffix(base_cleaned):
             result.append(_upper_word_turkish(word))
 
-        # 7. Varsayılan: Türkçe kural (özel isimler hariç her şey Türkçe)
+        # 8. Varsayılan: Türkçe kural (özel isimler hariç her şey Türkçe)
         else:
             result.append(_upper_word_turkish(word))
     return ' '.join(result)
+
+
+def _extract_final_summary_text(audio_result: dict | None) -> str:
+    """Audio sonucundan son kullanıcıya uygun final Türkçe özeti çıkar."""
+    if not audio_result or not isinstance(audio_result, dict):
+        return ""
+
+    summary_raw = (
+        audio_result.get("summary") or
+        audio_result.get("summary_tr") or
+        audio_result.get("ollama_summary")
+    )
+    summary_text = ""
+    summary_lang = audio_result.get("summary_language") or ""
+
+    if isinstance(summary_raw, dict):
+        summary_text = summary_raw.get("text") or summary_raw.get("tr") or ""
+        summary_lang = summary_raw.get("language") or summary_lang
+    else:
+        summary_text = summary_raw or ""
+
+    summary_text = normalize_final_summary_text(summary_text)
+    if not summary_text:
+        return ""
+    if summary_lang and summary_lang.lower() != "tr":
+        return ""
+    if not is_valid_final_summary(summary_text):
+        return ""
+    return summary_text
 
 
 def _wrap_max_words(text: str, max_words: int = 20, indent: str = "  ") -> str:
@@ -1763,9 +1831,13 @@ def _format_language_block(audio_result: dict | None) -> list[str]:
     return lines
 
 class ExportEngine:
-    def __init__(self, output_dir, name_db=None):
+    def __init__(self, output_dir, name_db=None, user_report_mirror_dir: str | None = None):
         self.out = Path(output_dir)
         self.out.mkdir(parents=True, exist_ok=True)
+        self.user_report_mirror_dir = (
+            Path(user_report_mirror_dir)
+            if user_report_mirror_dir else None
+        )
 
         if name_db is not None:
             self._name_db = name_db
@@ -1780,6 +1852,31 @@ class ExportEngine:
 
     def _log(self, message: str):
         print(message, flush=True)
+
+    def _mirror_user_report(self, path) -> None:
+        """Kullanıcı TXT'sini ikincil klasöre de kopyala.
+
+        Bu kopya yardımcıdır; hata olursa ana export akışı kesilmez.
+        """
+        if self.user_report_mirror_dir is None:
+            return
+
+        try:
+            src = Path(path)
+            if not src.is_file():
+                return
+
+            mirror_dir = self.user_report_mirror_dir
+            mirror_dir.mkdir(parents=True, exist_ok=True)
+
+            if src.parent.resolve() == mirror_dir.resolve():
+                return
+
+            mirror_path = _safe_path(mirror_dir / src.name)
+            shutil.copy2(src, mirror_path)
+            self._log(f"  [ExportMirror] Kullanıcı kopyası yazıldı: {mirror_path}")
+        except Exception as exc:
+            self._log(f"  [ExportMirror] Kopya yazılamadı: {exc}")
 
     def generate(self, video_info, credits_data, ocr_lines, stage_stats,
                  profile, scope, first_min, last_min, keywords=None, logos=None,
@@ -2117,17 +2214,7 @@ class ExportEngine:
         L.append(sep)
         L.append(f"  {_ozet_label}")
         L.append(sep)
-        summary = None
-        if audio_result and isinstance(audio_result, dict):
-            summary_raw = (
-                audio_result.get("summary") or
-                audio_result.get("summary_tr") or
-                audio_result.get("ollama_summary")
-            )
-            if isinstance(summary_raw, dict):
-                summary = summary_raw.get("en") or summary_raw.get("tr") or ""
-            else:
-                summary = summary_raw
+        summary = _extract_final_summary_text(audio_result)
 
         # FIX: Bölüm numaralı giriş — sonuna " ; " eklendi
         episode_no = _extract_episode_from_id(film_id) if film_id else 'YOK'
@@ -2137,12 +2224,17 @@ class ExportEngine:
             summary = episode_prefix + " " + summary
 
         ozet_content_start = len(L)
+        _summary_name_candidates: set[str] = set()
         if summary:
             # [[İsim]] etiketlerini ayıkla → foreign_nouns'a ekle → metinden sil
             summary, _tagged_foreign = _extract_foreign_tags(summary)
             foreign_nouns.update(_tagged_foreign)
-            protected_words.update(_collect_summary_name_candidates(summary))
-            L.append(f"  {summary}")
+            _summary_name_candidates = _collect_summary_name_candidates(summary)
+            summary_paragraphs = [p for p in summary.split("\n\n") if p.strip()]
+            for idx, paragraph in enumerate(summary_paragraphs):
+                if idx:
+                    L.append("")
+                L.append(f"  {paragraph}")
         else:
             L.append("  ÖZET OLUŞTURULAMADI.")
         ozet_content_end = len(L)
@@ -2218,7 +2310,7 @@ class ExportEngine:
         # Özet satırları: _to_upper_tr_ozet (foreign_nouns bazlı)
         # Diğer satırlar: _to_upper_tr (protected_words bazlı) — varsayılan Türkçe
         L = [
-            _to_upper_tr_ozet(line, foreign_nouns)
+            _to_upper_tr_ozet(line, foreign_nouns, proper_names=_summary_name_candidates)
             if ozet_content_start <= i < ozet_content_end
             else _to_upper_tr(line, protected_words=protected_words)
             for i, line in enumerate(L)
@@ -2237,6 +2329,8 @@ class ExportEngine:
 
         with open(path, "w", encoding="utf-8-sig") as f:
             f.write("\n".join(L))
+
+        self._mirror_user_report(path)
 
     def _write_report(self, r, path, audio_result: dict | None = None):
         L = []
@@ -2361,9 +2455,15 @@ class ExportEngine:
         else:
             summary = None
             if audio_result and isinstance(audio_result, dict):
-                summary = audio_result.get("summary") or audio_result.get("summary_tr") or audio_result.get("ollama_summary")
+                summary = _extract_final_summary_text(audio_result)
             if summary:
-                L.append(f"\n  {summary}")
+                summary_paragraphs = [p for p in summary.split("\n\n") if p.strip()]
+                for idx, paragraph in enumerate(summary_paragraphs):
+                    if idx == 0:
+                        L.append(f"\n  {paragraph}")
+                    else:
+                        L.append("")
+                        L.append(f"  {paragraph}")
             else:
                 L.append("\n  Özet oluşturma aktif değil")
 

@@ -84,6 +84,15 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text.lower().translate(_TR_NORM)).strip()
 
 
+@dataclass
+class FrameMeta:
+    """Phase 1 sırasında üretilen hafif frame özeti."""
+    has_text: bool = False
+    line_count: int = 0
+    avg_confidence: float = 0.0
+    font_type: str = "unknown"
+
+
 class OneOCREngine:
     """
     Windows 11 Snipping Tool OCR motoru.
@@ -101,6 +110,7 @@ class OneOCREngine:
         self._log = log_cb or (lambda m: None)
         self._name_db = name_db
         self._model = oneocr.OcrEngine()
+        self._last_frame_meta: dict[str, FrameMeta] = {}
         self._log(f"  [OneOCR] Windows Snipping Tool OCR motoru başlatıldı")
 
     # ── Ana arayüz — OCREngine ile aynı imza ──────────────────
@@ -115,6 +125,7 @@ class OneOCREngine:
         """
         cb = log_callback or self._log
         total = len(candidate_frames)
+        self._last_frame_meta = {}
 
         cb(f"  [OneOCR] {total} frame işlenecek")
 
@@ -138,19 +149,22 @@ class OneOCREngine:
                 continue
 
             try:
-                lines_data = self._read_frame(frame_path)
+                frame_img, lines_data = self._read_frame_with_image(frame_path)
             except Exception as e:
                 error_count += 1
                 if error_count <= 3:
                     cb(f"  [OneOCR] Frame {i} hatası: {e}")
                 continue
 
+            self._last_frame_meta[frame_path] = self._build_frame_meta(
+                lines_data=lines_data,
+                frame_img=frame_img,
+            )
+
             for line_info in lines_data:
+                if not self._is_usable_line(line_info):
+                    continue
                 text = line_info["text"].strip()
-                if not text or len(text) < MIN_TEXT_LEN:
-                    continue
-                if _is_blacklisted(text):
-                    continue
 
                 norm = _normalize(text)
                 if norm not in raw_groups:
@@ -246,6 +260,31 @@ class OneOCREngine:
         return ocr_lines, layout_pairs
 
     # ── Tek frame okuma ────────────────────────────────────────
+    def _read_frame_with_image(self, frame_path: str):
+        """
+        Frame'i oneocr ile oku ve mümkünse görüntüyü de döndür.
+
+        Returns: (frame_img | None, lines_data)
+        """
+        frame_img = None
+
+        # cv2 ile oku (unicode yol desteği)
+        if HAS_CV2 and HAS_NUMPY:
+            frame_img = imread_unicode(str(frame_path))
+            if frame_img is None:
+                return None, []
+            result = self._model.recognize_cv2(frame_img)
+        else:
+            # PIL fallback
+            try:
+                from PIL import Image
+                pil_img = Image.open(str(frame_path))
+                result = self._model.recognize_pil(pil_img)
+            except Exception:
+                return None, []
+
+        return frame_img, self._parse_ocr_result(result)
+
     def _read_frame(self, frame_path: str) -> list[dict]:
         """
         Frame'i oneocr ile oku.
@@ -259,21 +298,11 @@ class OneOCREngine:
             }, ...
         ]
         """
-        # cv2 ile oku (unicode yol desteği)
-        if HAS_CV2 and HAS_NUMPY:
-            img = imread_unicode(str(frame_path))
-            if img is None:
-                return []
-            result = self._model.recognize_cv2(img)
-        else:
-            # PIL fallback
-            try:
-                from PIL import Image
-                img = Image.open(str(frame_path))
-                result = self._model.recognize_pil(img)
-            except Exception:
-                return []
+        _, lines_out = self._read_frame_with_image(frame_path)
+        return lines_out
 
+    def _parse_ocr_result(self, result) -> list[dict]:
+        """oneocr ham sonucunu standart line dict listesine dönüştür."""
         if not result or not result.get("lines"):
             return []
 
@@ -318,6 +347,36 @@ class OneOCREngine:
             })
 
         return lines_out
+
+    @staticmethod
+    def _is_usable_line(line_info: dict) -> bool:
+        """Dedup/çıktı akışına girecek line'ları filtrele."""
+        text = (line_info.get("text") or "").strip()
+        if not text or len(text) < MIN_TEXT_LEN:
+            return False
+        if _is_blacklisted(text):
+            return False
+        return True
+
+    def _build_frame_meta(self, lines_data: list[dict], frame_img) -> FrameMeta:
+        """Phase 2 kararları için hafif frame özeti üret."""
+        usable_lines = [line for line in lines_data if self._is_usable_line(line)]
+        confidences = [
+            float(line.get("confidence", 0.0))
+            for line in usable_lines
+            if line.get("confidence") is not None
+        ]
+        avg_conf = (
+            round(sum(confidences) / len(confidences), 3)
+            if confidences else 0.0
+        )
+
+        return FrameMeta(
+            has_text=bool(usable_lines),
+            line_count=len(usable_lines),
+            avg_confidence=avg_conf,
+            font_type=self._estimate_font_type_from_data(frame_img, lines_data),
+        )
 
     # ── Layout pair çıkarımı (bbox'lardan) ─────────────────────
     def _extract_layout_pairs(self, layout_data: list, cb) -> list:
@@ -394,18 +453,20 @@ class OneOCREngine:
 
         Returns: "standard" | "handwriting" | "decorative" | "unknown"
         """
+        try:
+            frame_img, lines_data = self._read_frame_with_image(frame_path)
+            return self._estimate_font_type_from_data(frame_img, lines_data)
+        except Exception:
+            return "unknown"
+
+    def _estimate_font_type_from_data(self, frame_img, lines_data: list[dict]) -> str:
+        """Yüklü görüntü + OCR bbox verisinden font tipini tahmin et."""
         if not HAS_CV2 or not HAS_NUMPY:
+            return "unknown"
+        if frame_img is None or not lines_data:
             return "unknown"
 
         try:
-            img = imread_unicode(str(frame_path))
-            if img is None:
-                return "unknown"
-
-            lines_data = self._read_frame(frame_path)
-            if not lines_data:
-                return "unknown"
-
             heights = []
             edge_densities = []
 
@@ -420,7 +481,7 @@ class OneOCREngine:
                 heights.append(float(h_val))
 
                 # Edge density
-                region = img[int(y1):int(y2), int(x1):int(x2)]
+                region = frame_img[int(y1):int(y2), int(x1):int(x2)]
                 if region.size == 0:
                     continue
                 gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
@@ -441,7 +502,6 @@ class OneOCREngine:
             if h_cv > 0.35 or edge_density > 0.40:
                 return "handwriting"
             return "decorative"
-
         except Exception:
             return "unknown"
 

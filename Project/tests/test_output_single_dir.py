@@ -15,9 +15,9 @@ Testler:
 
 import os
 import sys
+import json
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 _project_dir = os.path.dirname(os.path.dirname(__file__))
 if _project_dir not in sys.path:
@@ -142,6 +142,26 @@ class TestNoOutputRootCopy(unittest.TestCase):
             source,
             "output_root kopyalama log mesajı kaldırılmış olmalı"
         )
+
+
+class TestUserReportMirror(unittest.TestCase):
+
+    def test_profile_sets_user_report_mirror_dir(self):
+        profiles_path = Path(_project_dir) / "config" / "content_profiles.json"
+        profiles = json.loads(profiles_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            profiles["FilmDizi-Hybrid"].get("user_report_mirror_dir"),
+            r"D:\export",
+        )
+
+    def test_pipeline_runner_has_user_report_mirror_wiring(self):
+        runner_path = Path(_project_dir) / "core" / "pipeline_runner.py"
+        source = runner_path.read_text(encoding="utf-8")
+
+        self.assertIn("user_report_mirror_dir", source)
+        self.assertIn("USER_REPORT_MIRROR_DIR", source)
+        self.assertIn("user_report_mirror_dir=mirror_dir", source)
 
 
 # ── SD-07: İki çalışma, aynı work_dir ─────────────────────────────────────────
