@@ -99,7 +99,7 @@ class TestSearchCrewPrompt(unittest.TestCase):
     def test_sp01_film_with_anchor(self):
         """Film + anchor var → '{anchor}1991 yapımı X adlı filmin ...' + min_domains=2"""
         prompt, min_domains = _build_prompt(
-            target_role="KAMERA",
+            target_role="YAPIMCI",
             year="1991",
             film_title="FELANCA FİLM",
             known_fields={"YÖNETMEN": ["Ahmet Yılmaz"]},
@@ -110,13 +110,13 @@ class TestSearchCrewPrompt(unittest.TestCase):
         self.assertIn("1991 yapımı", prompt)
         self.assertIn("FELANCA FİLM", prompt)
         self.assertIn("adlı filmin", prompt)
-        self.assertIn("kamera operatörü", prompt)
+        self.assertIn("yapımcısı", prompt)
         self.assertNotIn("bölümünün", prompt)
 
     def test_sp02_film_no_anchor(self):
         """Film + anchor yok → '1991 yılında çekilen X adlı filmin ...' + min_domains=3"""
         prompt, min_domains = _build_prompt(
-            target_role="KAMERA",
+            target_role="YAPIMCI",
             year="1991",
             film_title="FELANCA FİLM",
             known_fields={},
@@ -125,13 +125,13 @@ class TestSearchCrewPrompt(unittest.TestCase):
         self.assertEqual(min_domains, 3)
         self.assertIn("1991 yılında çekilen", prompt)
         self.assertIn("adlı filmin", prompt)
-        self.assertIn("kamera operatörü", prompt)
+        self.assertIn("yapımcısı", prompt)
         self.assertNotIn("bölümünün", prompt)
 
     def test_sp03_dizi_with_anchor(self):
         """Dizi + anchor var → '{anchor}1991 yapımı X adlı dizinin N. bölümünün ...' + min_domains=3"""
         prompt, min_domains = _build_prompt(
-            target_role="KAMERA",
+            target_role="YAPIMCI",
             year="1991",
             film_title="FELANCA DİZİ",
             known_fields={"YÖNETMEN": ["Mehmet Kaya"]},
@@ -142,13 +142,13 @@ class TestSearchCrewPrompt(unittest.TestCase):
         self.assertIn("1991 yapımı", prompt)
         self.assertIn("adlı dizinin", prompt)
         self.assertIn("42. bölümünün", prompt)
-        self.assertIn("kamera operatörü", prompt)
+        self.assertIn("yapımcısı", prompt)
         self.assertNotIn("adlı filmin", prompt)
 
     def test_sp04_dizi_no_anchor(self):
         """Dizi + anchor yok → '1991 yılında yayımlanan X adlı dizinin N. bölümünün ...' + min_domains=3"""
         prompt, min_domains = _build_prompt(
-            target_role="KAMERA",
+            target_role="YAPIMCI",
             year="1991",
             film_title="FELANCA DİZİ",
             known_fields={},
@@ -158,7 +158,7 @@ class TestSearchCrewPrompt(unittest.TestCase):
         self.assertIn("1991 yılında yayımlanan", prompt)
         self.assertIn("adlı dizinin", prompt)
         self.assertIn("42. bölümünün", prompt)
-        self.assertIn("kamera operatörü", prompt)
+        self.assertIn("yapımcısı", prompt)
         self.assertNotIn("adlı filmin", prompt)
 
     def test_sp05_min_domains_not_met_returns_none(self):
@@ -171,7 +171,7 @@ class TestSearchCrewPrompt(unittest.TestCase):
              patch("config.runtime_paths.get_gemini_api_key", return_value="fake-key"):
             from core.export_engine import _search_crew_with_gemini
             result = _search_crew_with_gemini(
-                target_role="KAMERA",
+                target_role="YAPIMCI",
                 year="1991",
                 film_title="FELANCA FİLM",
                 known_fields={},       # anchor yok → min_domains=3
@@ -184,20 +184,20 @@ class TestSearchCrewPrompt(unittest.TestCase):
         """Yeterli domain varsa isim döner."""
         mock_client = MagicMock()
         mock_client.generate_with_search.return_value = (
-            "Kameramanın Adı", ["site1.com", "site2.com", "site3.com"]
+            "Yapımcının Adı", ["site1.com", "site2.com", "site3.com"]
         )
 
         with patch("core.gemini_client.GeminiClient", return_value=mock_client), \
              patch("config.runtime_paths.get_gemini_api_key", return_value="fake-key"):
             from core.export_engine import _search_crew_with_gemini
             result = _search_crew_with_gemini(
-                target_role="KAMERA",
+                target_role="YAPIMCI",
                 year="1991",
                 film_title="FELANCA FİLM",
                 known_fields={},       # min_domains=3, 3 domain var
                 episode_no="YOK",
             )
-        self.assertEqual(result, "Kameramanın Adı")
+        self.assertEqual(result, "Yapımcının Adı")
 
     def test_sp07_unknown_role_returns_none(self):
         """Tanımsız rol → erken None."""
@@ -207,7 +207,7 @@ class TestSearchCrewPrompt(unittest.TestCase):
     def test_sp08_anchor_uses_first_known_field(self):
         """Anchor — known_fields'daki ilk dolu rol kullanılır."""
         prompt, _ = _build_prompt(
-            target_role="KAMERA",
+            target_role="YAPIMCI",
             year="2000",
             film_title="TEST",
             known_fields={
@@ -222,21 +222,21 @@ class TestSearchCrewPrompt(unittest.TestCase):
         """GeminiSearch, GeminiClient'i 2.5 Flash ile kurmalı."""
         mock_client = MagicMock()
         mock_client.generate_with_search.return_value = (
-            "Kameramanın Adı", ["site1.com", "site2.com", "site3.com"]
+            "Yapımcının Adı", ["site1.com", "site2.com", "site3.com"]
         )
 
         with patch("core.gemini_client.GeminiClient", return_value=mock_client) as mock_ctor, \
              patch("config.runtime_paths.get_gemini_api_key", return_value="fake-key"):
             from core.export_engine import _search_crew_with_gemini
             result = _search_crew_with_gemini(
-                target_role="KAMERA",
+                target_role="YAPIMCI",
                 year="1991",
                 film_title="FELANCA FİLM",
                 known_fields={},
                 episode_no="YOK",
             )
 
-        self.assertEqual(result, "Kameramanın Adı")
+        self.assertEqual(result, "Yapımcının Adı")
         mock_ctor.assert_called_once_with(model="gemini-2.5-flash", api_key="fake-key")
 
 

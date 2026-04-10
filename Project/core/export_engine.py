@@ -565,7 +565,7 @@ def _wrap_max_words(text: str, max_words: int = 20, indent: str = "  ") -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# ÇIKTI ROLLERI (kullanıcı istenen sıra)
+# ÇIKTI ROLLERI (yalnızca kullanıcı istenen sıra)
 # ═══════════════════════════════════════════════════════════════════
 MAX_DIRECTORS = 2  # Bir filmde en fazla 2 yönetmen kabul edilir
 
@@ -573,9 +573,6 @@ MAX_DIRECTORS = 2  # Bir filmde en fazla 2 yönetmen kabul edilir
 # report.json tam veri taşımaya devam eder; bu limit yalnızca görüntülemede uygulanır.
 _TXT_ROLE_LIMITS: dict[str, int] = {
     "YAPIMCI": 4,
-    "YÖNETMEN YARDIMCISI": 3,
-    "KAMERA": 2,
-    "KURGU": 2,
 }
 
 # TXT çıktısında gösterilecek maksimum oyuncu sayısı (report.json tam listeyi taşır).
@@ -584,23 +581,13 @@ _TXT_CAST_LIMIT = 20
 _OUTPUT_ROLES = [
     "YAPIMCI",
     "YÖNETMEN",
-    "YÖNETMEN YARDIMCISI",
-    "GÖRÜNTÜ YÖNETMENİ",
-    "SENARYO",
-    "KAMERA",
-    "KURGU",
 ]
 _OUTPUT_ROLE_SET = frozenset(_OUTPUT_ROLES)
 
 # Rapor sorgu şablonu için rol → Türkçe ifade eşlemesi
 _ROLE_QUESTIONS = {
-    "YAPIMCI":             "yapımcısı",
-    "YÖNETMEN":            "yönetmeni",
-    "YÖNETMEN YARDIMCISI": "yönetmen yardımcısı",
-    "GÖRÜNTÜ YÖNETMENİ":  "görüntü yönetmeni",
-    "SENARYO":             "senaristleri",
-    "KAMERA":              "kamera operatörü",
-    "KURGU":               "kurgusu (editörü)",
+    "YAPIMCI": "yapımcısı",
+    "YÖNETMEN": "yönetmeni",
 }
 
 
@@ -855,7 +842,7 @@ _EXCLUDED_ROLE_HINTS = frozenset({
 })
 
 def _classify_output_role(role_raw: str) -> str | None:
-    """Ham rol metnini 7'li çıktı rolüne exact eşleştir; uymuyorsa dışarıda bırak."""
+    """Ham rol metnini bilinen ekip rolüne exact eşleştir; uymuyorsa dışarıda bırak."""
     role_lower = _normalize_role_label(role_raw)
     if not role_lower:
         return None
@@ -871,7 +858,7 @@ def _classify_output_role(role_raw: str) -> str | None:
 
 
 def _sanitize_output_roles(crew_roles: dict | None) -> dict[str, list[str]]:
-    """Çıktıyı yalnızca 7 rol ile sınırla ve duplike isimleri temizle.
+    """Çıktıyı yalnızca desteklenen roller ile sınırla ve duplike isimleri temizle.
 
     Aynı rol içinde aksan/case farklarını normalize ederek tekilleştirir;
     çakışmada daha zengin varyant (_best_variant) korunur. Roller arası merge yapılmaz.
@@ -1104,7 +1091,7 @@ def post_validate_export(crew_roles: dict[str, list], cast: list) -> list[str]:
     if len(directors) > MAX_DIRECTORS:
         warnings.append(
             f"WARN: {len(directors)} yönetmen atanmış (MAX={MAX_DIRECTORS}). "
-            f"Fazlalık YÖNETMEN YARDIMCISI'na taşınmış olmalı."
+            f"Fazlalık düşürülmüş olmalı."
         )
 
     # 2. Oyuncu ↔ ekip çakışması
@@ -1141,6 +1128,7 @@ def _map_crew_to_roles(crew_data: list, directors: list) -> dict[str, list[str]]
     NOT: İsim doğrulaması artık burada değil — pipeline_runner'da
     NameVerifier tarafından yapılıyor. Bu fonksiyon sadece rol eşleştirmesi yapar.
     NameVerifier çalışmamışsa (eski pipeline), veri olduğu gibi geçer.
+    Desteklenmeyen roller bilinçli olarak dışarıda bırakılır.
 
     Returns:
         dict mapping each output role name → list of person names.
@@ -1148,15 +1136,12 @@ def _map_crew_to_roles(crew_data: list, directors: list) -> dict[str, list[str]]
     result: dict[str, list[str]] = {role: [] for role in _OUTPUT_ROLES}
 
     # Directors → YÖNETMEN (MAX_DIRECTORS sınırı)
-    # Taşan kişi ismi → YÖNETMEN YARDIMCISI
     for d in (directors or []):
-        if d and d not in result["YÖNETMEN"]:
-            name_d = d.get("name", "") if isinstance(d, dict) else str(d)
-            if name_d and not _is_non_person(name_d):
-                if len(result["YÖNETMEN"]) < MAX_DIRECTORS:
-                    result["YÖNETMEN"].append(name_d)
-                elif name_d not in result["YÖNETMEN YARDIMCISI"]:
-                    result["YÖNETMEN YARDIMCISI"].append(name_d)
+        name_d = d.get("name", "") if isinstance(d, dict) else str(d)
+        if not name_d or _is_non_person(name_d):
+            continue
+        if name_d not in result["YÖNETMEN"] and len(result["YÖNETMEN"]) < MAX_DIRECTORS:
+            result["YÖNETMEN"].append(name_d)
 
     # Crew entries → matching output role
     for entry in (crew_data or []):
@@ -1172,7 +1157,11 @@ def _map_crew_to_roles(crew_data: list, directors: list) -> dict[str, list[str]]
             entry.get("role_tr") or entry.get("role") or entry.get("job") or ""
         ).strip()
         output_role = _classify_output_role(role_raw)
-        if not output_role or output_role == "EXCLUDED":
+        if (
+            not output_role
+            or output_role == "EXCLUDED"
+            or output_role not in _OUTPUT_ROLE_SET
+        ):
             continue
 
         _n_words = len(name.split())
@@ -1191,19 +1180,17 @@ def _map_tmdb_crew_to_roles(
     """TMDB'den gelen crew verisini çıktı rollerine dönüştür.
 
     TMDB verisi zaten doğrulanmış olduğundan ekstra kişi-adı filtresi gerekmez.
+    Desteklenmeyen roller bilinçli olarak dışarıda bırakılır.
     """
     result: dict[str, list[str]] = {role: [] for role in _OUTPUT_ROLES}
 
     # Directors → YÖNETMEN (MAX_DIRECTORS sınırı)
-    # TMDB verisi doğrulanmış olduğundan taşan kişi → YÖNETMEN YARDIMCISI
     for d in (directors or []):
         name = d if isinstance(d, str) else (d.get("name") or "")
         name = name.strip()
         if name and name not in result["YÖNETMEN"]:
             if len(result["YÖNETMEN"]) < MAX_DIRECTORS:
                 result["YÖNETMEN"].append(name)
-            elif name not in result["YÖNETMEN YARDIMCISI"]:
-                result["YÖNETMEN YARDIMCISI"].append(name)
 
     for entry in (tmdb_crew or []):
         name = (entry.get("name") or "").strip()
@@ -1212,7 +1199,11 @@ def _map_tmdb_crew_to_roles(
 
         role_raw = (entry.get("role_tr") or entry.get("job") or entry.get("role") or "").strip()
         output_role = _classify_output_role(role_raw)
-        if not output_role or output_role == "EXCLUDED":
+        if (
+            not output_role
+            or output_role == "EXCLUDED"
+            or output_role not in _OUTPUT_ROLE_SET
+        ):
             continue
 
         if name not in result[output_role]:
@@ -2124,14 +2115,20 @@ class ExportEngine:
             if len(_g_yonetmen) > MAX_DIRECTORS:
                 _g_overflow = _g_yonetmen[MAX_DIRECTORS:]
                 crew_roles["YÖNETMEN"] = _g_yonetmen[:MAX_DIRECTORS]
-                _g_yard = crew_roles.get("YÖNETMEN YARDIMCISI") or []
-                crew_roles["YÖNETMEN YARDIMCISI"] = _g_yard + [
-                    n for n in _g_overflow if n not in _g_yard
-                ]
-                self._log(
-                    f"  [MAX_DIRECTORS] Gemini {len(_g_overflow)} fazla yönetmeni "
-                    f"YÖNETMEN YARDIMCISI'na taşıdı: {_g_overflow}"
-                )
+                if "YÖNETMEN YARDIMCISI" in _OUTPUT_ROLE_SET:
+                    _g_yard = crew_roles.get("YÖNETMEN YARDIMCISI") or []
+                    crew_roles["YÖNETMEN YARDIMCISI"] = _g_yard + [
+                        n for n in _g_overflow if n not in _g_yard
+                    ]
+                    self._log(
+                        f"  [MAX_DIRECTORS] Gemini {len(_g_overflow)} fazla yönetmeni "
+                        f"YÖNETMEN YARDIMCISI'na taşıdı: {_g_overflow}"
+                    )
+                else:
+                    self._log(
+                        f"  [MAX_DIRECTORS] Gemini {len(_g_overflow)} fazla yönetmeni "
+                        f"düşürdü: {_g_overflow}"
+                    )
         elif cr.get("_verified_crew_roles"):
             crew_roles = cr["_verified_crew_roles"]
         else:

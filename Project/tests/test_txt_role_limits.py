@@ -55,8 +55,8 @@ def test_yapimci_limit_four(tmp_path):
     assert len(hidden) == 0, f"5. ve 6. yapımcı gizlenmeli, ama: {hidden}"
 
 
-def test_kamera_limit_two(tmp_path):
-    """KAMERA limit 2: 4 isim girilirse TXT'de ilk 2 görünür."""
+def test_non_export_roles_are_not_listed(tmp_path):
+    """KAMERA gibi desteklenmeyen roller TXT'de hiç görünmemeli."""
     engine = _make_engine(tmp_path)
     report = _base_report({
         "film_title": "Test Film",
@@ -73,8 +73,9 @@ def test_kamera_limit_two(tmp_path):
                               film_id="2023-0001-1-0000-00-1",
                               ocr_lines=[])
     text = out_path.read_text(encoding="utf-8-sig")
-    assert "CAMERA 1" in text
-    assert "CAMERA 2" in text
+    assert "DIR A" in text
+    assert "CAMERA 1" not in text
+    assert "CAMERA 2" not in text
     assert "CAMERA 3" not in text
     assert "CAMERA 4" not in text
 
@@ -85,8 +86,8 @@ def test_yonetmen_no_limit_in_txt_role_limits(tmp_path):
     assert "YÖNETMEN" not in _TXT_ROLE_LIMITS
 
 
-def test_limit_at_exact_count(tmp_path):
-    """Tam limit kadar isim → hepsi görünür."""
+def test_yapimci_exact_limit_four_shows_all(tmp_path):
+    """Tam limit kadar yapımcı varsa hepsi görünür."""
     engine = _make_engine(tmp_path)
     report = _base_report({
         "film_title": "Test Film",
@@ -94,7 +95,7 @@ def test_limit_at_exact_count(tmp_path):
         "verification_status": "imdb_verified",
         "cast": [],
         "directors": [{"name": "Dir A"}],
-        "crew": [{"name": f"Camera {i}", "job": "Camera Operator", "raw": "imdb"} for i in range(1, 3)]
+        "crew": [{"name": f"Producer {i}", "job": "Producer", "raw": "imdb"} for i in range(1, 5)]
               + [{"name": "Dir A", "job": "Director", "raw": "imdb"}],
     })
     out_path = Path(tmp_path) / "report.txt"
@@ -103,8 +104,8 @@ def test_limit_at_exact_count(tmp_path):
                               film_id="2023-0001-1-0000-00-1",
                               ocr_lines=[])
     text = out_path.read_text(encoding="utf-8-sig")
-    assert "CAMERA 1" in text
-    assert "CAMERA 2" in text
+    assert "PRODUCER 1" in text
+    assert "PRODUCER 4" in text
 
 
 def test_cast_limit_twenty(tmp_path):

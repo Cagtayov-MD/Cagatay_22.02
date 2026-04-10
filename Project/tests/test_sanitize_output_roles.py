@@ -1,6 +1,5 @@
 """
-test_sanitize_output_roles.py — Değişiklik 5: Aynı rol içi aksan/case normalize dedup.
-Roller arası merge yapılmaz.
+test_sanitize_output_roles.py — Yalnızca desteklenen ekip rolleri export'a taşınır.
 """
 import os
 import sys
@@ -39,25 +38,25 @@ def test_distinct_names_kept_separate():
     assert len(result["YAPIMCI"]) == 2
 
 
-def test_no_cross_role_merge():
-    """Aynı isim farklı rollerde → ayrı kalır, birleştirme yapılmaz."""
+def test_unsupported_roles_are_dropped():
+    """Desteklenmeyen ekip rolleri export sözlüğüne hiç alınmaz."""
     from core.export_engine import _sanitize_output_roles
     result = _sanitize_output_roles({
         "YAPIMCI": ["Ali Ozan"],
         "SENARYO": ["Ali Ozan"],
     })
     assert len(result["YAPIMCI"]) == 1
-    assert len(result["SENARYO"]) == 1
+    assert "SENARYO" not in result
 
 
-def test_turkish_char_normalization():
+def test_turkish_char_normalization_supported_role():
     """Şükrü / Sukru → norm_key eşleşir, zengin varyant korunur."""
     from core.export_engine import _sanitize_output_roles
     result = _sanitize_output_roles({
-        "KURGU": ["Sukru Yilmaz", "Şükrü Yılmaz"],
+        "YAPIMCI": ["Sukru Yilmaz", "Şükrü Yılmaz"],
     })
-    assert len(result["KURGU"]) == 1
-    assert result["KURGU"][0] == "Şükrü Yılmaz"
+    assert len(result["YAPIMCI"]) == 1
+    assert result["YAPIMCI"][0] == "Şükrü Yılmaz"
 
 
 def test_empty_names_ignored():
@@ -77,18 +76,13 @@ def test_cyrillic_names_filtered_by_is_non_person():
     assert _is_non_person("М. Дабашов") is True
 
 
-def test_cyrillic_latin_duplicate_map_crew_filters_cyrillic():
-    """Aynı kişinin Kiril ve Latin hali varsa, _map_crew_to_roles Kiril olanı atar."""
+def test_non_export_crew_roles_are_ignored_without_keyerror():
+    """SENARYO gibi desteklenmeyen roller sessizce atlanmalı."""
     from core.export_engine import _map_crew_to_roles
     crew = [
-        {"name": "Ilya Minkovetsky", "job": "cinematographer"},
-        {"name": "Илья Миньковецкий", "job": "Director of Photography"},
+        {"name": "Writer Name", "job": "screenplay"},
+        {"name": "Producer Name", "job": "producer"},
     ]
     result = _map_crew_to_roles(crew, directors=[])
-    dop_names = result.get("GÖRÜNTÜ YÖNETMENİ", [])
-    assert "Ilya Minkovetsky" in dop_names
-    # Kiril karakter içeren isim filtrelenmeli
-    assert all(
-        not any(0x0400 <= ord(c) <= 0x04FF for c in name)
-        for name in dop_names
-    )
+    assert result["YAPIMCI"] == ["Producer Name"]
+    assert "SENARYO" not in result

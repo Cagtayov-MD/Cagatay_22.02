@@ -30,8 +30,8 @@ def _base_report():
     }
 
 
-def test_external_lock_backfill_senaryo_from_technical_crew(tmp_path):
-    """SENARYO boşsa ve technical_crew'da Writer varsa → backfill olur."""
+def test_external_lock_ignores_non_export_technical_roles(tmp_path):
+    """technical_crew'daki SENARYO benzeri roller kullanıcı çıktısına taşınmamalı."""
     engine = _make_engine(tmp_path)
     report = _base_report()
     report["credits"] = {
@@ -55,8 +55,8 @@ def test_external_lock_backfill_senaryo_from_technical_crew(tmp_path):
         ocr_lines=[],
     )
     text = out_path.read_text(encoding="utf-8-sig")
-    assert "BOB WRITER" in text, "technical_crew'dan SENARYO backfill çalışmalı"
     assert "ALICE DIRECTOR" in text
+    assert "BOB WRITER" not in text
 
 
 def test_external_lock_verified_crew_roles_does_not_leak(tmp_path):
