@@ -72,6 +72,64 @@ def test_audio_bridge_normalizes_whisper_model_before_writing_config(monkeypatch
     assert result["status"] == "ok"
 
 
+def test_audio_bridge_filters_pkg_resources_warning_from_stderr():
+    stderr_tail, known_notes = AudioBridge._summarize_stderr([
+        r"F:\Root\venv_audio\lib\site-packages\ctranslate2\__init__.py:8: UserWarning: pkg_resources is deprecated as an API.",
+        "  import pkg_resources",
+    ])
+
+    assert stderr_tail == ""
+    assert "ctranslate2/setuptools pkg_resources uyarısı" in known_notes
+
+
+def test_audio_bridge_returns_ok_on_benign_nonzero_exit_with_result(monkeypatch, tmp_path):
+    logs = []
+    video_path = tmp_path / "input.mp4"
+    video_path.write_bytes(b"fake-video")
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    result_path = work_dir / "audio_result.json"
+
+    bridge = AudioBridge(
+        log_cb=logs.append,
+        config={
+            "venv_audio_python": "fake-python.exe",
+            "audio_worker_script": "fake-worker.py",
+        },
+    )
+    monkeypatch.setattr(bridge, "_check_prerequisites", lambda *_args, **_kwargs: True)
+
+    class _FakeProc:
+        def __init__(self):
+            self.stdout = io.StringIO("")
+            self.stderr = io.StringIO(
+                "F:\\Root\\venv_audio\\lib\\site-packages\\ctranslate2\\__init__.py:8: "
+                "UserWarning: pkg_resources is deprecated as an API.\n"
+                "  import pkg_resources\n"
+            )
+            self.returncode = 3221226505
+
+        def wait(self, timeout=None):
+            payload = {"status": "ok", "transcript": [{"text": "ok"}], "speakers": {}, "stages": {}}
+            result_path.write_text(json.dumps(payload), encoding="utf-8")
+            return self.returncode
+
+        def kill(self):
+            return None
+
+    monkeypatch.setattr("core.audio_bridge.subprocess.Popen", lambda *args, **kwargs: _FakeProc())
+
+    result = bridge.run(
+        str(video_path),
+        str(work_dir),
+        {"options": {"whisper_model": "large-v3"}},
+    )
+
+    assert result["status"] == "ok"
+    assert any("benign shutdown" in line for line in logs)
+    assert not any("pkg_resources is deprecated as an API" in line for line in logs)
+
+
 def test_transcribe_stage_normalizes_alias_model(monkeypatch, tmp_path):
     captured = {}
 

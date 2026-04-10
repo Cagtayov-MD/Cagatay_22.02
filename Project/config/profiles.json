@@ -8,7 +8,6 @@
     "asr_compute": "float16",
     "ocr_engine": "paddleocr",
     "ocr_device": "gpu",
-    "ocr_fps": 1.0,
     "video_intelligence_api": true,
     "tmdb_enabled": true,
     "parallel_execution": true,

@@ -1,0 +1,17 @@
+{
+  "video_path": "f:\\REPO_GitHub\\Cagatay_22.02\\Project\\tests\\.tmp_audio_smoke\\smoke.mp4",
+  "stages": [
+    "detect_language",
+    "extract",
+    "transcribe"
+  ],
+  "options": {
+    "whisper_model": "large-v3",
+    "compute_type": "float16",
+    "beam_size": 1,
+    "whisper_language": "tr"
+  },
+  "ffprobe": "F:\\Source\\ffmpeg\\bin\\ffprobe.exe",
+  "ffmpeg": "F:\\Source\\ffmpeg\\bin\\ffmpeg.exe",
+  "work_dir": "f:\\REPO_GitHub\\Cagatay_22.02\\Project\\tests\\.tmp_audio_smoke"
+}

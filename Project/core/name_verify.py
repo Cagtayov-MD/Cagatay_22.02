@@ -40,6 +40,18 @@ except Exception:
 _GEMINI_FUZZY_GATE = 72
 
 
+def _count_turkish_chars(s: str) -> int:
+    """Türkçe özel karakter sayısını döndür (ş,ç,ğ,ü,ö,ı,İ,Ş,Ç,Ğ,Ü,Ö)."""
+    return sum(1 for ch in (s or "") if ch in "şçğüöıŞÇĞÜÖİı")
+
+
+def _prefer_turkish(ocr_name: str, tmdb_name: str) -> str:
+    """TMDB ismi Türkçe karakter kaybettiriyorsa OCR ismini koru."""
+    if _count_turkish_chars(ocr_name) > _count_turkish_chars(tmdb_name):
+        return ocr_name
+    return tmdb_name
+
+
 def _norm_name(s: str) -> str:
     """Karşılaştırma için normalize: küçük harf, sadece alfanumerik."""
     return "".join(ch for ch in (s or "").lower() if ch.isalnum())
@@ -578,9 +590,9 @@ class NameVerifier:
                         self._log(f"    [TMDB] ✓ {search_name} "
                                   f"[{tmdb_result.get('tmdb_department','')}]")
 
-                        # TMDB ismi daha doğru olabilir
+                        # TMDB ismi daha doğru olabilir — ama Türkçe karakter kaybettiriyorsa OCR koru
                         if tmdb_result.get("tmdb_name"):
-                            corrected_name = tmdb_result["tmdb_name"]
+                            corrected_name = _prefer_turkish(corrected_name, tmdb_result["tmdb_name"])
                     else:
                         self._add_log("TMDB_PERSON", role, search_name, "",
                                        "not_found", tmdb_result.get("reason", ""))
@@ -787,7 +799,7 @@ class NameVerifier:
                     tmdb_verified = True
                     is_verified = True
                     if tmdb_result.get("tmdb_name"):
-                        corrected_name = tmdb_result["tmdb_name"]
+                        corrected_name = _prefer_turkish(corrected_name, tmdb_result["tmdb_name"])
                     self._add_log("TMDB_PERSON", "OYUNCU", name,
                                    corrected_name, "kept", "person_found", {
                                        "tmdb_department": tmdb_result.get("tmdb_department"),

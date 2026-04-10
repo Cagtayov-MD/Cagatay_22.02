@@ -7,6 +7,9 @@ import subprocess, json, os
 from pathlib import Path
 from datetime import timedelta
 
+ENTRY_CREDITS_FPS = 0.5  # Giriş jeneriği: 2 saniyede 1 frame
+EXIT_CREDITS_FPS = 1.0   # Çıkış jeneriği: 1 saniyede 1 frame
+
 
 class FrameExtractor:
     def __init__(self, ffmpeg_path, ffprobe_path, log_cb=None):
@@ -118,7 +121,9 @@ class FrameExtractor:
         return frames
 
     def extract_credits_frames(self, video_path, output_dir, video_info,
-                                first_min=4.0, last_min=8.0, fps=1.0):
+                                first_min=4.0, last_min=8.0,
+                                entry_fps=ENTRY_CREDITS_FPS,
+                                exit_fps=EXIT_CREDITS_FPS):
         dur = video_info["duration_seconds"]
 
         # ── KISA VİDEO KORUMASI ──
@@ -144,11 +149,12 @@ class FrameExtractor:
 
         self._log(f"  📽️ Giriş: 0:00 → {timedelta(seconds=int(first_sec))}")
         self._log(f"  📽️ Çıkış: {timedelta(seconds=int(exit_start))} → {timedelta(seconds=int(dur))}")
+        self._log("  🎞️ Örnekleme: giriş 2 sn/frame, çıkış 1 sn/frame")
 
         entry = self.extract_segment_frames(video_path,
-            os.path.join(output_dir, "entry_frames"), 0, first_sec, fps, "entry")
+            os.path.join(output_dir, "entry_frames"), 0, first_sec, entry_fps, "entry")
         exit_ = self.extract_segment_frames(video_path,
-            os.path.join(output_dir, "exit_frames"), exit_start, last_sec, fps, "exit")
+            os.path.join(output_dir, "exit_frames"), exit_start, last_sec, exit_fps, "exit")
 
         return {"entry": entry, "exit": exit_, "total": len(entry)+len(exit_),
                 "first_sec": first_sec, "last_sec": last_sec, "exit_start": exit_start}

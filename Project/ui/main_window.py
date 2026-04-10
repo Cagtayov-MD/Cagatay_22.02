@@ -143,6 +143,9 @@ class MainWindow(QMainWindow):
         self._queue_thread = None
         self._queue_profile_name = "FilmDizi-Hybrid"
         self._path_info_labels = {}
+        self._parallel_workers = 1          # 1 = sıralı (eski davranış), 2-4 = paralel subprocess
+        self._stagger_sec = 90              # ilk başlatmalar arası bekleme (saniye)
+        self._active_subprocs: list = []    # paralel modda aktif Popen nesneleri
 
         self.signals = PipelineSignals()
         self.signals.log_message.connect(self._append_log)
@@ -277,6 +280,38 @@ class MainWindow(QMainWindow):
         btn2.clicked.connect(self._pick_output)
         r2.addWidget(lbl2); r2.addWidget(self.output_edit); r2.addWidget(btn2)
         lay.addLayout(r2)
+
+        # Paralel worker sayısı + başlangıç aralığı
+        lay.addWidget(self._sep())
+        from PySide6.QtWidgets import QSpinBox
+        worker_row = QHBoxLayout()
+        worker_row.addWidget(QLabel("Paralel Worker:"))
+        self.worker_spin = QSpinBox()
+        self.worker_spin.setRange(1, 4)
+        self.worker_spin.setValue(1)
+        self.worker_spin.setToolTip(
+            "1 = sıralı (mevcut davranış)\n"
+            "2-3 = paralel subprocess (güvenli)\n"
+            "4 = 24 GB VRAM sınırına dayanır — dikkatli kullan"
+        )
+        self.worker_spin.valueChanged.connect(self._on_worker_count_changed)
+        worker_row.addWidget(self.worker_spin)
+        worker_row.addSpacing(16)
+        worker_row.addWidget(QLabel("Aralık (sn):"))
+        self.stagger_spin = QSpinBox()
+        self.stagger_spin.setRange(0, 600)
+        self.stagger_spin.setValue(90)
+        self.stagger_spin.setSingleStep(30)
+        self.stagger_spin.setToolTip(
+            "İlk başlatmalarda worker'lar arası bekleme süresi (saniye).\n"
+            "0 = aynı anda başlat\n"
+            "90 = 1.5 dakika farkla başlat (önerilen)\n"
+            "Slot doldurmada (video bitince yenisi) bekleme uygulanmaz."
+        )
+        self.stagger_spin.valueChanged.connect(self._on_stagger_changed)
+        worker_row.addWidget(self.stagger_spin)
+        worker_row.addStretch()
+        lay.addLayout(worker_row)
 
         self.start_single_btn = QPushButton("▶ Seçili Videoyu Başlat")
         self.start_single_btn.setObjectName("startBtn")
@@ -525,8 +560,11 @@ class MainWindow(QMainWindow):
         self.queue_tab.set_running(True)
         self._set_control_panel_enabled(False)
 
-        self._queue_thread = threading.Thread(
-            target=self._run_queue, daemon=True)
+        if self._parallel_workers > 1:
+            target = lambda: self._run_queue_parallel(self._parallel_workers)
+        else:
+            target = self._run_queue
+        self._queue_thread = threading.Thread(target=target, daemon=True)
         self._queue_thread.start()
 
     def _on_queue_stop(self):
@@ -544,6 +582,12 @@ class MainWindow(QMainWindow):
         self._queue_stop_requested = True
         self._queue_skip_requested = True
         self.signals.log_message.emit("[KUYRUK] ⛔ Zorla durdurma isteği alındı...")
+        for proc in list(self._active_subprocs):
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+            except Exception:
+                pass
 
     def _on_queue_running_changed(self, running: bool):
         self._queue_running = running
@@ -657,6 +701,139 @@ class MainWindow(QMainWindow):
         self._queue_running = False
         self.signals.queue_running.emit(False)
         self.signals.log_message.emit("\n[KUYRUK] Tamamlandı.")
+
+    def _on_worker_count_changed(self, n: int):
+        self._parallel_workers = n
+
+    def _on_stagger_changed(self, n: int):
+        self._stagger_sec = n
+
+    def _run_queue_parallel(self, worker_count: int):
+        """
+        Kuyruktaki videoları N paralel subprocess olarak işle.
+        Her subprocess: python main.py <video>  (CONTENT_PROFILE env ile headless mod)
+        Stdout/stderr pipe edilir ve log paneline aktarılır.
+        """
+        import subprocess
+        qm = self.queue_tab.queue_manager
+        profile_name = self._queue_profile_name
+        # scope'u burada oku — background thread'den UI widget'a erişmemek için
+        scope_str = self._get_scope_from_combo()
+        python_exe = sys.executable
+        main_py = str(Path(__file__).parent.parent / "main.py")
+
+        active: list[tuple[subprocess.Popen, str, float]] = []
+        self._active_subprocs = []
+
+        def _launch_next() -> bool:
+            item = qm.get_next()
+            if item is None:
+                return False
+            vpath = item.path
+            vname = Path(vpath).name
+            self.signals.log_message.emit(f"\n[PAR] Başlatılıyor: {vname}")
+            self.signals.queue_item_status.emit(vpath, VideoStatus.PROCESSING, None, "")
+
+            env = os.environ.copy()
+            env["CONTENT_PROFILE"] = profile_name
+            env["SCOPE"] = scope_str
+            env["HEADLESS"] = "1"
+
+            proc = subprocess.Popen(
+                [python_exe, main_py, vpath],
+                env=env,
+                cwd=str(Path(__file__).parent.parent),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+            )
+            t0 = time.monotonic()
+            active.append((proc, vpath, t0))
+            self._active_subprocs.append(proc)
+
+            # Her subprocess için ayrı log okuma thread'i
+            def _read_log(p=proc, v=vname):
+                try:
+                    for line in p.stdout:
+                        line = line.rstrip()
+                        if line:
+                            self.signals.log_message.emit(f"[{v}] {line}")
+                except Exception:
+                    pass
+
+            threading.Thread(
+                target=_read_log, daemon=True, name=f"SubLog-{Path(vpath).stem}"
+            ).start()
+            return True
+
+        # İlk dalgayı doldur — worker'lar arası stagger bekleme
+        stagger = self._stagger_sec
+        for i in range(worker_count):
+            if not _launch_next():
+                break
+            if stagger > 0 and i < worker_count - 1:
+                # Bekleme sırasında stop isteği gelirse erken çık
+                waited = 0
+                self.signals.log_message.emit(
+                    f"  [PAR] Sonraki worker için {stagger} sn bekleniyor...")
+                while waited < stagger and not self._queue_stop_requested:
+                    time.sleep(1)
+                    waited += 1
+                if self._queue_stop_requested:
+                    break
+
+        # Ana izleme döngüsü
+        while active and not self._queue_stop_requested:
+            time.sleep(0.1)
+            still_running = []
+            for proc, vpath, t0 in active:
+                rc = proc.poll()
+                if rc is None:
+                    still_running.append((proc, vpath, t0))
+                    continue
+                # Subprocess bitti
+                elapsed = time.monotonic() - t0
+                if proc in self._active_subprocs:
+                    self._active_subprocs.remove(proc)
+                if rc == 0:
+                    self.signals.queue_item_status.emit(vpath, VideoStatus.DONE, elapsed, "")
+                    self.signals.log_message.emit(
+                        f"  [PAR] ✅ Bitti: {Path(vpath).name} ({elapsed / 60:.1f} dk)")
+                else:
+                    self.signals.queue_item_status.emit(vpath, VideoStatus.ERROR, None, f"rc={rc}")
+                    self.signals.log_message.emit(
+                        f"  [PAR] ❌ Hata: {Path(vpath).name} (rc={rc})")
+                # Slot boşaldı: yenisini başlat
+                _launch_next()
+            active[:] = still_running
+
+        # Final sweep: döngü bitince hâlâ PROCESSING görünen ve çıkmış olan proc'ları kapat
+        for proc, vpath, t0 in active:
+            rc = proc.poll()
+            if rc is not None:
+                elapsed = time.monotonic() - t0
+                if rc == 0:
+                    self.signals.queue_item_status.emit(vpath, VideoStatus.DONE, elapsed, "")
+                    self.signals.log_message.emit(
+                        f"  [PAR] ✅ Bitti (sweep): {Path(vpath).name} ({elapsed / 60:.1f} dk)")
+                else:
+                    self.signals.queue_item_status.emit(vpath, VideoStatus.ERROR, None, f"rc={rc}")
+
+        # Durdurma isteği geldiyse kalan subprocess'leri terminate et
+        if self._queue_stop_requested:
+            for proc, vpath, _ in active:
+                if proc.poll() is None:
+                    proc.terminate()
+                self.signals.queue_item_status.emit(vpath, VideoStatus.ERROR, None, "Durduruldu")
+                self.signals.log_message.emit(f"  [PAR] Durduruldu: {Path(vpath).name}")
+
+        self._queue_running = False
+        self._active_subprocs = []
+        self.signals.queue_running.emit(False)
+        self.signals.log_message.emit("\n[PAR] Paralel kuyruk tamamlandı.")
 
     def _run_pipeline(self, params: dict):
         """Pipeline'ı arka plan thread'inde çalıştır."""

@@ -478,9 +478,8 @@ class PipelineRunner:
                 self._log(f"\n[2/6] FRAME_EXTRACT")
                 t = time.time()
                 self.stats.start_stage("FRAME_EXTRACT")
-                fps = self.config.get("ocr_fps", 1.0)
                 fd = self._extractor.extract_credits_frames(
-                    video_path, work_dir, info, first_min, last_min, fps)
+                    video_path, work_dir, info, first_min, last_min)
                 self._stage("FRAME_EXTRACT", time.time() - t,
                             total=fd["total"],
                             entry=len(fd["entry"]),
@@ -2823,8 +2822,34 @@ class PipelineRunner:
         return {"scores": scores}
 
     def _repair_turkish(self, ocr_lines: list) -> list:
-        # NameDB sadece name_verify.py katmanında aktif — burası devre dışı
+        def _fix_encoding(s: str) -> str:
+            """UTF-8 metin latin-1 olarak yanlış decode edilmişse geri çevir (Ã¶→ö vb.)"""
+            try:
+                return s.encode("latin-1").decode("utf-8")
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                return s
+
+        fixed_count = 0
+        for line in ocr_lines:
+            if isinstance(line, dict):
+                original = (line.get("text") or "")
+                fixed = _fix_encoding(original)
+                if fixed != original:
+                    line["text_original"] = original
+                    line["text"] = fixed
+                    fixed_count += 1
+            else:
+                original = (getattr(line, "text", "") or "")
+                fixed = _fix_encoding(original)
+                if fixed != original:
+                    line.text_original = original
+                    line.text = fixed
+                    fixed_count += 1
+
+        if fixed_count:
+            self._log(f"  [Encoding] {fixed_count} satır encoding onarımı yapıldı")
         return ocr_lines
+
         repaired = 0  # noqa: unreachable
         for line in ocr_lines:
             original = (line.get("text", "") if isinstance(line, dict)

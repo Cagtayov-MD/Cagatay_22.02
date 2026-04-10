@@ -1,0 +1,44 @@
+{
+  "version": "1.3",
+  "video_path": "f:\\REPO_GitHub\\Cagatay_22.02\\Project\\tests\\.tmp_audio_smoke\\smoke.mp4",
+  "duration_sec": 2.020125,
+  "processing_time_sec": 36.8,
+  "asr_engine": "faster-whisper",
+  "whisper_model": "large-v3",
+  "speakers": {},
+  "transcript": [],
+  "summary_tr": "",
+  "detected_language": "en",
+  "language_is_turkish": false,
+  "detected_language_samples": [],
+  "selected_channel": null,
+  "asr_windows": [],
+  "stages": {
+    "detect_language": {
+      "duration_sec": 0.04,
+      "status": "ok",
+      "detected_language": "unknown",
+      "confidence": 0.0,
+      "decision_logic": "no_samples",
+      "selected_channel": null,
+      "channel_trials": [
+        {
+          "channel": "mix",
+          "language": "unknown",
+          "confidence": 0.0
+        }
+      ]
+    },
+    "extract": {
+      "duration_sec": 0.59,
+      "status": "ok",
+      "selected_channel": null
+    },
+    "transcribe": {
+      "duration_sec": 36.1,
+      "status": "ok",
+      "segments": 0
+    }
+  },
+  "status": "ok"
+}

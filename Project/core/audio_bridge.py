@@ -184,18 +184,40 @@ class AudioBridge:
             stderr_thread.join(timeout=5)
 
             if proc.returncode != 0:
-                stderr_tail = "".join(stderr_lines).strip()[-500:]
+                stderr_tail, known_notes = self._summarize_stderr(stderr_lines)
                 # 0xC0000409 = STATUS_STACK_BUFFER_OVERRUN: ctranslate2 shutdown crash, zararsız
                 _BENIGN_EXIT_CODES = {3221226505}
                 level = "Uyarı" if proc.returncode in _BENIGN_EXIT_CODES else "Hata"
-                self._log(f"  [AudioBridge] {level} (rc={proc.returncode}): {stderr_tail}")
 
                 # Subprocess hatalı bitti ama audio_result.json yazılmış olabilir
                 if Path(result_path).is_file():
-                    return self._read_result(result_path)
+                    if proc.returncode in _BENIGN_EXIT_CODES:
+                        note = "; ".join(known_notes) if known_notes else "worker çıktı ürettikten sonra kapandı"
+                        if stderr_tail:
+                            self._log(
+                                f"  [AudioBridge] Bilgi: benign shutdown (rc={proc.returncode}) — "
+                                f"{note} | {stderr_tail}"
+                            )
+                        else:
+                            self._log(
+                                f"  [AudioBridge] Bilgi: benign shutdown (rc={proc.returncode}) — {note}"
+                            )
+                    else:
+                        detail = stderr_tail or "stderr bilgisi yok"
+                        self._log(f"  [AudioBridge] {level} (rc={proc.returncode}): {detail}")
+                    result = self._read_result(result_path)
+                    elapsed = round(time.time() - t0, 2)
+                    self._log(
+                        f"  [AudioBridge] Tamamlandı ({elapsed:.1f}s) — "
+                        f"{len(result.get('transcript', []))} segment"
+                    )
+                    return result
+
+                detail = stderr_tail or "; ".join(known_notes) or "stderr bilgisi yok"
+                self._log(f"  [AudioBridge] {level} (rc={proc.returncode}): {detail}")
 
                 return self._error_result(
-                    f"Subprocess hatası (rc={proc.returncode}): {stderr_tail}"
+                    f"Subprocess hatası (rc={proc.returncode}): {detail}"
                 )
 
         except FileNotFoundError:
@@ -276,3 +298,28 @@ class AudioBridge:
             "speakers": {},
             "stages": {},
         }
+
+    @staticmethod
+    def _summarize_stderr(stderr_lines: list[str]) -> tuple[str, list[str]]:
+        """Bilinen zararsız stderr gürültüsünü ayıkla."""
+        text = "".join(stderr_lines or []).strip()
+        if not text:
+            return "", []
+
+        notes: list[str] = []
+        if "pkg_resources is deprecated as an API" in text and "ctranslate2" in text:
+            notes.append("ctranslate2/setuptools pkg_resources uyarısı")
+
+        filtered_lines = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if "pkg_resources is deprecated as an API" in line:
+                continue
+            if line == "import pkg_resources":
+                continue
+            filtered_lines.append(line)
+
+        filtered = "\n".join(filtered_lines).strip()
+        return filtered[-500:], notes

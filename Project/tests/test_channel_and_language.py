@@ -225,6 +225,14 @@ class TestExtractChannel(unittest.TestCase):
 class TestSummarizerLanguageFlow(unittest.TestCase):
     """gemini_summarizer.py v2 dil akışı testleri."""
 
+    def setUp(self):
+        self._openai_patcher = patch(
+            "core.llm_provider._openai_generate",
+            return_value=None,
+        )
+        self._openai_patcher.start()
+        self.addCleanup(self._openai_patcher.stop)
+
     @patch('core.llm_provider._gemini_generate')
     def test_turkish_single_step(self, mock_gemini):
         """Türkçe transcript → tek adım, doğrudan Türkçe özet."""
@@ -457,7 +465,95 @@ class TestSummarizerLanguageFlow(unittest.TestCase):
         )
 
         self.assertIsNone(result)
-        self.assertEqual(mock_gemini.call_count, 3)
+        # Adım 1'de 1 çağrı + Adım 2'de (Pro -> Flash) x 2 retry = 5 Gemini çağrısı
+        self.assertEqual(mock_gemini.call_count, 5)
+
+    def test_openai_mini_is_tried_after_pro_for_foreign_summary(self):
+        """Adım 1'de Pro sonrası gpt-5.4-mini devreye girmeli."""
+        from core.gemini_summarizer import summarize_transcript
+        import core.gemini_summarizer as summarizer
+
+        calls = []
+
+        def fake_gemini(prompt, **kwargs):
+            model = kwargs.get("model")
+            calls.append(("gemini", model))
+            if model == "gemini-2.5-pro" and len(calls) == 1:
+                return None
+            if model == "gemini-2.5-pro":
+                return "John eve döner ve babasıyla yüzleşir."
+            raise AssertionError(f"Beklenmeyen Gemini modeli: {model}")
+
+        def fake_openai(prompt, **kwargs):
+            model = kwargs.get("model")
+            calls.append(("openai", model))
+            return "John returns home and faces his father."
+
+        with patch.object(summarizer, "get_openai_api_key", return_value="openai-key"), \
+             patch("core.llm_provider._gemini_generate", side_effect=fake_gemini), \
+             patch("core.llm_provider._openai_generate", side_effect=fake_openai):
+            result = summarize_transcript(
+                "John returns home...",
+                api_key="fake_key",
+                detected_language="en",
+            )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(
+            calls,
+            [
+                ("gemini", "gemini-2.5-pro"),
+                ("openai", "gpt-5.4-mini"),
+                ("gemini", "gemini-2.5-pro"),
+            ],
+        )
+        self.assertEqual(result["model_used"], "gpt-5.4-mini")
+        self.assertEqual(result["translation_model_used"], "gemini-2.5-pro")
+
+    def test_openai_mini_is_tried_before_flash_for_translation(self):
+        """Adım 2'de sıralama Pro -> gpt-5.4-mini -> Flash olmalı."""
+        from core.gemini_summarizer import summarize_transcript
+        import core.gemini_summarizer as summarizer
+
+        calls = []
+
+        def fake_gemini(prompt, **kwargs):
+            model = kwargs.get("model")
+            calls.append(("gemini", model))
+            if model == "gemini-2.5-pro" and len(calls) == 1:
+                return "John returns home and faces his father."
+            if model == "gemini-2.5-pro":
+                return None
+            if model == "gemini-2.5-flash":
+                return "John eve döner ve babasıyla yüzleşir."
+            raise AssertionError(f"Beklenmeyen Gemini modeli: {model}")
+
+        def fake_openai(prompt, **kwargs):
+            model = kwargs.get("model")
+            calls.append(("openai", model))
+            return None
+
+        with patch.object(summarizer, "get_openai_api_key", return_value="openai-key"), \
+             patch("core.llm_provider._gemini_generate", side_effect=fake_gemini), \
+             patch("core.llm_provider._openai_generate", side_effect=fake_openai):
+            result = summarize_transcript(
+                "John returns home...",
+                api_key="fake_key",
+                detected_language="en",
+            )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(
+            calls,
+            [
+                ("gemini", "gemini-2.5-pro"),
+                ("gemini", "gemini-2.5-pro"),
+                ("openai", "gpt-5.4-mini"),
+                ("gemini", "gemini-2.5-flash"),
+            ],
+        )
+        self.assertEqual(result["model_used"], "gemini-2.5-pro")
+        self.assertEqual(result["translation_model_used"], "gemini-2.5-flash")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -551,6 +647,14 @@ class TestAudioPipelineStageOrder(unittest.TestCase):
 # ═══════════════════════════════════════════════════════════════════
 class TestLanguageScenarios(unittest.TestCase):
     """Farklı dil senaryolarında pipeline davranışı."""
+
+    def setUp(self):
+        self._openai_patcher = patch(
+            "core.llm_provider._openai_generate",
+            return_value=None,
+        )
+        self._openai_patcher.start()
+        self.addCleanup(self._openai_patcher.stop)
 
     @patch('core.llm_provider._gemini_generate')
     def test_scenario_turkish_film(self, mock_gemini):

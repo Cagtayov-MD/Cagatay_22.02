@@ -38,6 +38,7 @@ import tempfile
 import time
 import traceback
 import uuid
+import warnings
 from typing import Optional, Dict, Any
 
 # Windows konsolunda UTF-8 kullan (sadece script olarak çalışırken)
@@ -50,6 +51,13 @@ if sys.platform == "win32" and __name__ == "__main__":
         sys.stderr = io.TextIOWrapper(
             sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True
         )
+
+# ctranslate2 importunda gelen bilinen setuptools/pkg_resources uyarısını sustur.
+warnings.filterwarnings(
+    "ignore",
+    message="pkg_resources is deprecated as an API.*",
+    category=UserWarning,
+)
 
 # Şimdi güvenle proje-içi modülleri import edebiliriz
 from utils.time_utils import fmt_hms as _fmt_hms_shared

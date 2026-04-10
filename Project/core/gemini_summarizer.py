@@ -1,10 +1,10 @@
 """
 gemini_summarizer.py — Transcript'ten son kullanıcı için Türkçe özet çıkarma.
 
-Model Stratejisi: Gemini 2.5 Pro (birincil) → Flash (fallback)
+Model Stratejisi: Gemini 2.5 Pro → OpenAI GPT-5.4 mini → Gemini Flash
 
 Dil Stratejisi:
-  • Türkçe transcript → doğrudan Türkçe özet (tek adım)
+  • Türkçe transcript → model ekibiyle doğrudan Türkçe özet (tek adım)
   • `tr` dışındaki tüm transcript dilleri → orijinal dilde ara özet → Türkçeye çeviri
 
 Final çıktı sözleşmesi:
@@ -17,7 +17,8 @@ summarize_transcript(...) -> dict | None
   → {
         "text": "<final Türkçe özet>",
         "language": "tr",
-        "model_used": "gemini-2.5-pro"|"gemini-2.5-flash",
+        "model_used": "gemini-2.5-pro"|"gpt-5.4-mini"|"gemini-2.5-flash",
+        "translation_model_used": "gemini-2.5-pro"|"gpt-5.4-mini"|"gemini-2.5-flash",
         "flow": "single_step"|"two_step",
      }
 """
@@ -26,9 +27,16 @@ import re
 import unicodedata
 
 import core.llm_provider as _llm
+from config.runtime_paths import get_openai_api_key
 
 _TIMEOUT_SEC = 90
 _MAX_CHARS = 120000
+_TRANSLATE_TIMEOUT_SEC = 60
+_DEFAULT_MODEL_TEAM = (
+    {"provider": "gemini", "model": "gemini-2.5-pro"},
+    {"provider": "openai", "model": "gpt-5.4-mini"},
+    {"provider": "gemini", "model": "gemini-2.5-flash"},
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DİL ETİKETLERİ
@@ -61,26 +69,49 @@ _SYSTEM_PROMPT_TR = (
     "Your task: analyze the story in the transcript and produce a concise, "
     "direct summary in narrative prose format.\n\n"
     "STRICT RULES — THESE MUST BE FOLLOWED WITHOUT EXCEPTION:\n\n"
-    "LENGTH: Target 80 words, maximum 100 words.\n\n"
+    "LENGTH: Target 50 words, absolute maximum 55 words. "
+    "Target 3–4 sentences (4 is ideal, 3 is acceptable). "
+    "If the draft exceeds 55 words, rewrite it shorter before returning.\n\n"
+    "STRUCTURE (MANDATORY): The summary must follow a 4-beat arc:\n"
+    "  Sentence 1 — Setup (who / where / initial situation).\n"
+    "  Sentence 2 — Development (the central conflict or turning point).\n"
+    "  Sentence 3 — Escalation (the decisive action or crisis).\n"
+    "  Sentence 4 — Ending (explicit final outcome — see ENDING rule below).\n"
+    "4 sentences is ideal. 3 sentences is acceptable ONLY IF the ending sentence "
+    "still contains the explicit concrete outcome (sentences 2 and 3 may be merged, "
+    "but the ENDING rule is never negotiable).\n\n"
     "ZERO SUSPENSE: Attempting to make the reader curious about the film is STRICTLY FORBIDDEN. "
     "Do NOT use phrases like 'faces life's challenges', 'a big decision awaits', "
     "'what will happen next?' or any marketing/teaser language.\n\n"
-    "SPOILER (ENDING) IS MANDATORY: You MUST include the film's final outcome and "
-    "each main character's ultimate fate as explicitly as possible. "
-    "(e.g., 'X quits her job, Y dies, Z leaves the city.')\n\n"
-    "FORMAT: No bullet points. Write one or two short paragraphs. "
-    "Use two paragraphs only if it clearly improves readability and meaning.\n\n"
-    "SENTENCE STYLE: Do NOT keep chaining clauses with commas just to force flow. "
-    "Avoid long, comma-heavy sentences that stretch the meaning or make the summary feel bloated. "
-    "Prefer shorter, well-formed sentences. Each sentence should carry one clear idea. "
-    "If the opening sentence contains too many details, split it into two or more shorter sentences.\n\n"
+    "ENDING (MANDATORY — NON-NEGOTIABLE): The LAST sentence MUST state the film's "
+    "concrete final outcome explicitly. Vague closings like 'hayatı değişir', "
+    "'bir karar verir', 'yolculuğu başlar' are STRICTLY FORBIDDEN.\n"
+    "The final sentence MUST use one of these explicit Turkish ending patterns "
+    "(choose whichever fits the story):\n"
+    "  • 'Film, ... ile biter.'\n"
+    "  • 'Sonunda ...'\n"
+    "  • '... ölür.'\n"
+    "  • '... yakalanır.'\n"
+    "  • '... evlenir.'\n"
+    "  • '... ayrılır.'\n"
+    "  • '... geri döner.'\n"
+    "  • '... patron olur.'\n"
+    "  • '... barışır.'\n"
+    "  • '... bir araya gelir.'\n"
+    "  • '... kaçar.' / '... kurtulur.' / '... kaybeder.' / '... kazanır.'\n"
+    "If none of these patterns literally fits, still write a concrete result sentence "
+    "naming WHO ends up in WHAT state. Never end on suspense, implication, or a "
+    "rhetorical question.\n\n"
+    "FORMAT: No bullet points. Write ONE short paragraph of 3–4 sentences. "
+    "No line breaks inside the paragraph.\n\n"
+    "SENTENCE STYLE: Every sentence must be short and direct. No comma-chains. "
+    "One idea per sentence. If a sentence feels overloaded, split it.\n\n"
     "FOCUS: Focus only on the main character's key turning point and their final decision. "
     "Completely ignore subplots and secondary characters.\n\n"
     "NO CHARACTER INTRODUCTIONS: Do NOT introduce or describe characters by name/age/job "
     "at the start. Just tell the story — who they are will emerge from the events.\n\n"
     "FINAL OUTPUT CONTRACT: Output language must be Turkish. No title. Start directly "
-    "with the story. The final answer may be one paragraph or two short paragraphs, "
-    "but every sentence must be clear, meaningful, and natural.\n\n"
+    "with the story. Every sentence must be clear, meaningful, and natural.\n\n"
     "TURKISH ORTHOGRAPHY: Except for foreign proper names, everything in the summary "
     "must use correct Turkish spelling and Turkish characters.\n\n"
     "FOREIGN NAMES: Write all foreign proper names (character names, place names, "
@@ -275,18 +306,65 @@ def is_valid_final_summary(text: str) -> bool:
     return _validate_final_summary(text)[0]
 
 
-def _try_summarize(prompt: str, system: str, model: str,
-                   api_key: str, log_cb) -> str | None:
-    """Tek model ile özet denemesi yap."""
+def _infer_provider_for_model(model: str) -> str:
+    """Model adına göre provider tahmini yap."""
+    model_l = str(model or "").strip().lower()
+    if model_l.startswith(("gpt-", "o1", "o3", "o4")):
+        return "openai"
+    return "gemini"
+
+
+def _build_model_team(
+    preferred_model: str = "",
+    *,
+    openai_api_key: str = "",
+) -> list[dict[str, str]]:
+    """Özet/çeviri için kullanılacak model sırasını üret."""
+    if preferred_model:
+        return [{
+            "provider": _infer_provider_for_model(preferred_model),
+            "model": preferred_model,
+        }]
+
+    team = []
+    for item in _DEFAULT_MODEL_TEAM:
+        if item["provider"] == "openai" and not openai_api_key:
+            continue
+        team.append(dict(item))
+    return team
+
+
+def _try_summarize(
+    prompt: str,
+    system: str,
+    *,
+    provider: str,
+    model: str,
+    gemini_api_key: str,
+    openai_api_key: str,
+    log_cb,
+    timeout: int = _TIMEOUT_SEC,
+) -> str | None:
+    """Tek provider/model ile özet ya da çeviri denemesi yap."""
     try:
-        result = _llm._gemini_generate(
-            prompt,
-            system=system,
-            api_key=api_key or None,
-            model=model,
-            timeout=_TIMEOUT_SEC,
-            log_cb=log_cb,
-        )
+        if provider == "openai":
+            result = _llm._openai_generate(
+                prompt,
+                system=system,
+                api_key=openai_api_key or None,
+                model=model,
+                timeout=timeout,
+                log_cb=log_cb,
+            )
+        else:
+            result = _llm._gemini_generate(
+                prompt,
+                system=system,
+                api_key=gemini_api_key or None,
+                model=model,
+                timeout=timeout,
+                log_cb=log_cb,
+            )
         return result if result and result.strip() else None
     except Exception as e:
         if log_cb:
@@ -349,14 +427,16 @@ def _build_translate_prompt(
 
 def _translate_and_verify(
     foreign_summary: str,
-    api_key: str,
+    gemini_api_key: str,
+    openai_api_key: str,
     tmdb_cast: list | None,
     detected_language: str,
     log_cb,
-) -> str | None:
+) -> tuple[str | None, str]:
     """
-    Flash ile yabancı dildeki özeti Türkçeye çevir.
-    TMDB cast varsa isimleri doğrula.
+    Yabancı dildeki özeti TR'ye çevir ve final sözleşmesini doğrula.
+
+    Sıra: Gemini Pro -> OpenAI gpt-5.4-mini -> Gemini Flash
     """
     cast_ref = _build_cast_reference(tmdb_cast or [])
     attempts = [
@@ -366,6 +446,7 @@ def _translate_and_verify(
             "final summary was not valid Turkish or contained non-Latin script leakage",
         ),
     ]
+    model_team = _build_model_team(openai_api_key=openai_api_key)
 
     for idx, (system_prompt, retry_reason) in enumerate(attempts, start=1):
         prompt = _build_translate_prompt(
@@ -374,44 +455,46 @@ def _translate_and_verify(
             cast_ref,
             retry_reason=retry_reason,
         )
-
-        try:
-            result = _llm._gemini_generate(
+        for spec in model_team:
+            provider = spec["provider"]
+            model = spec["model"]
+            result = _try_summarize(
                 prompt,
-                system=system_prompt,
-                api_key=api_key or None,
-                model="gemini-2.5-flash",
-                timeout=60,
+                system_prompt,
+                provider=provider,
+                model=model,
+                gemini_api_key=gemini_api_key,
+                openai_api_key=openai_api_key,
                 log_cb=log_cb,
+                timeout=_TRANSLATE_TIMEOUT_SEC,
             )
-        except Exception as e:
-            if log_cb:
-                log_cb(f"  [Summarizer] Flash çeviri hatası: {e}")
-            result = None
 
-        normalized = _normalize_summary_text(result)
-        if not normalized:
-            if log_cb:
-                log_cb(f"  [Summarizer] Flash çeviri boş döndü (deneme {idx}/2)")
-            continue
+            normalized = _normalize_summary_text(result)
+            if not normalized:
+                if log_cb:
+                    log_cb(
+                        f"  [Summarizer] {model} çeviri boş döndü "
+                        f"(deneme {idx}/2)"
+                    )
+                continue
 
-        is_valid, reason = _validate_final_summary(normalized)
-        if is_valid:
+            is_valid, reason = _validate_final_summary(normalized)
+            if is_valid:
+                if log_cb:
+                    has_cast = "evet" if cast_ref else "hayır"
+                    log_cb(
+                        f"  [Summarizer] {model} çeviri kabul edildi "
+                        f"({len(normalized)} kar, cast_ref={has_cast}, deneme={idx})"
+                    )
+                return normalized, model
+
             if log_cb:
-                has_cast = "evet" if cast_ref else "hayır"
                 log_cb(
-                    f"  [Summarizer] Flash çeviri kabul edildi "
-                    f"({len(normalized)} kar, cast_ref={has_cast}, deneme={idx})"
+                    f"  [Summarizer] {model} çeviri reddedildi "
+                    f"(neden={reason}, deneme={idx}/2)"
                 )
-            return normalized
 
-        if log_cb:
-            log_cb(
-                f"  [Summarizer] Flash çeviri reddedildi "
-                f"(neden={reason}, deneme={idx}/2)"
-            )
-
-    return None
+    return None, ""
 
 
 def summarize_transcript(
@@ -425,14 +508,14 @@ def summarize_transcript(
 ) -> dict | None:
     """Transcript metninden Gemini ile Türkçe özet üret.
 
-    Dil Stratejisi (v2):
-      • Türkçe → Pro ile doğrudan Türkçe özet (tek adım)
-      • Yabancı → Pro ile orijinal dilde özet → Flash ile Türkçeye çevir + isim doğrula
+    Dil Stratejisi (v3):
+      • Türkçe → model ekibi ile doğrudan Türkçe özet (tek adım)
+      • Yabancı → model ekibi ile orijinal dilde özet → model ekibi ile Türkçeye çevir
 
     Args:
         transcript_text:  ASR transcript metni
         api_key:          Gemini API key
-        model:            Belirli model (boşsa Pro→Flash fallback)
+        model:            Belirli model (boşsa Pro→gpt-5.4-mini→Flash fallback)
         log_cb:           Log callback
         variant:          "en" (varsayılan)
         detected_language: Tespit edilen dil kodu ("tr", "en", "ar", ...)
@@ -442,7 +525,7 @@ def summarize_transcript(
         {
             "text": "<Türkçe özet>",
             "language": "tr",
-            "model_used": "gemini-2.5-pro"|"gemini-2.5-flash",
+            "model_used": "gemini-2.5-pro"|"gpt-5.4-mini"|"gemini-2.5-flash",
             "flow": "single_step"|"two_step",
         }
         Hata durumunda None.
@@ -456,7 +539,9 @@ def summarize_transcript(
     if variant in ("en", "both"):
         final_summary_tr = None
         model_used = ""
+        translation_model_used = ""
         flow = "single_step" if is_turkish else "two_step"
+        openai_api_key = get_openai_api_key()
 
         if is_turkish:
             # ══════════════════════════════════════════════════════
@@ -468,11 +553,20 @@ def summarize_transcript(
             system = _SYSTEM_PROMPT_TR
             prompt = _FEW_SHOT + f"Transcript:\n{snippet}"
 
-            models_to_try = [model] if model else ["gemini-2.5-pro", "gemini-2.5-flash"]
-            for m in models_to_try:
+            model_team = _build_model_team(model, openai_api_key=openai_api_key)
+            for spec in model_team:
+                m = spec["model"]
                 if log_cb:
                     log_cb(f"  [Summarizer] Türkçe özet oluşturuluyor ({m})...")
-                final_summary_tr = _try_summarize(prompt, system, m, api_key, log_cb)
+                final_summary_tr = _try_summarize(
+                    prompt,
+                    system,
+                    provider=spec["provider"],
+                    model=m,
+                    gemini_api_key=api_key,
+                    openai_api_key=openai_api_key,
+                    log_cb=log_cb,
+                )
                 if final_summary_tr:
                     model_used = m
                     if log_cb:
@@ -490,17 +584,22 @@ def summarize_transcript(
                 if log_cb:
                     log_cb(
                         "  [Summarizer] Tek adım özeti final sözleşmesini geçmedi "
-                        "— Flash ile Türkçeye yeniden kuruluyor"
+                        "— çeviri ekibiyle yeniden kuruluyor"
                     )
-                final_summary_tr = _translate_and_verify(
-                    final_summary_tr, api_key, tmdb_cast, detected_language, log_cb
+                final_summary_tr, translation_model_used = _translate_and_verify(
+                    final_summary_tr,
+                    api_key,
+                    openai_api_key,
+                    tmdb_cast,
+                    detected_language,
+                    log_cb,
                 )
 
         else:
             # ══════════════════════════════════════════════════════
             # YABANCI DİL AKIŞI — iki adım
-            # Adım 1: Orijinal dilde özet (Pro)
-            # Adım 2: Türkçeye çevir + isim doğrula (Flash)
+            # Adım 1: Orijinal dilde özet (Pro -> gpt-5.4-mini -> Flash)
+            # Adım 2: Türkçeye çevir + isim doğrula (Pro -> gpt-5.4-mini -> Flash)
             # ══════════════════════════════════════════════════════
             lang_label = get_language_label(detected_language)
             if log_cb:
@@ -514,16 +613,25 @@ def summarize_transcript(
             lang_info = f"\nTranscript language: {detected_language.upper()} ({lang_label})\n"
             prompt = lang_info + f"Transcript:\n{snippet}"
 
-            models_to_try = [model] if model else ["gemini-2.5-pro", "gemini-2.5-flash"]
+            model_team = _build_model_team(model, openai_api_key=openai_api_key)
             foreign_summary = None
 
-            for m in models_to_try:
+            for spec in model_team:
+                m = spec["model"]
                 if log_cb:
                     log_cb(
                         f"  [Summarizer] Adım 1: {detected_language.upper()} özet "
                         f"oluşturuluyor ({m})..."
                     )
-                foreign_summary = _try_summarize(prompt, system, m, api_key, log_cb)
+                foreign_summary = _try_summarize(
+                    prompt,
+                    system,
+                    provider=spec["provider"],
+                    model=m,
+                    gemini_api_key=api_key,
+                    openai_api_key=openai_api_key,
+                    log_cb=log_cb,
+                )
                 if foreign_summary:
                     model_used = m
                     if log_cb:
@@ -545,19 +653,24 @@ def summarize_transcript(
             if log_cb:
                 cast_count = len(tmdb_cast) if tmdb_cast else 0
                 log_cb(
-                    f"  [Summarizer] Adım 2: Flash ile Türkçeye çeviri "
+                    f"  [Summarizer] Adım 2: Türkçeye çeviri ekibi başlatılıyor "
                     f"(cast_ref={cast_count} kişi)..."
                 )
 
-            final_summary_tr = _translate_and_verify(
-                foreign_summary, api_key, tmdb_cast, detected_language, log_cb
+            final_summary_tr, translation_model_used = _translate_and_verify(
+                foreign_summary,
+                api_key,
+                openai_api_key,
+                tmdb_cast,
+                detected_language,
+                log_cb,
             )
 
             if final_summary_tr:
                 if log_cb:
                     log_cb(
                         f"  [Summarizer] Adım 2 tamamlandı: Türkçe özet "
-                        f"({len(final_summary_tr)} kar)"
+                        f"({len(final_summary_tr)} kar, {translation_model_used})"
                     )
             elif log_cb:
                 log_cb(
@@ -574,6 +687,7 @@ def summarize_transcript(
             "text": _normalize_summary_text(final_summary_tr),
             "language": "tr",
             "model_used": model_used,
+            "translation_model_used": translation_model_used,
             "flow": flow,
         }
 

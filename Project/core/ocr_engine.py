@@ -107,7 +107,7 @@ class OCREngine:
 
         self.noise_chars = set("|_~^`{}[]<>\\©®™•§¶†‡░▒▓█▄▀")
         self.min_text_len = 2
-        self.min_confidence = 0.50
+        self.min_confidence = 0.80
         self.fuzzy_threshold = 82
         self.watermark_threshold = 15
         self.max_digit_ratio = 0.55
